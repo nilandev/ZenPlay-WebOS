@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+.DS_Store
+*.log
+.turbo/
+*.tsbuildinfo
+android/app/build/
+android/.gradle/
+android/app/release/
+.cxx/
+*.keystore
+.env
+.env.local
+coverage/

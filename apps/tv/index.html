@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Free IPTV Player</title>
+    <style>
+      html, body, #root {
+        margin: 0;
+        height: 100%;
+        background: #0b0b0f;
+        color: #f4f4f5;
+        font-family: system-ui, sans-serif;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+        background: #1c1c22;
+        border: 2px solid transparent;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .is-focused button, button[data-focused="true"] {
+        border-color: #6ee7ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
