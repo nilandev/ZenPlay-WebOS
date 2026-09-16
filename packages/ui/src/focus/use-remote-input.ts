@@ -19,6 +19,7 @@ export interface RemoteInputHandlers {
  */
 export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandlers = {}): void {
   const move = useFocusStore((state) => state.move);
+  const select = useFocusStore((state) => state.select);
   const focusedId = useFocusStore((state) => state.focusedId);
 
   useEffect(() => {
@@ -35,6 +36,10 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
           break;
         case "select":
           event.preventDefault();
+          // Per-node onSelect (e.g. TopNav tabs) fires first; screens that
+          // instead inspect focusedId themselves (e.g. VodScreen) still work
+          // via the onSelect handler below.
+          select();
           handlers.onSelect?.(focusedId);
           break;
         case "back":
@@ -55,5 +60,5 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [platform, move, focusedId, handlers]);
+  }, [platform, move, select, focusedId, handlers]);
 }

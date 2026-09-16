@@ -97,9 +97,9 @@ This is the single biggest differentiator between a "snappy" TV app and a sluggi
 1. `packages/core`: Xtream + M3U + XMLTV parsers, with unit tests against real (anonymized) provider samples.
 2. `packages/player`: hls.js/shaka wrapper with a mock UI, validate against several live provider streams for the messy-stream edge cases.
 3. `packages/ui` + spatial navigation: channel grid + video overlay, get D-pad navigation feeling instant in a plain browser first.
-4. `apps/tv` on Capacitor targeting Android TV — first real device target, includes the ExoPlayer native bridge.
-5. Port to webOS and Tizen shells — this is where most platform-specific bugs surface (remote key codes, WebKit quirks, back-button behavior).
-6. EPG grid, VOD/series browsing, catch-up, profiles, parental controls — layered on top once the platform triad is proven.
+4. `apps/tv` on Capacitor targeting Android TV — first real device target, includes the ExoPlayer native bridge. *(App shell scaffolded; native ExoPlayer bridge still pending — see docs/android-tv.md.)*
+5. ~~EPG grid, VOD/series browsing, catch-up, profiles, parental controls~~ — **done**, ahead of the platform port (see `apps/tv/src/screens/`: GuideScreen, VodScreen, SeriesScreen, ProfilesScreen, SettingsScreen/PinGate). UI follows an Apple TV-inspired language: focus-scaling cards, horizontal shelves, blurred ambient backdrop (`packages/ui/src/components/FocusCard.tsx`, `Shelf.tsx`, `FocusBackdrop.tsx`). Persistence is currently `localStorage`, not yet the IndexedDB layer described in section 7 — fine for dev, revisit before considering this production-ready (large EPG datasets in particular).
+6. Port to webOS and Tizen shells — this is where most platform-specific bugs surface (remote key codes, WebKit quirks, back-button behavior). Not yet started.
 7. Mobile + desktop shells last — they reuse nearly everything and mainly need a touch-oriented layout pass.
 
 ## 10. Licensing note

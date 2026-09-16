@@ -6,10 +6,10 @@ for the full architecture and tech-stack rationale.
 
 ## Repo layout
 
-- `packages/core` — Xtream Codes client, M3U parser, XMLTV/EPG parser, shared models, remote-input keymap.
+- `packages/core` — Xtream Codes client, M3U parser, XMLTV/EPG parser (+ now/next lookup), profile/PIN models, shared models, remote-input keymap.
 - `packages/player` — hls.js-backed playback engine abstraction + channel preloader ("zap-ahead").
-- `packages/ui` — React components: spatial-navigation focus system, channel grid, video surface.
-- `apps/tv` — the shared TV app (Vite + React), Capacitor-wrapped for Android TV.
+- `packages/ui` — React components: scoped spatial-navigation focus system, channel grid, EPG grid, Apple-TV-style focus cards/shelves/backdrop, top nav, video surface.
+- `apps/tv` — the shared TV app (Vite + React): profiles, live TV, EPG guide, movies, series, settings/parental controls. Capacitor-wrapped for Android TV.
 - `platform/webos`, `platform/tizen` — native app wrappers (not yet scaffolded).
 - `docs/` — setup and testing guides.
 
@@ -27,11 +27,13 @@ See [docs/testing.md](./docs/testing.md) for the full testing guide and
 
 ## Status
 
-Early scaffold: core parsers, playback engine, spatial navigation, and a
-minimal live-TV browsing screen are implemented and tested. VOD/series
-browsing, EPG grid UI, catch-up, profiles, parental controls, and the
-webOS/Tizen native wrappers are not yet built (see PLAN.md for the intended
-build order).
+Core parsers, playback engine, spatial navigation, and the full v1 feature
+set are implemented and tested: live TV, EPG guide with catch-up/timeshift
+playback, movies and series browsing (Apple-TV-inspired shelves/backdrop),
+multi-profile support, and parental-control PIN locks on categories. Not yet
+built: the native ExoPlayer bridge for Android TV, IndexedDB persistence
+(currently localStorage), and the webOS/Tizen native wrappers (see PLAN.md
+for the intended build order).
 
 ## License
 

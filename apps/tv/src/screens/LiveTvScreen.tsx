@@ -1,44 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  parseM3u,
-  XtreamClient,
-  type Channel,
-  type PlaylistSource,
-  type PlatformId,
-} from "@iptv/core";
+import type { Channel, PlaylistSource, PlatformId, Profile } from "@iptv/core";
 import { ChannelPreloader } from "@iptv/player";
 import { ChannelGrid, useRemoteInput, VideoSurface } from "@iptv/ui";
+import { loadChannelsByKind } from "../content-loader.js";
+import { PinGate } from "./PinGate.js";
 
 export interface LiveTvScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
+  profile: Profile;
 }
 
-async function loadChannelsForSource(source: PlaylistSource): Promise<Channel[]> {
-  if (source.kind === "xtream") {
-    const client = new XtreamClient(source);
-    await client.authenticate();
-    return client.getLiveChannels();
-  }
-
-  if (source.kind === "m3u-file") {
-    return parseM3u(source.content).filter((c) => c.kind === "live");
-  }
-
-  const response = await fetch(source.url);
-  const content = await response.text();
-  return parseM3u(content).filter((c) => c.kind === "live");
-}
-
-export function LiveTvScreen({ source, platform }: LiveTvScreenProps): JSX.Element {
+export function LiveTvScreen({ source, platform, profile }: LiveTvScreenProps): JSX.Element {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [pendingUnlock, setPendingUnlock] = useState<Channel | null>(null);
+  const [unlockedCategoryIds, setUnlockedCategoryIds] = useState<Set<string>>(new Set());
   const preloaderRef = useRef(new ChannelPreloader());
 
   useEffect(() => {
     let cancelled = false;
-    loadChannelsForSource(source)
+    loadChannelsByKind(source, "live")
       .then((loaded) => {
         if (!cancelled) {
           setChannels(loaded);
@@ -64,6 +47,19 @@ export function LiveTvScreen({ source, platform }: LiveTvScreenProps): JSX.Eleme
 
   const streamUrl = useMemo(() => activeChannel?.streamUrl ?? null, [activeChannel]);
 
+  function isLocked(channel: Channel): boolean {
+    if (!profile.pinHash || !channel.groupTitle) return false;
+    return profile.lockedCategoryIds.includes(channel.groupTitle) && !unlockedCategoryIds.has(channel.groupTitle);
+  }
+
+  function handleSelect(channel: Channel): void {
+    if (isLocked(channel)) {
+      setPendingUnlock(channel);
+      return;
+    }
+    setActiveChannel(channel);
+  }
+
   if (loadError) {
     return <div role="alert">Failed to load channels: {loadError}</div>;
   }
@@ -75,9 +71,21 @@ export function LiveTvScreen({ source, platform }: LiveTvScreenProps): JSX.Eleme
         channels={channels}
         columns={5}
         viewportHeightPx={window.innerHeight * 0.4}
-        onHighlight={(channel) => preloaderRef.current.warm(channel.streamUrl)}
-        onSelect={(channel) => setActiveChannel(channel)}
+        onHighlight={(channel) => !isLocked(channel) && preloaderRef.current.warm(channel.streamUrl)}
+        onSelect={handleSelect}
       />
+      {pendingUnlock && profile.pinHash && (
+        <PinGate
+          pinHash={profile.pinHash}
+          title={`Unlock ${pendingUnlock.groupTitle}`}
+          onUnlock={() => {
+            setUnlockedCategoryIds((prev) => new Set(prev).add(pendingUnlock.groupTitle!));
+            setActiveChannel(pendingUnlock);
+            setPendingUnlock(null);
+          }}
+          onCancel={() => setPendingUnlock(null)}
+        />
+      )}
     </div>
   );
 }

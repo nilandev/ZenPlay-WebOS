@@ -30,14 +30,16 @@ export function ChannelGrid({
   viewportHeightPx,
 }: ChannelGridProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
+  const clearGraph = useFocusStore((state) => state.clearGraph);
   const focusedId = useFocusStore((state) => state.focusedId);
   const [scrollTop, setScrollTop] = useState(0);
 
   const ids = useMemo(() => channels.map((c) => c.id), [channels]);
 
   useEffect(() => {
-    setGraph(buildGridFocusGraph(ids, columns), ids[0]);
-  }, [ids, columns, setGraph]);
+    setGraph("content", buildGridFocusGraph(ids, columns), ids[0]);
+    return () => clearGraph("content");
+  }, [ids, columns, setGraph, clearGraph]);
 
   useEffect(() => {
     const channel = channels.find((c) => c.id === focusedId);

@@ -10,9 +10,12 @@ pnpm --filter @iptv/ui test       # focus graph + focus store
 ```
 
 Currently covers: M3U parsing edge cases (CRLF, missing attributes, malformed
-directives), XMLTV timestamp/entity parsing, Xtream API response mapping and
-auth-failure handling, spatial-navigation grid graph construction (including
-ragged rows and edge-of-grid behavior), and focus store transitions.
+directives), XMLTV timestamp/entity parsing, now/next EPG lookups, PIN
+hashing/verification, Xtream API response mapping and auth-failure handling,
+spatial-navigation grid/shelf graph construction (including ragged rows,
+edge-of-grid behavior, and multi-shelf column clamping), and focus-store
+scope composition (chrome vs. content scopes coexisting, per-node
+`onSelect` dispatch).
 
 Also run before trusting any change:
 
@@ -44,6 +47,30 @@ Open `http://localhost:5173` in a desktop browser. You can fully exercise:
   `https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`
 - Channel-switch responsiveness (the preloader warms the highlighted channel
   ~250ms after you stop moving — watch Network tab for the prefetch request)
+- **Profile picker** — create a profile, confirm it persists across a page
+  reload (`localStorage`), and that "Switch profile" from Settings returns
+  to the picker without losing the configured playlist source.
+- **Top nav ↔ content focus handoff** — arrow up from the top row of a
+  content screen should not currently move focus into the tab bar (up/down
+  is scoped to content-only for now); left/right across the tab bar and
+  pressing select on a tab should switch screens. This is the one place to
+  watch closely since chrome and content are separate focus-store scopes
+  (see `packages/ui/src/focus/focus-store.ts`) — confirm switching screens
+  doesn't leave two content scopes registered at once (no stray focusable
+  elements from the previous screen still reachable via arrow keys).
+- **Movies/Series shelves** — confirm the blurred backdrop crossfades as you
+  move focus between cards, and that up/down between shelves of different
+  lengths lands on a sensible column (not out of bounds).
+- **EPG guide** — press channel-up/down (`PageUp`/`PageDown` don't map here;
+  use the `ChannelUp`/`ChannelDown` keys if your keyboard/browser sends them,
+  otherwise test this one on-device) to page the 3-hour time window forward
+  and back; select a live (currently-airing) programme to tune the channel,
+  and a past programme on a channel with catch-up enabled to test the
+  timeshift URL.
+- **Parental controls** — in Settings, set a PIN and lock a live category,
+  then confirm selecting a channel in that category from the Live TV screen
+  prompts for the PIN before playing, and that entering it once unlocks the
+  category for the rest of the session.
 
 To test against a real Xtream Codes provider or M3U playlist, use your own
 credentials/URL in the Add Source screen — never commit real provider
