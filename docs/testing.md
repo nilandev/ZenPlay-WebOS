@@ -49,6 +49,17 @@ Open `http://localhost:5173` in a desktop browser. You can fully exercise:
   `https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`
 - Channel-switch responsiveness (the preloader warms the highlighted channel
   ~250ms after you stop moving — watch Network tab for the prefetch request)
+- **Live TV overlay** — the video should fill the entire screen, with a
+  translucent "liquid glass" channel strip overlaid on the bottom third
+  (`packages/ui/src/components/GlassPanel.tsx` + `LiveOverlayGrid.tsx`),
+  showing only 2 rows at a time. Arrow keys move between cards; pressing
+  down past the bottom visible row should slide both rows down by one
+  (and back up in reverse) rather than scrolling the whole page. Selecting
+  a channel or waiting 30 seconds with no arrow-key activity should dismiss
+  the panel down to just the video; any arrow key press afterward brings it
+  back. Back/Escape while the panel is visible dismisses it first; pressing
+  Back again with the panel already hidden exits the channel (clears
+  `activeChannel`).
 - **Profile picker** — create a profile, confirm it persists across a page
   reload (`localStorage`), and that "Switch profile" from Settings returns
   to the picker without losing the configured playlist source.
