@@ -3,19 +3,21 @@
 ## 1. Unit tests (fast, run constantly)
 
 ```bash
-pnpm test          # all packages
+pnpm test          # all packages + apps
 pnpm --filter @iptv/core test     # M3U/XMLTV/Xtream parsers
 pnpm --filter @iptv/player test   # channel preloader
 pnpm --filter @iptv/ui test       # focus graph + focus store
+pnpm --filter @iptv/tv test       # content cache (sessionStorage + Date revival)
 ```
 
 Currently covers: M3U parsing edge cases (CRLF, missing attributes, malformed
 directives), XMLTV timestamp/entity parsing, now/next EPG lookups, PIN
 hashing/verification, Xtream API response mapping and auth-failure handling,
 spatial-navigation grid/shelf graph construction (including ragged rows,
-edge-of-grid behavior, and multi-shelf column clamping), and focus-store
-scope composition (chrome vs. content scopes coexisting, per-node
-`onSelect` dispatch).
+edge-of-grid behavior, and multi-shelf column clamping), focus-store scope
+composition (chrome vs. content scopes coexisting, per-node `onSelect`
+dispatch), and the content cache's sessionStorage round-tripping (including
+Date revival and graceful fallback when sessionStorage throws on quota).
 
 Also run before trusting any change:
 
@@ -78,6 +80,18 @@ Open `http://localhost:5173` in a desktop browser. You can fully exercise:
   then confirm selecting a channel in that category from the Live TV screen
   prompts for the PIN before playing, and that entering it once unlocks the
   category for the rest of the session.
+- **Loading shimmer + cache** — on a hard reload (or first visit to a tab
+  this session), Live TV/Guide/Movies/Series should show a skeleton shimmer
+  matching that screen's real layout (`ChannelGridSkeleton`,
+  `EpgGridSkeleton`, `ShelfRowSkeleton` — see `packages/ui/src/components/skeletons/`)
+  instead of an empty screen, until the first load completes. Switch tabs
+  away and back, or reload the page: content should now appear **instantly**
+  with no shimmer, since `apps/tv/src/use-cached-content.ts` served it from
+  cache while a fresh copy loads silently in the background — open
+  DevTools → Application → Session Storage and look for `iptv.cache.v1:*`
+  keys to confirm what's cached. If a screen looks stuck on the shimmer
+  forever, check the console for a load error first (the cache only masks
+  *slow* loads, not failed ones — `error` is still surfaced separately).
 
 To test against a real Xtream Codes provider or M3U playlist, use your own
 credentials/URL in the Add Source screen — never commit real provider

@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import type { Channel, PlatformId, PlaylistSource } from "@iptv/core";
-import { FocusBackdrop, FocusCard, Shelf, buildShelfFocusGraph, useFocusStore, useRemoteInput } from "@iptv/ui";
+import { FocusBackdrop, FocusCard, Shelf, ShelfRowSkeleton, buildShelfFocusGraph, useFocusStore, useRemoteInput } from "@iptv/ui";
 import { loadChannelsByKind } from "../content-loader.js";
+import { useCachedContent } from "../use-cached-content.js";
 
 export interface VodScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
   onPlay: (movie: Channel) => void;
 }
+
+const EMPTY_MOVIES: Channel[] = [];
 
 /** Groups a flat movie list into shelves by groupTitle, Apple TV browse-page style. */
 function groupByCategory(movies: Channel[]): Array<{ title: string; items: Channel[] }> {
@@ -22,21 +25,12 @@ function groupByCategory(movies: Channel[]): Array<{ title: string; items: Chann
 }
 
 export function VodScreen({ source, platform, onPlay }: VodScreenProps): JSX.Element {
-  const [movies, setMovies] = useState<Channel[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => loadChannelsByKind(source, "movie"), [source]);
+  const { data: movies, isInitialLoading, error } = useCachedContent(`vod:${source.id}`, load, EMPTY_MOVIES);
+
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focusedId = useFocusStore((state) => state.focusedId);
-
-  useEffect(() => {
-    let cancelled = false;
-    loadChannelsByKind(source, "movie")
-      .then((loaded) => !cancelled && setMovies(loaded))
-      .catch((err: unknown) => !cancelled && setError(err instanceof Error ? err.message : String(err)));
-    return () => {
-      cancelled = true;
-    };
-  }, [source]);
 
   const shelves = useMemo(() => groupByCategory(movies), [movies]);
 
@@ -57,6 +51,8 @@ export function VodScreen({ source, platform, onPlay }: VodScreenProps): JSX.Ele
   const focusedMovie = movies.find((m) => m.id === focusedId);
 
   if (error) return <div role="alert">Failed to load movies: {error}</div>;
+
+  if (isInitialLoading) return <ShelfRowSkeleton />;
 
   return (
     <div style={{ paddingTop: 24, paddingBottom: 40 }}>

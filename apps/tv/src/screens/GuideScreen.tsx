@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { XtreamClient, buildChannelGuides, type Channel, type EpgProgramme, type PlatformId, type PlaylistSource } from "@iptv/core";
-import { CategorySidebar, EpgGrid, ProgrammePreview, useRemoteInput } from "@iptv/ui";
+import { CategorySidebar, EpgGrid, EpgGridSkeleton, ProgrammePreview, useRemoteInput } from "@iptv/ui";
 import { loadChannelsByKind, loadEpg } from "../content-loader.js";
+import { useCachedContent } from "../use-cached-content.js";
 
 export interface GuideScreenProps {
   source: PlaylistSource;
@@ -12,6 +13,8 @@ export interface GuideScreenProps {
 
 const WINDOW_HOURS = 3;
 const ALL_CATEGORY_ID = "__all__";
+const EMPTY_CHANNELS: Channel[] = [];
+const EMPTY_PROGRAMMES: EpgProgramme[] = [];
 
 function groupChannelsByCategory(channels: Channel[]): Array<{ id: string; label: string; channels: Channel[] }> {
   const byGroup = new Map<string, Channel[]>();
@@ -25,16 +28,23 @@ function groupChannelsByCategory(channels: Channel[]): Array<{ id: string; label
 }
 
 export function GuideScreen({ source, platform, onPlay }: GuideScreenProps): JSX.Element {
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [programmes, setProgrammes] = useState<EpgProgramme[]>([]);
+  const loadChannels = useCallback(() => loadChannelsByKind(source, "live"), [source]);
+  const { data: channels, isInitialLoading: isChannelsLoading } = useCachedContent(
+    `guide-channels:${source.id}`,
+    loadChannels,
+    EMPTY_CHANNELS,
+  );
+
+  const loadProgrammes = useCallback(() => loadEpg(source), [source]);
+  const { data: programmes, isInitialLoading: isEpgLoading } = useCachedContent(
+    `guide-epg:${source.id}`,
+    loadProgrammes,
+    EMPTY_PROGRAMMES,
+  );
+
   const [windowStart, setWindowStart] = useState(() => roundDownToHalfHour(new Date()));
   const [activeCategoryId, setActiveCategoryId] = useState(ALL_CATEGORY_ID);
   const [focused, setFocused] = useState<{ channel: Channel; programme: EpgProgramme } | null>(null);
-
-  useEffect(() => {
-    loadChannelsByKind(source, "live").then(setChannels);
-    loadEpg(source).then(setProgrammes);
-  }, [source]);
 
   const categories = useMemo(() => groupChannelsByCategory(channels), [channels]);
   const categoryItems = useMemo(
@@ -86,6 +96,8 @@ export function GuideScreen({ source, platform, onPlay }: GuideScreenProps): JSX
     // panel already explains this (see ProgrammePreview's isPast branch).
   }
 
+  const isInitialLoading = isChannelsLoading || isEpgLoading;
+
   return (
     <div style={{ height: "calc(100vh - 76px)", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: "16px 40px 12px", display: "flex", alignItems: "baseline", gap: 16 }}>
@@ -106,26 +118,32 @@ export function GuideScreen({ source, platform, onPlay }: GuideScreenProps): JSX
       </div>
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden", borderTop: "1px solid var(--border)" }}>
-        <CategorySidebar
-          items={categoryItems}
-          activeId={activeCategoryId}
-          onSelect={setActiveCategoryId}
-          contentEntryId={visibleChannels.length > 0 ? `epg:${visibleChannels[0].id}:0` : undefined}
-        />
+        {isInitialLoading ? (
+          <EpgGridSkeleton />
+        ) : (
+          <>
+            <CategorySidebar
+              items={categoryItems}
+              activeId={activeCategoryId}
+              onSelect={setActiveCategoryId}
+              contentEntryId={visibleChannels.length > 0 ? `epg:${visibleChannels[0].id}:0` : undefined}
+            />
 
-        <div style={{ flex: 1, overflow: "hidden" }}>
-          <EpgGrid
-            channels={visibleChannels}
-            programmesByChannel={programmesByChannel}
-            windowStart={windowStart}
-            windowEnd={windowEnd}
-            onFocusProgramme={(channel, programme) => setFocused({ channel, programme })}
-            onSelectProgramme={handleSelectProgramme}
-            sidebarEntryId={activeCategoryId}
-          />
-        </div>
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              <EpgGrid
+                channels={visibleChannels}
+                programmesByChannel={programmesByChannel}
+                windowStart={windowStart}
+                windowEnd={windowEnd}
+                onFocusProgramme={(channel, programme) => setFocused({ channel, programme })}
+                onSelectProgramme={handleSelectProgramme}
+                sidebarEntryId={activeCategoryId}
+              />
+            </div>
 
-        <ProgrammePreview channel={focused?.channel ?? null} programme={focused?.programme ?? null} />
+            <ProgrammePreview channel={focused?.channel ?? null} programme={focused?.programme ?? null} />
+          </>
+        )}
       </div>
     </div>
   );

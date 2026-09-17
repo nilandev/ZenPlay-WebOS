@@ -164,7 +164,13 @@ export function EpgGrid({
 
               return (
                 <div key={id} style={{ position: "absolute", left, width, top: 4, bottom: 4 }}>
-                  <ProgrammeCell id={id} title={programme.title} isLive={isLive} timeRange={formatTimeRange(programme)} />
+                  <ProgrammeCell
+                    id={id}
+                    title={programme.title}
+                    isLive={isLive}
+                    timeRange={formatTimeRange(programme)}
+                    onClick={() => onSelectProgramme?.(channel, programme)}
+                  />
                 </div>
               );
             })}
@@ -175,18 +181,37 @@ export function EpgGrid({
   );
 }
 
-function ProgrammeCell({ id, title, isLive, timeRange }: { id: string; title: string; isLive: boolean; timeRange: string }): JSX.Element {
+function ProgrammeCell({
+  id,
+  title,
+  isLive,
+  timeRange,
+  onClick,
+}: {
+  id: string;
+  title: string;
+  isLive: boolean;
+  timeRange: string;
+  onClick: () => void;
+}): JSX.Element {
   const isFocused = useFocusStore((state) => state.focusedId === id);
+  const focus = useFocusStore((state) => state.focus);
 
   return (
     <Focusable id={id}>
-      <div
+      <button
+        type="button"
+        onClick={() => {
+          focus(id);
+          onClick();
+        }}
         style={{
           width: "100%",
           height: "100%",
           borderRadius: 6,
           padding: "6px 10px",
           overflow: "hidden",
+          textAlign: "left",
           background: isFocused ? "var(--accent, #6ee7ff)" : isLive ? "var(--surface-raised, #24242c)" : "var(--surface, #1a1a20)",
           color: isFocused ? "#062028" : "var(--text, #f4f4f6)",
           border: isLive && !isFocused ? "1px solid var(--accent-dim, #3a8fa3)" : "1px solid transparent",
@@ -208,7 +233,7 @@ function ProgrammeCell({ id, title, isLive, timeRange }: { id: string; title: st
           {title}
         </div>
         <div style={{ fontSize: 10, opacity: 0.75, whiteSpace: "nowrap" }}>{timeRange}</div>
-      </div>
+      </button>
     </Focusable>
   );
 }

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Channel, PlaylistSource, PlatformId, Profile } from "@iptv/core";
 import { ChannelPreloader } from "@iptv/player";
-import { ChannelGrid, useRemoteInput, VideoSurface } from "@iptv/ui";
+import { ChannelGrid, ChannelGridSkeleton, useRemoteInput, VideoSurface } from "@iptv/ui";
 import { loadChannelsByKind } from "../content-loader.js";
+import { useCachedContent } from "../use-cached-content.js";
 import { PinGate } from "./PinGate.js";
 
 export interface LiveTvScreenProps {
@@ -11,30 +12,20 @@ export interface LiveTvScreenProps {
   profile: Profile;
 }
 
+const EMPTY_CHANNELS: Channel[] = [];
+
 export function LiveTvScreen({ source, platform, profile }: LiveTvScreenProps): JSX.Element {
-  const [channels, setChannels] = useState<Channel[]>([]);
+  const load = useCallback(() => loadChannelsByKind(source, "live"), [source]);
+  const { data: channels, isInitialLoading, error: loadError } = useCachedContent(`live:${source.id}`, load, EMPTY_CHANNELS);
+
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [pendingUnlock, setPendingUnlock] = useState<Channel | null>(null);
   const [unlockedCategoryIds, setUnlockedCategoryIds] = useState<Set<string>>(new Set());
   const preloaderRef = useRef(new ChannelPreloader());
 
   useEffect(() => {
-    let cancelled = false;
-    loadChannelsByKind(source, "live")
-      .then((loaded) => {
-        if (!cancelled) {
-          setChannels(loaded);
-          setActiveChannel((current) => current ?? loaded[0] ?? null);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [source]);
+    setActiveChannel((current) => current ?? channels[0] ?? null);
+  }, [channels]);
 
   useEffect(() => {
     const preloader = preloaderRef.current;
@@ -62,6 +53,15 @@ export function LiveTvScreen({ source, platform, profile }: LiveTvScreenProps): 
 
   if (loadError) {
     return <div role="alert">Failed to load channels: {loadError}</div>;
+  }
+
+  if (isInitialLoading) {
+    return (
+      <div style={{ display: "grid", gridTemplateRows: "60vh 1fr", height: "100vh" }}>
+        <div style={{ background: "#000" }} />
+        <ChannelGridSkeleton columns={5} />
+      </div>
+    );
   }
 
   return (

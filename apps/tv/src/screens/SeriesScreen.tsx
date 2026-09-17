@@ -1,7 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PlatformId, PlaylistSource, SeriesEpisode } from "@iptv/core";
-import { FocusBackdrop, FocusCard, Shelf, buildGridFocusGraph, buildShelfFocusGraph, useFocusStore, useRemoteInput } from "@iptv/ui";
+import {
+  FocusBackdrop,
+  FocusCard,
+  Shelf,
+  ShelfRowSkeleton,
+  buildGridFocusGraph,
+  buildShelfFocusGraph,
+  useFocusStore,
+  useRemoteInput,
+} from "@iptv/ui";
 import { loadSeriesEpisodes, loadSeriesList } from "../content-loader.js";
+import { useCachedContent } from "../use-cached-content.js";
 
 export interface SeriesScreenProps {
   source: PlaylistSource;
@@ -10,6 +20,9 @@ export interface SeriesScreenProps {
 }
 
 type SeriesSummary = Awaited<ReturnType<typeof loadSeriesList>>[number];
+
+const EMPTY_SERIES: SeriesSummary[] = [];
+const EMPTY_EPISODES: SeriesEpisode[] = [];
 
 function groupByCategory(list: SeriesSummary[]): Array<{ title: string; items: SeriesSummary[] }> {
   const byGroup = new Map<string, SeriesSummary[]>();
@@ -23,85 +36,89 @@ function groupByCategory(list: SeriesSummary[]): Array<{ title: string; items: S
 }
 
 export function SeriesScreen({ source, platform, onPlayEpisode }: SeriesScreenProps): JSX.Element {
-  const [seriesList, setSeriesList] = useState<SeriesSummary[]>([]);
-  const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
-  const [episodes, setEpisodes] = useState<SeriesEpisode[]>([]);
+  const loadList = useCallback(() => loadSeriesList(source), [source]);
+  const { data: seriesList, isInitialLoading: isListLoading } = useCachedContent(`series-list:${source.id}`, loadList, EMPTY_SERIES);
+
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focusedId = useFocusStore((state) => state.focusedId);
+  const [selected, setSelected] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadSeriesList(source).then(setSeriesList);
-  }, [source]);
-
-  useEffect(() => {
-    if (!selectedSeriesId) return;
-    let cancelled = false;
-    loadSeriesEpisodes(source, selectedSeriesId).then((loaded) => !cancelled && setEpisodes(loaded));
-    return () => {
-      cancelled = true;
-    };
-  }, [source, selectedSeriesId]);
+  const loadEpisodes = useCallback(
+    () => (selected ? loadSeriesEpisodes(source, selected) : Promise.resolve(EMPTY_EPISODES)),
+    [source, selected],
+  );
+  const { data: episodes, isInitialLoading: isEpisodesLoading } = useCachedContent(
+    selected ? `series-episodes:${source.id}:${selected}` : "series-episodes:none",
+    loadEpisodes,
+    EMPTY_EPISODES,
+  );
 
   const shelves = useMemo(() => groupByCategory(seriesList), [seriesList]);
 
   useEffect(() => {
-    if (selectedSeriesId) return;
+    if (selected) return;
     const rows = shelves.map((shelf) => shelf.items.map((item) => item.id));
     if (rows.length === 0 || rows.every((r) => r.length === 0)) return;
     setGraph("content", buildShelfFocusGraph(rows), rows[0][0]);
     return () => clearGraph("content");
-  }, [shelves, selectedSeriesId, setGraph, clearGraph]);
+  }, [shelves, selected, setGraph, clearGraph]);
 
   useEffect(() => {
-    if (!selectedSeriesId || episodes.length === 0) return;
+    if (!selected || episodes.length === 0) return;
     const ids = episodes.map((ep) => ep.id);
     setGraph("content", buildGridFocusGraph(ids, 4), ids[0]);
     return () => clearGraph("content");
-  }, [selectedSeriesId, episodes, setGraph, clearGraph]);
+  }, [selected, episodes, setGraph, clearGraph]);
 
   useRemoteInput(platform, {
     onSelect: (id) => {
       if (!id) return;
-      if (selectedSeriesId) {
+      if (selected) {
         const episode = episodes.find((ep) => ep.id === id);
         if (episode) onPlayEpisode(episode);
         return;
       }
       const series = seriesList.find((s) => s.id === id);
-      if (series) setSelectedSeriesId(series.id);
+      if (series) setSelected(series.id);
     },
     onBack: () => {
-      if (selectedSeriesId) setSelectedSeriesId(null);
+      if (selected) setSelected(null);
     },
   });
 
-  if (selectedSeriesId) {
-    const series = seriesList.find((s) => s.id === selectedSeriesId);
+  if (selected) {
+    const series = seriesList.find((s) => s.id === selected);
     const bySeasonEntries = groupEpisodesBySeason(episodes);
     return (
       <div style={{ padding: "24px 40px" }}>
         <h1>{series?.name}</h1>
-        {bySeasonEntries.map(([season, seasonEpisodes]) => (
-          <div key={season} style={{ marginBottom: 24 }}>
-            <h3>Season {season}</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-              {seasonEpisodes.map((episode) => (
-                <FocusCard
-                  key={episode.id}
-                  id={episode.id}
-                  title={`E${episode.episode}: ${episode.title}`}
-                  imageUrl={episode.posterUrl}
-                  aspectRatio="16 / 9"
-                  onSelect={() => onPlayEpisode(episode)}
-                />
-              ))}
+        {isEpisodesLoading ? (
+          <ShelfRowSkeleton rows={1} cardWidth={280} aspectRatio="16 / 9" />
+        ) : (
+          bySeasonEntries.map(([season, seasonEpisodes]) => (
+            <div key={season} style={{ marginBottom: 24 }}>
+              <h3>Season {season}</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+                {seasonEpisodes.map((episode) => (
+                  <FocusCard
+                    key={episode.id}
+                    id={episode.id}
+                    title={`E${episode.episode}: ${episode.title}`}
+                    imageUrl={episode.posterUrl}
+                    aspectRatio="16 / 9"
+                    onSelect={() => onPlayEpisode(episode)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
     );
   }
+
+  if (isListLoading) return <ShelfRowSkeleton />;
 
   const focusedSeries = seriesList.find((s) => s.id === focusedId);
 
@@ -115,7 +132,7 @@ export function SeriesScreen({ source, platform, onPlayEpisode }: SeriesScreenPr
           items={shelf.items}
           getId={(item) => item.id}
           renderItem={(item) => (
-            <FocusCard id={item.id} title={item.name} imageUrl={item.posterUrl} onSelect={() => setSelectedSeriesId(item.id)} />
+            <FocusCard id={item.id} title={item.name} imageUrl={item.posterUrl} onSelect={() => setSelected(item.id)} />
           )}
         />
       ))}

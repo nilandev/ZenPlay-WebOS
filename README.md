@@ -30,10 +30,13 @@ See [docs/testing.md](./docs/testing.md) for the full testing guide and
 Core parsers, playback engine, spatial navigation, and the full v1 feature
 set are implemented and tested: live TV, EPG guide with catch-up/timeshift
 playback, movies and series browsing (Apple-TV-inspired shelves/backdrop),
-multi-profile support, and parental-control PIN locks on categories. Not yet
-built: the native ExoPlayer bridge for Android TV, IndexedDB persistence
-(currently localStorage), and the webOS/Tizen native wrappers (see PLAN.md
-for the intended build order).
+multi-profile support, and parental-control PIN locks on categories. Screen
+content is cached per session (in-memory + sessionStorage) with matching
+loading-shimmer skeletons, so navigating between tabs or reloading doesn't
+show an empty screen while data refetches. Not yet built: the native
+ExoPlayer bridge for Android TV, IndexedDB persistence (currently
+localStorage/sessionStorage), and the webOS/Tizen native wrappers (see
+PLAN.md for the intended build order).
 
 ## License
 

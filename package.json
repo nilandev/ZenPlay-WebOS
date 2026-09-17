@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "pnpm -r --filter=./packages/* --filter=./apps/* build",
-    "test": "pnpm -r --filter=./packages/* test",
+    "test": "pnpm -r --filter=./packages/* --filter=./apps/* test",
     "typecheck": "pnpm -r --filter=./packages/* --filter=./apps/* typecheck",
     "lint": "eslint . --ext .ts,.tsx",
     "dev:tv": "pnpm --filter @iptv/tv dev"
