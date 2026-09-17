@@ -69,9 +69,18 @@ export class XtreamAuthError extends Error {
  * Thin client for the Xtream Codes `player_api.php` protocol.
  * Kept dependency-free (fetch only) so it runs unmodified in every shell
  * (Capacitor/Electron/webOS/Tizen WebKit all provide global fetch).
+ *
+ * Accepts an optional fetch implementation so a host app can route requests
+ * through its own transport — e.g. a same-origin dev proxy to sidestep
+ * browser CORS when a provider doesn't send Access-Control-Allow-Origin
+ * (see apps/tv/src/proxy-fetch.ts) — without this package needing to know
+ * anything about that concern itself.
  */
 export class XtreamClient {
-  constructor(private readonly credentials: XtreamCredentials) {}
+  constructor(
+    private readonly credentials: XtreamCredentials,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
 
   private buildApiUrl(params: Record<string, string>): string {
     const url = new URL(`${this.stripTrailingSlash(this.credentials.baseUrl)}/player_api.php`);
@@ -88,7 +97,7 @@ export class XtreamClient {
   }
 
   private async fetchJson<T>(params: Record<string, string>): Promise<T> {
-    const response = await fetch(this.buildApiUrl(params));
+    const response = await this.fetchImpl(this.buildApiUrl(params));
     if (!response.ok) {
       throw new Error(`Xtream request failed: HTTP ${response.status}`);
     }

@@ -83,6 +83,24 @@ To test against a real Xtream Codes provider or M3U playlist, use your own
 credentials/URL in the Add Source screen — never commit real provider
 credentials to the repo.
 
+**CORS in the browser dev server**: your Xtream/M3U/XMLTV provider almost
+certainly doesn't send `Access-Control-Allow-Origin`, so a plain browser tab
+blocks `fetch()` calls to it as cross-origin — you'll see a same-origin
+policy error in the console. This is normal for a provider you don't
+control and can't be fixed from the app's code. `apps/tv/vite-dev-proxy.ts`
+adds a `/__iptv-proxy?url=...` dev-server route (wired into
+`vite.config.ts`) that fetches server-side (Node has no CORS) and streams
+the response back same-origin; `apps/tv/src/proxy-fetch.ts` routes
+`content-loader.ts`'s and `XtreamClient`'s requests through it automatically
+whenever `import.meta.env.DEV` is true. It's inert in production builds —
+Android TV/webOS/Tizen ship through their own native shells, not Vite's dev
+server, so there's nothing to proxy there and the dev-only code is dropped
+by the production bundler (verify with
+`grep -c "__iptv-proxy" apps/tv/dist/assets/*.js` after `pnpm build` — should
+be 0). If you add a new raw `fetch()` call against a provider URL anywhere
+in `apps/tv`, route it through `proxyFetch` the same way, or it'll work in
+the Android TV app but fail in the browser dev server.
+
 To sanity-check webOS/Tizen-specific input handling without the actual SDKs,
 temporarily hardcode `detectPlatform()` in `apps/tv/src/platform.ts` to
 return `"tizen"` or `"webos"` and confirm `resolveRemoteAction` in

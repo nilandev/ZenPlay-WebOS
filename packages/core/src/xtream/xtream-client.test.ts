@@ -95,4 +95,13 @@ describe("XtreamClient", () => {
     const client = new XtreamClient(credentials);
     await expect(client.authenticate()).rejects.toThrow(/HTTP 500/);
   });
+
+  it("uses an injected fetch implementation instead of the global one when provided", async () => {
+    const injectedFetch = vi.fn().mockResolvedValueOnce(jsonResponse({ user_info: { auth: 1 }, server_info: {} }));
+    const client = new XtreamClient(credentials, injectedFetch);
+    await client.authenticate();
+
+    expect(injectedFetch).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

@@ -12,6 +12,7 @@ import { SettingsScreen } from "./screens/SettingsScreen.js";
 import { ProfilesScreen } from "./screens/ProfilesScreen.js";
 import { PlayerScreen } from "./screens/PlayerScreen.js";
 import { detectPlatform } from "./platform.js";
+import { proxyFetch } from "./proxy-fetch.js";
 
 const TABS = [
   { id: "live", label: "Live TV" },
@@ -36,7 +37,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (activeSource?.kind !== "xtream") return;
-    const client = new XtreamClient(activeSource);
+    const client = new XtreamClient(activeSource, proxyFetch);
     client
       .authenticate()
       .then(() => client.getLiveCategories())

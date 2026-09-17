@@ -51,6 +51,9 @@ importers:
       '@capacitor/core':
         specifier: ^6.2.0
         version: 6.2.2
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.3
       '@types/react':
         specifier: ^18.3.12
         version: 18.3.31
