@@ -94,6 +94,19 @@ background, accent-colored wordmark) — replace
 `webos-meta/{icon,largeIcon,splash}.png` with real artwork
 before shipping.
 
+## Why `vite.config.ts` sets `base: "./"`
+
+Vite's default (`base: "/"`) emits `<script src="/assets/...">` — an
+absolute root path. That's correct for a normal web server, but the
+packaged webOS app isn't served from a web root; loading it produced an
+app that installed fine (the icon comes from `appinfo.json`, unrelated to
+the bundle) but never actually opened — `index.html` loaded with no
+server able to resolve `/assets/...`, so the JS bundle silently failed to
+load and the app never mounted. `base: "./"` makes the emitted path
+relative (`./assets/...`), which resolves correctly however the app
+directory ends up being served, and is a no-op for `vite dev` (which
+always serves from `/` regardless of this setting).
+
 ## appinfo.json notes
 
 - `id` (`com.nilandev.freeiptvplayer`) is the app's reverse-DNS identifier;

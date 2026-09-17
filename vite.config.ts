@@ -7,6 +7,13 @@ import { iptvDevProxyPlugin } from "./vite-dev-proxy.js";
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  // webOS TV loads the packaged app from its own local app directory, not
+  // from a web server root — an absolute "/assets/..." base (Vite's
+  // default) 404s there, since there's no server to resolve "/" against.
+  // Relative asset paths work both in the packaged app and in `vite dev`
+  // (dev server serves everything from "/" anyway, so this is a no-op
+  // there) and in `ares-launch --hosted`.
+  base: "./",
   plugins: [react(), iptvDevProxyPlugin()],
   resolve: {
     alias: {
