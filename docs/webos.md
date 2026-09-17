@@ -27,26 +27,31 @@ launch workflow.
 
 ## Build, package, install, launch
 
-From `apps/webos/`:
+These scripts work identically from the repo root or from `apps/webos/`
+(the root `package.json` just forwards to `@iptv/webos`'s own scripts).
+The device name is a **plain trailing argument**, not a flag — e.g.
+`pnpm launch-device myTV`, not `--device=myTV` (npm/pnpm don't reliably
+forward `--flag=value` config through nested `--filter` invocations, so
+these scripts take positional args instead):
 
 ```bash
-pnpm build              # vite build, then copies webos-meta/ (appinfo.json + icons) into dist/
-pnpm package             # ares-package dist -o webos-dist  →  produces an .ipk
-pnpm install-device --device=myTV     # ares-install --device myTV <the .ipk>
-pnpm launch-device --device=myTV      # ares-launch --device myTV com.nilandev.freeiptvplayer
+pnpm build                 # vite build, then copies webos-meta/ (appinfo.json + icons) into dist/
+pnpm package                # ares-package dist -o webos-dist  →  produces an .ipk
+pnpm install-device myTV    # finds the .ipk in webos-dist/, runs ares-install --device myTV <ipk>
+pnpm launch-device myTV     # ares-launch com.nilandev.freeiptvplayer --device myTV
 ```
 
 For fast iteration without packaging/installing every time, launch the
 built `dist/` directly in "hosted" mode:
 
 ```bash
-pnpm launch-hosted --device=myTV
+pnpm launch-hosted myTV
 ```
 
 To inspect the running app (remote DevTools):
 
 ```bash
-pnpm inspect-device --device=myTV
+pnpm inspect-device myTV
 ```
 
 ## Project layout

@@ -11,7 +11,12 @@
     "test": "pnpm -r --filter=./packages/* --filter=./apps/* test",
     "typecheck": "pnpm -r --filter=./packages/* --filter=./apps/* typecheck",
     "lint": "eslint . --ext .ts,.tsx",
-    "dev:webos": "pnpm --filter @iptv/webos dev"
+    "dev:webos": "pnpm --filter @iptv/webos dev",
+    "package": "pnpm --filter @iptv/webos package",
+    "install-device": "pnpm --filter @iptv/webos install-device",
+    "launch-device": "pnpm --filter @iptv/webos launch-device",
+    "launch-hosted": "pnpm --filter @iptv/webos launch-hosted",
+    "inspect-device": "pnpm --filter @iptv/webos inspect-device"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.15.0",
