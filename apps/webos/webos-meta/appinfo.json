@@ -1,0 +1,15 @@
+{
+  "id": "com.nilandev.freeiptvplayer",
+  "title": "Free IPTV Player",
+  "type": "web",
+  "main": "index.html",
+  "version": "0.1.0",
+  "vendor": "nilandev",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "iconColor": "#08080b",
+  "splashBackground": "splash.png",
+  "resolution": "1920x1080",
+  "disableBackHistoryAPI": true,
+  "requiredACG": []
+}

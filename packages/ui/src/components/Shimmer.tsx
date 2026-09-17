@@ -34,7 +34,7 @@ export function Shimmer({ width = "100%", height = 16, borderRadius = 6, style }
 /**
  * Injects the shimmer keyframes once. Called by every skeleton component's
  * module scope isn't reliable across bundlers, so screens/skeletons should
- * mount this once near the app root instead — see apps/tv/src/App.tsx.
+ * mount this once near the app root instead — see apps/webos/src/App.tsx.
  */
 export function ShimmerStyles(): JSX.Element {
   return (

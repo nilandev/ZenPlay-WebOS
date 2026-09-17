@@ -1,8 +1,7 @@
 /**
  * Hashes a parental-control PIN with SHA-256 via the Web Crypto API, which
- * is available in every target runtime (Capacitor/Chromium WebView,
- * Electron, and webOS/Tizen's WebKit both expose `crypto.subtle`). PINs are
- * never stored or compared in plaintext.
+ * webOS TV's WebKit runtime exposes as `crypto.subtle`. PINs are never
+ * stored or compared in plaintext.
  */
 export async function hashPin(pin: string): Promise<string> {
   const encoded = new TextEncoder().encode(pin);

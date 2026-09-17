@@ -10,24 +10,17 @@ export type RemoteAction =
   | "channel-down"
   | "unknown";
 
-export type PlatformId = "android-tv" | "webos" | "tizen" | "web" | "desktop";
+export type PlatformId = "webos" | "web";
 
 /**
- * webOS and Tizen remotes fire nonstandard keyCodes for back/channel/media
- * keys that never appear on a normal keyboard, so a single generic
- * KeyboardEvent handler cannot cover all three platforms. Each platform's
- * shell should call `resolveRemoteAction(platform, event)` instead of
- * inspecting event.key/keyCode directly.
+ * webOS's Magic Remote fires nonstandard keyCodes for the back key (and
+ * some media keys) that never appear on a normal keyboard, so a plain
+ * KeyboardEvent.key handler alone doesn't cover it. The app shell should
+ * call `resolveRemoteAction(platform, event)` instead of inspecting
+ * event.key/keyCode directly.
  */
 export function resolveRemoteAction(platform: PlatformId, event: KeyboardEvent): RemoteAction {
-  switch (platform) {
-    case "tizen":
-      return resolveTizenKey(event);
-    case "webos":
-      return resolveWebOsKey(event);
-    default:
-      return resolveStandardKey(event);
-  }
+  return platform === "webos" ? resolveWebOsKey(event) : resolveStandardKey(event);
 }
 
 function resolveStandardKey(event: KeyboardEvent): RemoteAction {
@@ -56,35 +49,13 @@ function resolveStandardKey(event: KeyboardEvent): RemoteAction {
   }
 }
 
-// Tizen TV remote keyCodes: https://developer.samsung.com/smarttv/develop/api-references/tizen-web-device-api-references/tvinputdevice-api.html
-const TIZEN_BACK = 10009;
-const TIZEN_CHANNEL_UP = 427;
-const TIZEN_CHANNEL_DOWN = 428;
-const TIZEN_PLAY_PAUSE = 10252;
-
-function resolveTizenKey(event: KeyboardEvent): RemoteAction {
-  switch (event.keyCode) {
-    case TIZEN_BACK:
-      return "back";
-    case TIZEN_CHANNEL_UP:
-      return "channel-up";
-    case TIZEN_CHANNEL_DOWN:
-      return "channel-down";
-    case TIZEN_PLAY_PAUSE:
-      return "play-pause";
-    default:
-      return resolveStandardKey(event);
-  }
-}
-
-// webOS magic remote back key reports keyCode 461 (LG's nonstandard code).
+// webOS Magic Remote back key reports keyCode 461 (LG's nonstandard code) —
+// arrow keys, Enter, and media keys already come through with standard
+// KeyboardEvent.key values on webOS's Chromium-based runtime, so only back
+// needs special-casing here.
 const WEBOS_BACK = 461;
 
 function resolveWebOsKey(event: KeyboardEvent): RemoteAction {
-  switch (event.keyCode) {
-    case WEBOS_BACK:
-      return "back";
-    default:
-      return resolveStandardKey(event);
-  }
+  if (event.keyCode === WEBOS_BACK) return "back";
+  return resolveStandardKey(event);
 }

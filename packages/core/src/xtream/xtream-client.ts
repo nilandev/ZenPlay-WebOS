@@ -67,13 +67,14 @@ export class XtreamAuthError extends Error {
 
 /**
  * Thin client for the Xtream Codes `player_api.php` protocol.
- * Kept dependency-free (fetch only) so it runs unmodified in every shell
- * (Capacitor/Electron/webOS/Tizen WebKit all provide global fetch).
+ * Kept dependency-free (fetch only) so it runs unmodified both in a plain
+ * browser during dev and inside webOS TV's WebKit runtime, which provides
+ * global fetch.
  *
  * Accepts an optional fetch implementation so a host app can route requests
  * through its own transport — e.g. a same-origin dev proxy to sidestep
  * browser CORS when a provider doesn't send Access-Control-Allow-Origin
- * (see apps/tv/src/proxy-fetch.ts) — without this package needing to know
+ * (see apps/webos/src/proxy-fetch.ts) — without this package needing to know
  * anything about that concern itself.
  */
 export class XtreamClient {

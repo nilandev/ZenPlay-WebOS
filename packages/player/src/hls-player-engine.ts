@@ -2,11 +2,10 @@ import Hls, { ErrorData, Events, type HlsConfig } from "hls.js";
 import type { AudioTrackInfo, PlayerEngine, PlayerError, PlayerStats } from "./player-engine.js";
 
 /**
- * hls.js-backed engine used on webOS, Tizen, desktop (Electron/Chromium),
- * and as the Android TV fallback when the native ExoPlayer bridge isn't
- * available. Tuned defaults account for how permissive real IPTV provider
- * streams need to be (irregular segment timing, non-strict manifests)
- * versus hls.js's spec-strict defaults.
+ * hls.js-backed engine used on webOS TV's Chromium-based runtime. Tuned
+ * defaults account for how permissive real IPTV provider streams need to
+ * be (irregular segment timing, non-strict manifests) versus hls.js's
+ * spec-strict defaults.
  */
 const IPTV_TUNED_CONFIG: Partial<HlsConfig> = {
   maxBufferLength: 30,

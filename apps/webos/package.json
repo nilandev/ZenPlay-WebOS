@@ -1,0 +1,35 @@
+{
+  "name": "@iptv/webos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/copy-webos-meta.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "package": "pnpm build && ares-package dist -o webos-dist",
+    "install-device": "ares-install --device $npm_config_device $(ls webos-dist/*.ipk | tail -1)",
+    "launch-device": "ares-launch --device $npm_config_device com.nilandev.freeiptvplayer",
+    "launch-hosted": "ares-launch --device $npm_config_device --hosted dist",
+    "inspect-device": "ares-inspect --device $npm_config_device --app com.nilandev.freeiptvplayer --open"
+  },
+  "dependencies": {
+    "@iptv/core": "workspace:*",
+    "@iptv/player": "workspace:*",
+    "@iptv/ui": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.5"
+  }
+}

@@ -14,7 +14,7 @@ export interface RemoteInputHandlers {
  * Wires document-level keydown events to the focus store's move()/focus
  * actions plus screen-provided handlers for select/back/media keys.
  * Owns focus entirely in JS state rather than relying on native DOM
- * focus/:focus-visible, since Tizen/webOS WebKit builds behave
+ * focus/:focus-visible, since webOS TV's WebKit builds behave
  * inconsistently there (see packages/core input/keymap.ts).
  */
 export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandlers = {}): void {

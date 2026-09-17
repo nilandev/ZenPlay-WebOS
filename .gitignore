@@ -5,11 +5,8 @@ build/
 *.log
 .turbo/
 *.tsbuildinfo
-android/app/build/
-android/.gradle/
-android/app/release/
-.cxx/
-*.keystore
+webos-dist/
+*.ipk
 .env
 .env.local
 coverage/

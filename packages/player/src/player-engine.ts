@@ -20,10 +20,9 @@ export interface PlayerError {
 }
 
 /**
- * Common playback interface every platform-specific engine implements
- * (web engine backed by hls.js/shaka, or a native ExoPlayer bridge on
- * Android TV via Capacitor). UI code depends only on this interface so it
- * never branches on platform.
+ * Common playback interface every engine implementation satisfies
+ * (currently just the hls.js-backed one). UI code depends only on this
+ * interface so it never branches on platform.
  */
 export interface PlayerEngine {
   attach(videoElement: HTMLVideoElement): void;

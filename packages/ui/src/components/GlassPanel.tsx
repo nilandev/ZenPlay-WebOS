@@ -13,11 +13,11 @@ export interface GlassPanelProps {
  * slides on visibility toggle rather than mounting/unmounting instantly,
  * so dismissal reads as a deliberate motion rather than a hard cut.
  *
- * `backdrop-filter: blur` is well supported in Chromium (Android
- * TV/desktop) and modern WebKit (webOS/Tizen's browsers are Chromium- or
- * WebKit-based respectively); the solid `background` fallback color still
- * reads fine as a plain translucent panel on any engine that ignores the
- * filter.
+ * `backdrop-filter: blur` is supported on webOS TV's Chromium-based
+ * runtime (Chromium 76+, so webOS TV 6.0+), though LG TV GPUs have
+ * historically had inconsistent rendering/performance with it — the solid
+ * `background` gradient underneath is a reasonable fallback (still reads
+ * as a translucent panel) if it needs to be dropped on real hardware.
  */
 export function GlassPanel({ children, visible, style }: GlassPanelProps): JSX.Element {
   return (

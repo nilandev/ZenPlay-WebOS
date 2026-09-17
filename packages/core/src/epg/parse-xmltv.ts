@@ -4,7 +4,7 @@ import type { EpgProgramme } from "../models/epg.js";
  * XMLTV timestamps look like "20240115203000 +0000" or "20240115203000".
  * We parse them manually instead of via Date.parse, which does not
  * reliably understand this format across JS engines (notably older
- * WebKit builds on Tizen/webOS).
+ * webOS TV WebKit builds).
  */
 export function parseXmltvTimestamp(raw: string): Date {
   const match = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s*([+-]\d{4})?$/.exec(raw.trim());

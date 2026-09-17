@@ -12,7 +12,7 @@ export interface FocusableProps {
  * Renders a focusable tile whose visual "focused" state is driven purely by
  * the focus store (not native DOM focus), and scrolls itself into view when
  * it becomes focused so keyboard/remote navigation through long lists works
- * without relying on browser auto-scroll behavior (unreliable on Tizen/webOS).
+ * without relying on browser auto-scroll behavior (unreliable on older webOS TV WebKit).
  */
 export function Focusable({ id, children, className, focusedClassName }: FocusableProps): JSX.Element {
   const isFocused = useFocusStore((state) => state.focusedId === id);
@@ -37,7 +37,7 @@ export function Focusable({ id, children, className, focusedClassName }: Focusab
       // parent instead of collapsing to 0 — percentage heights don't
       // resolve against this div's default auto height. Not display:
       // contents, since that has historically been unreliable for
-      // scrollIntoView/focus on older WebKit (the Tizen/webOS TV target).
+      // scrollIntoView/focus on older webOS TV WebKit.
       style={{ width: "100%", height: "100%" }}
     >
       {children}

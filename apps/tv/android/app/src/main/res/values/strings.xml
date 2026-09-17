@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">Free IPTV Player</string>
-    <string name="title_activity_main">Free IPTV Player</string>
-    <string name="package_name">dev.nilan.freeiptvplayer</string>
-    <string name="custom_url_scheme">dev.nilan.freeiptvplayer</string>
-</resources>

@@ -11,7 +11,7 @@
     "test": "pnpm -r --filter=./packages/* --filter=./apps/* test",
     "typecheck": "pnpm -r --filter=./packages/* --filter=./apps/* typecheck",
     "lint": "eslint . --ext .ts,.tsx",
-    "dev:tv": "pnpm --filter @iptv/tv dev"
+    "dev:webos": "pnpm --filter @iptv/webos dev"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.15.0",

@@ -10,8 +10,9 @@ export interface VideoSurfaceProps {
 /**
  * Owns a PlayerEngine instance for its lifetime and reloads it whenever
  * streamUrl changes (e.g. the user switches channels). engineFactory lets
- * platform shells inject a native engine (Android TV ExoPlayer bridge)
- * instead of the default hls.js-backed one.
+ * a host app inject an alternative engine instead of the default
+ * hls.js-backed one, though webOS TV's own Chromium <video> + MSE is
+ * expected to be sufficient without a native playback bridge.
  */
 export function VideoSurface({ streamUrl, engineFactory, onError }: VideoSurfaceProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
