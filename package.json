@@ -3,26 +3,37 @@
   "private": true,
   "version": "0.1.0",
   "license": "MIT",
+  "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "build": "pnpm -r --filter=./packages/* --filter=./apps/* build",
-    "test": "pnpm -r --filter=./packages/* --filter=./apps/* test",
-    "typecheck": "pnpm -r --filter=./packages/* --filter=./apps/* typecheck",
-    "lint": "eslint . --ext .ts,.tsx",
-    "dev:webos": "pnpm --filter @iptv/webos dev",
-    "package": "pnpm --filter @iptv/webos package",
-    "install-device": "pnpm --filter @iptv/webos install-device",
-    "launch-device": "pnpm --filter @iptv/webos launch-device",
-    "launch-hosted": "pnpm --filter @iptv/webos launch-hosted",
-    "inspect-device": "pnpm --filter @iptv/webos inspect-device"
+    "dev": "vite",
+    "build": "vite build && node scripts/copy-webos-meta.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "package": "pnpm build && ares-package dist -o webos-dist",
+    "install-device": "node scripts/install-device.mjs",
+    "launch-device": "ares-launch com.nilandev.freeiptvplayer --device",
+    "launch-hosted": "ares-launch --hosted dist --device",
+    "inspect-device": "ares-inspect --app com.nilandev.freeiptvplayer --open --device"
+  },
+  "dependencies": {
+    "hls.js": "^1.5.17",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.1"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^8.15.0",
-    "@typescript-eslint/parser": "^8.15.0",
-    "eslint": "^8.57.1",
+    "@testing-library/react": "^16.0.1",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "jsdom": "^25.0.1",
     "typescript": "^5.6.3",
+    "vite": "^5.4.11",
     "vitest": "^2.1.5"
   }
 }

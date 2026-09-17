@@ -3,11 +3,7 @@
 ## 1. Unit tests (fast, run constantly)
 
 ```bash
-pnpm test          # all packages + apps
-pnpm --filter @iptv/core test     # M3U/XMLTV/Xtream parsers
-pnpm --filter @iptv/player test   # channel preloader
-pnpm --filter @iptv/ui test       # focus graph + focus store
-pnpm --filter @iptv/webos test    # content cache (sessionStorage + Date revival)
+pnpm test          # everything, single vitest run
 ```
 
 Currently covers: M3U parsing edge cases (CRLF, missing attributes, malformed
@@ -18,24 +14,24 @@ edge-of-grid behavior, and multi-shelf column clamping), focus-store scope
 composition (chrome vs. content scopes coexisting, per-node `onSelect`
 dispatch), the Live TV overlay's 2-row sliding window, and the content
 cache's sessionStorage round-tripping (including Date revival and graceful
-fallback when sessionStorage throws on quota).
+fallback when sessionStorage throws on quota). Run a subset with vitest's
+own filtering, e.g. `pnpm test -- epg` or `pnpm test -- src/ui`.
 
 Also run before trusting any change:
 
 ```bash
-pnpm typecheck     # tsc --noEmit across all packages
-pnpm build         # must succeed in dependency order: core → player → ui → apps/webos
+pnpm typecheck     # tsc --noEmit
+pnpm build         # vite build, then copies webos-meta/ into dist/
 ```
 
-`packages/ui` depends on the compiled `dist/` output of `core` and `player`
-(not their source), so after editing core/player, rebuild them before
-typechecking/running ui or apps/webos — `pnpm build` at the repo root does
-this in the correct order automatically.
+This is a single flat package — `src/core`, `src/player`, `src/ui`, and the
+app itself (`src/screens/`, `src/App.tsx`, etc.) all typecheck and build
+together in one pass, no dependency-ordered multi-package build needed.
 
 ## 2. Browser dev testing (fastest feedback for UI/focus/playback logic)
 
 ```bash
-pnpm --filter @iptv/webos dev
+pnpm dev
 ```
 
 Open `http://localhost:5173` in a desktop browser. You can fully exercise:
@@ -52,7 +48,7 @@ Open `http://localhost:5173` in a desktop browser. You can fully exercise:
   ~250ms after you stop moving — watch Network tab for the prefetch request)
 - **Live TV overlay** — the video should fill the entire screen, with a
   translucent "liquid glass" channel strip overlaid on the bottom third
-  (`packages/ui/src/components/GlassPanel.tsx` + `LiveOverlayGrid.tsx`),
+  (`src/ui/components/GlassPanel.tsx` + `LiveOverlayGrid.tsx`),
   showing only 2 rows at a time. Arrow keys move between cards; pressing
   down past the bottom visible row should slide both rows down by one
   (and back up in reverse) rather than scrolling the whole page. Selecting
@@ -69,7 +65,7 @@ Open `http://localhost:5173` in a desktop browser. You can fully exercise:
   is scoped to content-only for now); left/right across the tab bar and
   pressing select on a tab should switch screens. This is the one place to
   watch closely since chrome and content are separate focus-store scopes
-  (see `packages/ui/src/focus/focus-store.ts`) — confirm switching screens
+  (see `src/ui/focus/focus-store.ts`) — confirm switching screens
   doesn't leave two content scopes registered at once (no stray focusable
   elements from the previous screen still reachable via arrow keys).
 - **Movies/Series shelves** — confirm the blurred backdrop crossfades as you
@@ -95,10 +91,10 @@ Open `http://localhost:5173` in a desktop browser. You can fully exercise:
 - **Loading shimmer + cache** — on a hard reload (or first visit to a tab
   this session), Live TV/Guide/Movies/Series should show a skeleton shimmer
   matching that screen's real layout (`ChannelGridSkeleton`,
-  `EpgGridSkeleton`, `ShelfRowSkeleton` — see `packages/ui/src/components/skeletons/`)
+  `EpgGridSkeleton`, `ShelfRowSkeleton` — see `src/ui/components/skeletons/`)
   instead of an empty screen, until the first load completes. Switch tabs
   away and back, or reload the page: content should now appear **instantly**
-  with no shimmer, since `apps/webos/src/use-cached-content.ts` served it
+  with no shimmer, since `src/use-cached-content.ts` served it
   from cache while a fresh copy loads silently in the background — open
   DevTools → Application → Session Storage and look for `iptv.cache.v1:*`
   keys to confirm what's cached. If a screen looks stuck on the shimmer
@@ -113,17 +109,17 @@ credentials to the repo.
 certainly doesn't send `Access-Control-Allow-Origin`, so a plain browser tab
 blocks `fetch()` calls to it as cross-origin — you'll see a same-origin
 policy error in the console. This is normal for a provider you don't
-control and can't be fixed from the app's code. `apps/webos/vite-dev-proxy.ts`
+control and can't be fixed from the app's code. `vite-dev-proxy.ts`
 adds a `/__iptv-proxy?url=...` dev-server route (wired into
 `vite.config.ts`) that fetches server-side (Node has no CORS) and streams
-the response back same-origin; `apps/webos/src/proxy-fetch.ts` routes
+the response back same-origin; `src/proxy-fetch.ts` routes
 `content-loader.ts`'s and `XtreamClient`'s requests through it automatically
 whenever `import.meta.env.DEV` is true. It's inert in production builds —
 the webOS TV runtime doesn't run through Vite's dev server, so there's
 nothing to proxy there and the dev-only code is dropped by the production
-bundler (verify with `grep -c "__iptv-proxy" apps/webos/dist/assets/*.js`
+bundler (verify with `grep -c "__iptv-proxy" dist/assets/*.js`
 after `pnpm build` — should be 0). If you add a new raw `fetch()` call
-against a provider URL anywhere in `apps/webos`, route it through
+against a provider URL anywhere in `src/`, route it through
 `proxyFetch` the same way, or it'll work on-device but fail in the browser
 dev server.
 
@@ -150,7 +146,7 @@ running on an actual LG TV or the webOS TV Simulator:
 - Test channel-switching latency and stream compatibility on a **real TV**,
   not just the Simulator — its performance and WebKit behavior diverge
   from actual hardware.
-- Use `ares-inspect` (`pnpm inspect-device --device=<name>`) to open remote
+- Use `ares-inspect` (`pnpm inspect-device <name>`) to open remote
   DevTools and watch for console errors during normal use.
 
 ## 4. Regression checklist before calling a feature "done"

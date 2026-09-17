@@ -1,0 +1,29 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { iptvDevProxyPlugin } from "./vite-dev-proxy.js";
+
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
+
+export default defineConfig({
+  plugins: [react(), iptvDevProxyPlugin()],
+  resolve: {
+    alias: {
+      "@core": path.resolve(rootDir, "src/core/index.ts"),
+      "@player": path.resolve(rootDir, "src/player/index.ts"),
+      "@ui": path.resolve(rootDir, "src/ui/index.ts"),
+    },
+  },
+  server: {
+    host: true,
+    port: 5173,
+  },
+  build: {
+    outDir: "dist",
+    // webOS TV 6.0 (2021+) ships Chromium 79; this is the floor we target
+    // (see docs/webos.md). Older webOS TV versions (5.x and below, pre-Blink
+    // 1.x/2.x) are not supported.
+    target: "chrome79",
+  },
+});

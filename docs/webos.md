@@ -1,7 +1,7 @@
 # Building and running on LG webOS TV
 
-`apps/webos` is a Vite/React app packaged as a native webOS TV web app per
-LG's official conventions (webostv.developer.lge.com). This doc covers the
+This is a Vite/React app packaged as a native webOS TV web app per LG's
+official conventions (webostv.developer.lge.com). This doc covers the
 one-time toolchain setup and the day-to-day build → package → install →
 launch workflow.
 
@@ -27,12 +27,10 @@ launch workflow.
 
 ## Build, package, install, launch
 
-These scripts work identically from the repo root or from `apps/webos/`
-(the root `package.json` just forwards to `@iptv/webos`'s own scripts).
-The device name is a **plain trailing argument**, not a flag — e.g.
-`pnpm launch-device myTV`, not `--device=myTV` (npm/pnpm don't reliably
-forward `--flag=value` config through nested `--filter` invocations, so
-these scripts take positional args instead):
+Run these from the repo root. The device name is a **plain trailing
+argument**, not a flag — e.g. `pnpm launch-device myTV`, not
+`--device=myTV` (npm/pnpm don't reliably forward `--flag=value` config
+through to a script, so these scripts take positional args instead):
 
 ```bash
 pnpm build                 # vite build, then copies webos-meta/ (appinfo.json + icons) into dist/
@@ -52,8 +50,8 @@ pnpm launch-hosted myTV
 
 The Simulator app's own drag-and-drop / "Install App" UI does **not**
 unpack `.ipk` files — it expects the **unpacked app directory**, i.e.
-`apps/webos/dist/` (which has `appinfo.json`, `index.html`, and the icons
-directly at its root after `pnpm build`), not `apps/webos/webos-dist/`
+`dist/` (which has `appinfo.json`, `index.html`, and the icons
+directly at its root after `pnpm build`), not `webos-dist/`
 (which only ever contains the packaged `.ipk`). Pointing the Simulator's
 install UI at `webos-dist/` produces exactly the error
 `Can not found 'appinfo.json' in .../webos-dist` — there's no bug in the
@@ -64,7 +62,7 @@ Two ways to run this app in the Simulator:
 
 1. **Drag-and-drop `dist/`** (after running `pnpm build`, not `pnpm package`)
    directly onto the Simulator window, or use its "Install App" menu
-   pointed at `apps/webos/dist/`.
+   pointed at `dist/`.
 2. **Treat the Simulator as a registered device** and use the normal
    `ares-cli` flow instead — register it once
    (`ares-setup-device --add mySimulator --info "host=127.0.0.1" --info "port=6622" --info "username=developer"`),
@@ -80,20 +78,20 @@ pnpm inspect-device myTV
 
 ## Project layout
 
-- `apps/webos/src/` — the React app (screens, focus wiring, playback).
-- `apps/webos/webos-meta/` — `appinfo.json` plus `icon.png` (80×80),
+- `src/` — the React app (screens, focus wiring, playback).
+- `webos-meta/` — `appinfo.json` plus `icon.png` (80×80),
   `largeIcon.png` (130×130), and `splash.png` (1920×1080). These are
   **not** part of the Vite source bundle; `pnpm build` copies them into
   `dist/` after the Vite build finishes (see
-  `apps/webos/scripts/copy-webos-meta.mjs`), since `ares-package` expects
+  `scripts/copy-webos-meta.mjs`), since `ares-package` expects
   `appinfo.json` to sit alongside the built `index.html` at the root of
   the packaged directory — not nested under `src/` or `assets/`.
-- `apps/webos/dist/` — build output, gitignored. This is what gets packaged.
-- `apps/webos/webos-dist/` — the packaged `.ipk` output, gitignored.
+- `dist/` — build output, gitignored. This is what gets packaged.
+- `webos-dist/` — the packaged `.ipk` output, gitignored.
 
 The current icon/splash assets are auto-generated placeholders (dark
 background, accent-colored wordmark) — replace
-`apps/webos/webos-meta/{icon,largeIcon,splash}.png` with real artwork
+`webos-meta/{icon,largeIcon,splash}.png` with real artwork
 before shipping.
 
 ## appinfo.json notes
@@ -106,8 +104,8 @@ before shipping.
   (`fetch`, `crypto.subtle`, DOM/keyboard events), so it needs no elevated
   permissions. `ares-package` warns if this field is missing entirely.
 - `disableBackHistoryAPI: true` — the app manages the back key itself via
-  `resolveRemoteAction`/`useRemoteInput` (see `packages/core/src/input/keymap.ts`
-  and `packages/ui/src/focus/use-remote-input.ts`), rather than relying on
+  `resolveRemoteAction`/`useRemoteInput` (see `src/core/input/keymap.ts`
+  and `src/ui/focus/use-remote-input.ts`), rather than relying on
   the platform's default browser-history-based back behavior.
 
 ## Remote control input
@@ -115,7 +113,7 @@ before shipping.
 webOS TV remotes deliver D-pad/Enter/media keys as standard
 `KeyboardEvent` values (arrows, `Enter`) with one nonstandard exception:
 the **back key reports `keyCode` 461**, which is handled in
-`packages/core/src/input/keymap.ts`'s `resolveWebOsKey`. No special
+`src/core/input/keymap.ts`'s `resolveWebOsKey`. No special
 manifest permission is needed to receive key events — they arrive as
 ordinary DOM `keydown` events.
 
@@ -124,7 +122,7 @@ mouse-like clicks) and **5-way mode** (D-pad + Enter, cursor hidden,
 switches in automatically on the first arrow-key press). Every interactive
 element in this app must be reachable via 5-way/D-pad navigation, not just
 pointer clicks — this is why the whole UI is built on the spatial-navigation
-focus system in `packages/ui/src/focus/` rather than relying on hover/click
+focus system in `src/ui/focus/` rather than relying on hover/click
 alone.
 
 ## Supported webOS TV versions
@@ -132,12 +130,12 @@ alone.
 Targeting **webOS TV 6.0+** (2021 and newer LG TVs, Chromium 79+) as the
 floor — this covers `fetch`, `crypto.subtle` (Web Crypto), ES2020 syntax,
 and Flexbox/Grid without polyfills or transpilation workarounds.
-`apps/webos/vite.config.ts` sets `build.target: "chrome79"` to match.
+`vite.config.ts` sets `build.target: "chrome79"` to match.
 webOS TV 5.x and earlier (older Chromium, or pre-Blink WebKit on 1.x/2.x)
 are not supported.
 
 One specific thing to verify on real hardware: the "liquid glass" Live TV
-overlay (`packages/ui/src/components/GlassPanel.tsx`) uses
+overlay (`src/ui/components/GlassPanel.tsx`) uses
 `backdrop-filter: blur()`. This is supported from Chromium 76+ in
 principle, but LG TV GPUs have historically had inconsistent
 performance/rendering with backdrop-filter — if it looks wrong or tanks
@@ -148,7 +146,7 @@ already a reasonable fallback (drop the blur, keep the tinted background).
 
 Unlike the earlier Android TV plan (which called for a native ExoPlayer
 bridge), webOS TV's own Chromium-based `<video>` + MSE is already
-hardware-accelerated, so `packages/player`'s `HlsPlayerEngine` (hls.js on
+hardware-accelerated, so `src/player`'s `HlsPlayerEngine` (hls.js on
 top of `<video>`) is expected to be sufficient without a native playback
 bridge. Revisit only if real-device testing surfaces codec/DRM gaps that
 hls.js + `<video>` can't cover.

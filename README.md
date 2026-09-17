@@ -7,19 +7,29 @@ Samsung Tizen, mobile, desktop).
 
 ## Repo layout
 
-- `packages/core` — Xtream Codes client, M3U parser, XMLTV/EPG parser (+ now/next lookup), profile/PIN models, shared models, remote-input keymap.
-- `packages/player` — hls.js-backed playback engine abstraction + channel preloader ("zap-ahead").
-- `packages/ui` — React components: scoped spatial-navigation focus system, channel grid, EPG grid, Apple-TV-style focus cards/shelves/backdrop, top nav, Live TV liquid-glass overlay, video surface.
-- `apps/webos` — the webOS TV app (Vite + React): profiles, live TV, EPG guide, movies, series, settings/parental controls, plus webOS packaging metadata (`webos-meta/appinfo.json` + icons).
+Single package, flat structure — no monorepo/workspace, since this project
+targets webOS only:
+
+- `src/core/` — Xtream Codes client, M3U parser, XMLTV/EPG parser (+ now/next lookup), profile/PIN models, shared models, remote-input keymap. Imported as `@core`.
+- `src/player/` — hls.js-backed playback engine abstraction + channel preloader ("zap-ahead"). Imported as `@player`.
+- `src/ui/` — React components: scoped spatial-navigation focus system, channel grid, EPG grid, Apple-TV-style focus cards/shelves/backdrop, top nav, Live TV liquid-glass overlay, video surface. Imported as `@ui`.
+- `src/screens/`, `src/App.tsx`, etc. — the webOS TV app itself: profiles, live TV, EPG guide, movies, series, settings/parental controls.
+- `webos-meta/` — webOS packaging metadata (`appinfo.json` + icons), copied into `dist/` as part of `pnpm build`.
 - `docs/` — setup and testing guides.
+
+`@core`/`@player`/`@ui` are path aliases (see `tsconfig.json`'s `paths` and
+`vite.config.ts`'s `resolve.alias`) rather than separate npm packages —
+kept as distinctly-named folders since the earlier packages/apps split
+still describes clean boundaries, without workspace/build overhead for a
+single-target app.
 
 ## Getting started
 
 ```bash
 pnpm install
-pnpm build       # builds packages in dependency order: core → player → ui → webos
-pnpm test        # unit tests across all packages
-pnpm --filter @iptv/webos dev   # run the app in a browser at http://localhost:5173
+pnpm build       # vite build, then copies webos-meta/ into dist/
+pnpm test        # unit tests
+pnpm dev         # run the app in a browser at http://localhost:5173
 ```
 
 See [docs/testing.md](./docs/testing.md) for the full testing guide and
