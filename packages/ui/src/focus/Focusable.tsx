@@ -27,7 +27,19 @@ export function Focusable({ id, children, className, focusedClassName }: Focusab
   const classes = [className, isFocused ? (focusedClassName ?? "is-focused") : ""].filter(Boolean).join(" ");
 
   return (
-    <div ref={ref} className={classes} data-focus-id={id} data-focused={isFocused}>
+    <div
+      ref={ref}
+      className={classes}
+      data-focus-id={id}
+      data-focused={isFocused}
+      // width/height: 100% so a child sized with height: 100% (e.g.
+      // EpgGrid's programme cell button) resolves against Focusable's own
+      // parent instead of collapsing to 0 — percentage heights don't
+      // resolve against this div's default auto height. Not display:
+      // contents, since that has historically been unreliable for
+      // scrollIntoView/focus on older WebKit (the Tizen/webOS TV target).
+      style={{ width: "100%", height: "100%" }}
+    >
       {children}
     </div>
   );
