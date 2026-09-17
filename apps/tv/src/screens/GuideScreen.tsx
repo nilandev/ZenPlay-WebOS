@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { XtreamClient, buildChannelGuides, type Channel, type EpgProgramme, type PlatformId, type PlaylistSource } from "@iptv/core";
-import { EpgGrid, useRemoteInput } from "@iptv/ui";
+import { CategorySidebar, EpgGrid, ProgrammePreview, useRemoteInput } from "@iptv/ui";
 import { loadChannelsByKind, loadEpg } from "../content-loader.js";
 
 export interface GuideScreenProps {
@@ -11,29 +11,57 @@ export interface GuideScreenProps {
 }
 
 const WINDOW_HOURS = 3;
+const ALL_CATEGORY_ID = "__all__";
+
+function groupChannelsByCategory(channels: Channel[]): Array<{ id: string; label: string; channels: Channel[] }> {
+  const byGroup = new Map<string, Channel[]>();
+  for (const channel of channels) {
+    const key = channel.groupTitle ?? "Uncategorized";
+    const list = byGroup.get(key);
+    if (list) list.push(channel);
+    else byGroup.set(key, [channel]);
+  }
+  return Array.from(byGroup.entries()).map(([label, groupChannels]) => ({ id: label, label, channels: groupChannels }));
+}
 
 export function GuideScreen({ source, platform, onPlay }: GuideScreenProps): JSX.Element {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [programmes, setProgrammes] = useState<EpgProgramme[]>([]);
   const [windowStart, setWindowStart] = useState(() => roundDownToHalfHour(new Date()));
+  const [activeCategoryId, setActiveCategoryId] = useState(ALL_CATEGORY_ID);
+  const [focused, setFocused] = useState<{ channel: Channel; programme: EpgProgramme } | null>(null);
 
   useEffect(() => {
     loadChannelsByKind(source, "live").then(setChannels);
     loadEpg(source).then(setProgrammes);
   }, [source]);
 
+  const categories = useMemo(() => groupChannelsByCategory(channels), [channels]);
+  const categoryItems = useMemo(
+    () => [
+      { id: ALL_CATEGORY_ID, label: "All Channels", count: channels.length },
+      ...categories.map((c) => ({ id: c.id, label: c.label, count: c.channels.length })),
+    ],
+    [categories, channels.length],
+  );
+
+  const visibleChannels = useMemo(() => {
+    if (activeCategoryId === ALL_CATEGORY_ID) return channels;
+    return categories.find((c) => c.id === activeCategoryId)?.channels ?? [];
+  }, [activeCategoryId, categories, channels]);
+
   const guidesByChannel = useMemo(() => buildChannelGuides(programmes), [programmes]);
   const windowEnd = useMemo(() => new Date(windowStart.getTime() + WINDOW_HOURS * 3600_000), [windowStart]);
 
   const programmesByChannel = useMemo(() => {
     const map = new Map<string, EpgProgramme[]>();
-    for (const channel of channels) {
+    for (const channel of visibleChannels) {
       const key = channel.epgChannelId ?? channel.id;
       const guide = guidesByChannel.get(key);
       if (guide) map.set(channel.id, guide.getProgrammesInRange(windowStart, windowEnd));
     }
     return map;
-  }, [channels, guidesByChannel, windowStart, windowEnd]);
+  }, [visibleChannels, guidesByChannel, windowStart, windowEnd]);
 
   useRemoteInput(platform, {
     onChannelUp: () => setWindowStart((prev) => new Date(prev.getTime() - WINDOW_HOURS * 3600_000)),
@@ -54,23 +82,50 @@ export function GuideScreen({ source, platform, onPlay }: GuideScreenProps): JSX
       const catchupUrl = client.buildCatchupUrl(channel.id, Math.floor(programme.start.getTime() / 1000), durationMinutes);
       onPlay(catchupUrl);
     }
-    // Past programme with no archive support: nothing playable, so this is a no-op.
-    // A real UI would show a toast; deferred until the design pass on this screen.
+    // Past programme with no archive support: nothing playable — the preview
+    // panel already explains this (see ProgrammePreview's isPast branch).
   }
 
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "16px 40px 0" }}>
-        <h1 style={{ fontSize: 20 }}>Guide — {windowStart.toLocaleString()}</h1>
+    <div style={{ height: "calc(100vh - 76px)", display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "16px 40px 12px", display: "flex", alignItems: "baseline", gap: 16 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700 }}>Guide</h1>
+        <span style={{ fontSize: 14, color: "var(--text-dim)" }}>
+          {windowStart.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} ·{" "}
+          {windowStart.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} –{" "}
+          {windowEnd.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+        </span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button type="button" onClick={() => setWindowStart((prev) => new Date(prev.getTime() - WINDOW_HOURS * 3600_000))}>
+            ← Earlier
+          </button>
+          <button type="button" onClick={() => setWindowStart((prev) => new Date(prev.getTime() + WINDOW_HOURS * 3600_000))}>
+            Later →
+          </button>
+        </div>
       </div>
-      <div style={{ flex: 1, overflow: "hidden" }}>
-        <EpgGrid
-          channels={channels}
-          programmesByChannel={programmesByChannel}
-          windowStart={windowStart}
-          windowEnd={windowEnd}
-          onSelectProgramme={handleSelectProgramme}
+
+      <div style={{ flex: 1, display: "flex", overflow: "hidden", borderTop: "1px solid var(--border)" }}>
+        <CategorySidebar
+          items={categoryItems}
+          activeId={activeCategoryId}
+          onSelect={setActiveCategoryId}
+          contentEntryId={visibleChannels.length > 0 ? `epg:${visibleChannels[0].id}:0` : undefined}
         />
+
+        <div style={{ flex: 1, overflow: "hidden" }}>
+          <EpgGrid
+            channels={visibleChannels}
+            programmesByChannel={programmesByChannel}
+            windowStart={windowStart}
+            windowEnd={windowEnd}
+            onFocusProgramme={(channel, programme) => setFocused({ channel, programme })}
+            onSelectProgramme={handleSelectProgramme}
+            sidebarEntryId={activeCategoryId}
+          />
+        </div>
+
+        <ProgrammePreview channel={focused?.channel ?? null} programme={focused?.programme ?? null} />
       </div>
     </div>
   );

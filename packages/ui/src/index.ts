@@ -10,3 +10,5 @@ export * from "./components/Shelf.js";
 export * from "./components/FocusBackdrop.js";
 export * from "./components/TopNav.js";
 export * from "./components/EpgGrid.js";
+export * from "./components/CategorySidebar.js";
+export * from "./components/ProgrammePreview.js";

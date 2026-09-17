@@ -5,23 +5,79 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Free IPTV Player</title>
     <style>
+      :root {
+        --bg: #08080b;
+        --surface: #1a1a20;
+        --surface-raised: #24242c;
+        --border: #313139;
+        --text: #f4f4f6;
+        --text-dim: #9a9aa4;
+        --accent: #6ee7ff;
+        --accent-dim: #3a8fa3;
+        --danger: #ff6b6b;
+        --radius: 10px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
       html, body, #root {
         margin: 0;
-        height: 100%;
-        background: #0b0b0f;
-        color: #f4f4f5;
-        font-family: system-ui, sans-serif;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Inter", system-ui, -apple-system, sans-serif;
       }
+
+      body {
+        overflow-x: hidden;
+      }
+
+      h1, h2, h3 {
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+
+      p {
+        color: var(--text-dim);
+        line-height: 1.5;
+      }
+
       button {
         font: inherit;
         color: inherit;
-        background: #1c1c22;
-        border: 2px solid transparent;
-        border-radius: 8px;
         cursor: pointer;
       }
-      .is-focused button, button[data-focused="true"] {
-        border-color: #6ee7ff;
+
+      input, select {
+        font: inherit;
+        color: var(--text);
+        background: var(--surface);
+        border: 2px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        outline: none;
+        transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+      }
+
+      input::placeholder {
+        color: var(--text-dim);
+      }
+
+      input:focus, select:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(110, 231, 255, 0.15);
+      }
+
+      ::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+      }
+
+      .is-focused button,
+      button[data-focused="true"] {
+        box-shadow: 0 0 0 3px var(--accent);
       }
     </style>
   </head>

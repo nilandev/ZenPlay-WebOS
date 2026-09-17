@@ -61,12 +61,19 @@ Open `http://localhost:5173` in a desktop browser. You can fully exercise:
 - **Movies/Series shelves** — confirm the blurred backdrop crossfades as you
   move focus between cards, and that up/down between shelves of different
   lengths lands on a sensible column (not out of bounds).
-- **EPG guide** — press channel-up/down (`PageUp`/`PageDown` don't map here;
-  use the `ChannelUp`/`ChannelDown` keys if your keyboard/browser sends them,
-  otherwise test this one on-device) to page the 3-hour time window forward
-  and back; select a live (currently-airing) programme to tune the channel,
-  and a past programme on a channel with catch-up enabled to test the
-  timeshift URL.
+- **EPG guide** — arrow keys move between programme cells (focused cell
+  should visibly scale/highlight — if focus looks like it's "not moving,"
+  check that `GuideScreen` still calls `useRemoteInput`; that hook is what
+  wires arrow keys to `move()` at all, and its earlier absence was the root
+  cause of the guide being unnavigable). Press left from the leftmost
+  column to jump into the category sidebar, and right from the sidebar to
+  jump back into the grid at the first channel's first programme. Press
+  channel-up/down (`ChannelUp`/`ChannelDown` keys if your keyboard/browser
+  sends them, otherwise test this one on-device) to page the 3-hour time
+  window forward and back. Confirm the right-side preview panel updates as
+  focus moves — title, time range, description, channel logo — and that
+  selecting a live (currently-airing) programme tunes the channel while a
+  past programme on a catch-up-enabled channel plays the timeshift URL.
 - **Parental controls** — in Settings, set a PIN and lock a live category,
   then confirm selecting a channel in that category from the Live TV screen
   prompts for the PIN before playing, and that entering it once unlocks the
