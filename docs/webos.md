@@ -48,6 +48,30 @@ built `dist/` directly in "hosted" mode:
 pnpm launch-hosted myTV
 ```
 
+### Using the webOS TV Simulator specifically
+
+The Simulator app's own drag-and-drop / "Install App" UI does **not**
+unpack `.ipk` files — it expects the **unpacked app directory**, i.e.
+`apps/webos/dist/` (which has `appinfo.json`, `index.html`, and the icons
+directly at its root after `pnpm build`), not `apps/webos/webos-dist/`
+(which only ever contains the packaged `.ipk`). Pointing the Simulator's
+install UI at `webos-dist/` produces exactly the error
+`Can not found 'appinfo.json' in .../webos-dist` — there's no bug in the
+package itself, the Simulator is just looking in the wrong directory for
+raw app files it doesn't unpack.
+
+Two ways to run this app in the Simulator:
+
+1. **Drag-and-drop `dist/`** (after running `pnpm build`, not `pnpm package`)
+   directly onto the Simulator window, or use its "Install App" menu
+   pointed at `apps/webos/dist/`.
+2. **Treat the Simulator as a registered device** and use the normal
+   `ares-cli` flow instead — register it once
+   (`ares-setup-device --add mySimulator --info "host=127.0.0.1" --info "port=6622" --info "username=developer"`),
+   then `pnpm install-device mySimulator` / `pnpm launch-device mySimulator`
+   work exactly like they would against a real TV, and this path does use
+   the `.ipk` correctly (`ares-install` unpacks it for you).
+
 To inspect the running app (remote DevTools):
 
 ```bash
