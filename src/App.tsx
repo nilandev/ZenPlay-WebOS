@@ -4,21 +4,26 @@ import { TopNav } from "@ui";
 import { addPlaylistSource, loadPlaylistSources } from "./playlist-store.js";
 import { addProfile, getActiveProfileId, loadProfiles, setActiveProfileId, updateProfile } from "./profile-store.js";
 import { AddSourceScreen } from "./screens/AddSourceScreen.js";
+import { HomeScreen } from "./screens/HomeScreen.js";
 import { LiveTvScreen } from "./screens/LiveTvScreen.js";
 import { VodScreen } from "./screens/VodScreen.js";
 import { SeriesScreen } from "./screens/SeriesScreen.js";
 import { GuideScreen } from "./screens/GuideScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
 import { ProfilesScreen } from "./screens/ProfilesScreen.js";
+import { PlaceholderScreen } from "./screens/PlaceholderScreen.js";
 import { PlayerScreen } from "./screens/PlayerScreen.js";
 import { detectPlatform } from "./platform.js";
 import { proxyFetch } from "./proxy-fetch.js";
 
 const TABS = [
+  { id: "home", label: "Home" },
   { id: "live", label: "Live TV" },
   { id: "guide", label: "Guide" },
   { id: "movies", label: "Movies" },
   { id: "series", label: "Series" },
+  { id: "favourites", label: "My Favourite" },
+  { id: "history", label: "History" },
   { id: "settings", label: "Settings" },
 ] as const;
 
@@ -31,7 +36,7 @@ export function App(): JSX.Element {
 
   const [profiles, setProfiles] = useState<Profile[]>(() => loadProfiles());
   const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>("live");
+  const [activeTab, setActiveTab] = useState<TabId>("home");
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const [liveCategories, setLiveCategories] = useState<Category[]>([]);
 
@@ -93,6 +98,22 @@ export function App(): JSX.Element {
     );
   }
 
+  if (activeTab === "home") {
+    return (
+      <div style={{ minHeight: "100vh" }}>
+        <HomeScreen
+          platform={platform}
+          profile={activeProfile}
+          profiles={profiles}
+          onSelectTile={(tileId) => setActiveTab(tileId as TabId)}
+          onSelectProfile={handleSelectProfile}
+          onManageProfiles={() => setActiveProfile(null)}
+        />
+        {playbackUrl && <PlayerScreen streamUrl={playbackUrl} platform={platform} onClose={() => setPlaybackUrl(null)} />}
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: "100vh" }}>
       <TopNav items={TABS} activeId={activeTab} onSelect={(id) => setActiveTab(id as TabId)} />
@@ -103,6 +124,8 @@ export function App(): JSX.Element {
       {activeTab === "series" && (
         <SeriesScreen source={activeSource} platform={platform} onPlayEpisode={(episode) => setPlaybackUrl(episode.streamUrl)} />
       )}
+      {activeTab === "favourites" && <PlaceholderScreen title="My Favourite" icon="❤" />}
+      {activeTab === "history" && <PlaceholderScreen title="History" icon="🕘" />}
       {activeTab === "settings" && (
         <SettingsScreen
           profile={activeProfile}

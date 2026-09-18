@@ -18,3 +18,5 @@ export * from "./components/skeletons/ShelfRowSkeleton.js";
 export * from "./components/skeletons/EpgGridSkeleton.js";
 export * from "./components/LiveOverlayGrid.js";
 export * from "./components/GlassPanel.js";
+export * from "./components/ProfileSwitcher.js";
+export * from "./components/Clock.js";
