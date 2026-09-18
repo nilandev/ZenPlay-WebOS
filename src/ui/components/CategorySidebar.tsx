@@ -72,7 +72,7 @@ export function CategorySidebar({ items, activeId, onSelect, width = 200, conten
                 marginBottom: 4,
                 borderRadius: 8,
                 border: "none",
-                background: isFocused ? "var(--accent, #6ee7ff)" : isActive ? "var(--surface-raised, #24242c)" : "transparent",
+                background: isFocused ? "var(--accent, #38bdf8)" : isActive ? "var(--surface-raised, #24242c)" : "transparent",
                 color: isFocused ? "#062028" : isActive ? "var(--text, #f4f4f6)" : "var(--text-dim, #9a9aa4)",
                 fontWeight: isActive || isFocused ? 700 : 500,
                 fontSize: 14,

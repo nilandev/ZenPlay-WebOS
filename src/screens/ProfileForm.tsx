@@ -283,9 +283,9 @@ function AvatarChoice({ url, isSelected, onClick }: { url: string; isSelected: b
         padding: 0,
         border: isSelected ? "3px solid var(--accent)" : "3px solid transparent",
         boxShadow: isFocused
-          ? "0 0 0 3px var(--accent), 0 0 24px 4px rgba(110,231,255,0.5)"
+          ? "0 0 0 3px var(--accent), 0 0 24px 4px rgba(56,189,248,0.5)"
           : isSelected
-            ? "0 0 0 1px rgba(110,231,255,0.4)"
+            ? "0 0 0 1px rgba(56,189,248,0.4)"
             : "none",
         transform: isFocused ? "scale(1.08)" : "scale(1)",
         transition: "transform 160ms ease-out, box-shadow 160ms ease-out, border-color 160ms ease-out",

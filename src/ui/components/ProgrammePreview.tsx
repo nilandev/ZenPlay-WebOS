@@ -65,7 +65,7 @@ export function ProgrammePreview({ channel, programme, width = 340 }: ProgrammeP
             fontSize: 11,
             fontWeight: 700,
             color: "#062028",
-            background: "var(--accent, #6ee7ff)",
+            background: "var(--accent, #38bdf8)",
             borderRadius: 4,
             padding: "2px 8px",
           }}

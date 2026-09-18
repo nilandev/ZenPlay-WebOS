@@ -198,23 +198,42 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
        */}
       <div
         style={{
-          minHeight: "100vh",
+          height: "100vh",
+          overflow: "hidden",
           fontSize: "clamp(12px, 0.833vw, 40px)",
           padding: "2rem 4.5rem 1.75rem",
           display: "flex",
           flexDirection: "column",
         }}
       >
-        <header style={{ position: "relative", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <header
+          style={{
+            position: "relative",
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+          }}
+        >
           <Focusable id={PROFILE_SWITCHER_FOCUS_ID}>
             <ProfileSwitcher profile={profile} onOpen={onOpenProfiles} />
           </Focusable>
-          <div style={{ position: "absolute", left: "50%", top: 0, transform: "translateX(-50%)" }}>
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: 0,
+              transform: "translateX(-50%)",
+            }}
+          >
             <Clock />
           </div>
           <div style={{ display: "flex", gap: "0.75rem" }}>
             {SYSTEM_TILES.map((tile) => (
-              <SystemIconButton key={tile.id} tile={tile} onSelect={() => handleSystemAction(tile.id)} />
+              <SystemIconButton
+                key={tile.id}
+                tile={tile}
+                onSelect={() => handleSystemAction(tile.id)}
+              />
             ))}
           </div>
         </header>
@@ -226,35 +245,78 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
             flexDirection: "column",
             justifyContent: "center",
             padding: "0.5rem 2rem",
-            margin: "12rem",
+            margin: "0 12rem",
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${PRIMARY_TILES.length}, 1fr)`, gap: "1.75rem" }}>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(${PRIMARY_TILES.length}, 1fr)`,
+                gap: "1.75rem",
+              }}
+            >
               {PRIMARY_TILES.map((tile) => (
                 <HeroTileCard
                   key={tile.id}
                   tile={tile}
-                  collageImages={collageByTile[tile.id as keyof typeof collageByTile]}
+                  collageImages={
+                    collageByTile[tile.id as keyof typeof collageByTile]
+                  }
                   onSelect={() => onSelectTile(tile.id)}
                 />
               ))}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${SECONDARY_TILES.length}, 1fr)`, gap: "1.25rem" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(${SECONDARY_TILES.length}, 1fr)`,
+                gap: "1.75rem",
+              }}
+            >
               {SECONDARY_TILES.map((tile) => (
-                <SecondaryRailItem key={tile.id} tile={tile} onSelect={() => onSelectTile(tile.id)} />
+                <SecondaryRailItem
+                  key={tile.id}
+                  tile={tile}
+                  onSelect={() => onSelectTile(tile.id)}
+                />
               ))}
             </div>
           </div>
         </div>
 
-        <footer style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
-          <div style={{ fontSize: "0.8125rem", fontWeight: 500, color: "var(--text-dim)", lineHeight: 1.6 }}>
+        <footer
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "0.8125rem",
+              fontWeight: 500,
+              color: "var(--text-dim)",
+              lineHeight: 1.6,
+            }}
+          >
             <div>Current Playlist: {playlistInfo.name || "—"}</div>
-            <div>Current playlist expires: {formatExpiry(playlistInfo.expiresAt)}</div>
+            <div>
+              Current playlist expires: {formatExpiry(playlistInfo.expiresAt)}
+            </div>
           </div>
-          <div style={{ fontSize: "0.8125rem", fontWeight: 500, color: "var(--text-dim)" }}>v{__APP_VERSION__}</div>
+          <div
+            style={{
+              fontSize: "0.8125rem",
+              fontWeight: 500,
+              color: "var(--text-dim)",
+            }}
+          >
+            v{__APP_VERSION__}
+          </div>
         </footer>
       </div>
     </MeshBackground>
@@ -301,12 +363,12 @@ function HeroTileCard({
           aria-hidden
           style={{
             position: "absolute",
-            inset: "-3.75rem",
-            borderRadius: "3.75rem",
-            background: "radial-gradient(closest-side, rgba(130,190,255,0.85) 0%, rgba(130,190,255,0.35) 45%, rgba(130,190,255,0) 75%)",
-            filter: "blur(1.25rem)",
+            inset: "-1.25rem",
+            borderRadius: "2.5rem",
+            background: "radial-gradient(closest-side, rgba(56,189,248,0.7) 0%, rgba(56,189,248,0.25) 45%, rgba(56,189,248,0) 75%)",
+            filter: "blur(0.75rem)",
             opacity: isFocused ? 1 : 0,
-            transform: isFocused ? "scale(1)" : "scale(0.8)",
+            transform: isFocused ? "scale(1)" : "scale(0.85)",
             transition: "opacity 260ms ease-out, transform 260ms ease-out",
             pointerEvents: "none",
           }}
@@ -323,11 +385,11 @@ function HeroTileCard({
             alignItems: "center",
             justifyContent: "center",
             gap: "0.875rem",
-            border: isFocused ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.08)",
             borderRadius: "1.75rem",
             background: "linear-gradient(160deg, rgba(40,42,48,0.6) 0%, rgba(14,15,18,0.7) 100%)",
             boxShadow: isFocused
-              ? "inset 0 1px 0 rgba(255,255,255,0.4), 0 0 0 0.1875rem var(--accent), 0 1.875rem 3.75rem -0.75rem rgba(0,0,0,0.65)"
+              ? "inset 0 1px 0 rgba(255,255,255,0.4), 0 0 1rem 0.125rem rgba(56,189,248,0.6), 0 1.875rem 3.75rem -0.75rem rgba(0,0,0,0.65)"
               : "inset 0 1px 0 rgba(255,255,255,0.1), 0 0.625rem 1.5rem -0.5rem rgba(0,0,0,0.5)",
             transform: isFocused ? "scale(1.045) translateY(-0.375rem)" : "scale(1)",
             transition: "transform 220ms cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 220ms ease-out, border-color 220ms ease-out",
@@ -342,8 +404,9 @@ function HeroTileCard({
               style={{
                 position: "absolute",
                 inset: 0,
-                display: "flex",
-                flexWrap: "wrap",
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gridTemplateRows: "repeat(2, 1fr)",
                 opacity: 0.65,
                 filter: "blur(0.375rem) brightness(0.65) saturate(120%)",
                 transition: "opacity 400ms ease-out",
@@ -357,10 +420,10 @@ function HeroTileCard({
                   loading="lazy"
                   onError={() => setBrokenUrls((prev) => new Set(prev).add(url))}
                   style={{
-                    flex: "1 1 33%",
-                    minWidth: "33%",
-                    height: "33.34%",
+                    width: "100%",
+                    height: "100%",
                     objectFit: "cover",
+                    objectPosition: "center",
                   }}
                 />
               ))}
@@ -408,10 +471,10 @@ function SecondaryRailItem({ tile, onSelect }: { tile: HomeTile; onSelect: () =>
           aria-hidden
           style={{
             position: "absolute",
-            inset: "-1.25rem",
-            borderRadius: "2rem",
-            background: "radial-gradient(closest-side, rgba(130,190,255,0.6) 0%, rgba(130,190,255,0.2) 45%, rgba(130,190,255,0) 75%)",
-            filter: "blur(0.875rem)",
+            inset: "-0.625rem",
+            borderRadius: "1.5rem",
+            background: "radial-gradient(closest-side, rgba(56,189,248,0.55) 0%, rgba(56,189,248,0.18) 45%, rgba(56,189,248,0) 75%)",
+            filter: "blur(0.5rem)",
             opacity: isFocused ? 1 : 0,
             transform: isFocused ? "scale(1)" : "scale(0.9)",
             transition: "opacity 220ms ease-out, transform 220ms ease-out",
@@ -429,15 +492,15 @@ function SecondaryRailItem({ tile, onSelect }: { tile: HomeTile; onSelect: () =>
             alignItems: "center",
             justifyContent: "center",
             gap: "0.875rem",
-            border: isFocused ? "1px solid rgba(255,255,255,0.45)" : "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "1.125rem",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "1.75rem",
             background: isFocused
               ? "linear-gradient(160deg, rgba(52,54,60,0.7) 0%, rgba(20,21,25,0.75) 100%)"
               : "linear-gradient(160deg, rgba(28,29,34,0.55) 0%, rgba(12,13,16,0.6) 100%)",
             backdropFilter: "blur(16px) saturate(120%)",
             WebkitBackdropFilter: "blur(16px) saturate(120%)",
             boxShadow: isFocused
-              ? "inset 0 1px 0 rgba(255,255,255,0.3), 0 0 0 0.1875rem var(--accent), 0 1rem 2rem -0.625rem rgba(0,0,0,0.55)"
+              ? "inset 0 1px 0 rgba(255,255,255,0.3), 0 0 0.875rem 0.0625rem rgba(56,189,248,0.55), 0 1rem 2rem -0.625rem rgba(0,0,0,0.55)"
               : "inset 0 1px 0 rgba(255,255,255,0.08), 0 0.375rem 1rem -0.375rem rgba(0,0,0,0.4)",
             transform: isFocused ? "scale(1.03)" : "scale(1)",
             transition: "transform 200ms cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 200ms ease-out, border-color 200ms ease-out, background 200ms ease-out",

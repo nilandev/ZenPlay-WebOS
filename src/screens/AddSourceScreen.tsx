@@ -38,7 +38,7 @@ export function AddSourceScreen({ onSourceAdded }: AddSourceScreenProps): JSX.El
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        backgroundImage: "radial-gradient(circle at 50% 0%, rgba(110,231,255,0.08), transparent 60%)",
+        backgroundImage: "radial-gradient(circle at 50% 0%, rgba(56,189,248,0.08), transparent 60%)",
       }}
     >
       <div
