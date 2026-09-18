@@ -28,10 +28,10 @@ export function ProfileSwitcher({ profile, onOpen }: ProfileSwitcherProps): JSX.
         aria-hidden
         style={{
           position: "absolute",
-          inset: -20,
+          inset: "-1.25rem",
           borderRadius: 999,
           background: "radial-gradient(closest-side, rgba(130,190,255,0.7) 0%, rgba(130,190,255,0.25) 45%, rgba(130,190,255,0) 75%)",
-          filter: "blur(12px)",
+          filter: "blur(0.75rem)",
           opacity: isFocused ? 1 : 0,
           transform: isFocused ? "scale(1)" : "scale(0.8)",
           transition: "opacity 260ms ease-out, transform 260ms ease-out",
@@ -45,7 +45,7 @@ export function ProfileSwitcher({ profile, onOpen }: ProfileSwitcherProps): JSX.
           position: "relative",
           display: "flex",
           alignItems: "center",
-          gap: 10,
+          gap: "0.625rem",
           border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.08)",
           borderRadius: 999,
           background: isFocused
@@ -54,22 +54,22 @@ export function ProfileSwitcher({ profile, onOpen }: ProfileSwitcherProps): JSX.
           backdropFilter: "blur(20px) saturate(120%)",
           WebkitBackdropFilter: "blur(20px) saturate(120%)",
           boxShadow: isFocused
-            ? "inset 0 1px 0 rgba(255,255,255,0.4), 0 0 0 3px var(--accent), 0 12px 28px -10px rgba(0,0,0,0.55)"
-            : "inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 12px -6px rgba(0,0,0,0.4)",
-          padding: "6px 18px 6px 6px",
+            ? "inset 0 1px 0 rgba(255,255,255,0.4), 0 0 0 0.1875rem var(--accent), 0 0.75rem 1.75rem -0.625rem rgba(0,0,0,0.55)"
+            : "inset 0 1px 0 rgba(255,255,255,0.08), 0 0.25rem 0.75rem -0.375rem rgba(0,0,0,0.4)",
+          padding: "0.375rem 1.125rem 0.375rem 0.375rem",
           transform: isFocused ? "scale(1.08)" : "scale(1)",
           transition: "transform 180ms ease-out, box-shadow 180ms ease-out, border-color 180ms ease-out, background 180ms ease-out",
           cursor: "pointer",
         }}
       >
-        <AvatarBadge avatarUrl={profile.avatarUrl} size={40} />
-        <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{profile.name}</span>
+        <AvatarBadge avatarUrl={profile.avatarUrl} size="2.5rem" />
+        <span style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text)" }}>{profile.name}</span>
       </button>
     </div>
   );
 }
 
-function AvatarBadge({ avatarUrl, size }: { avatarUrl: string; size: number }): JSX.Element {
+function AvatarBadge({ avatarUrl, size }: { avatarUrl: string; size: string }): JSX.Element {
   return (
     <div
       style={{

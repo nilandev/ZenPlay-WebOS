@@ -24,20 +24,22 @@ export interface HomeTile {
   icon: LucideIcon;
 }
 
+/** Hero row: primary content destinations, the reason someone opens the app. */
 const PRIMARY_TILES: HomeTile[] = [
-  { id: "live", label: "Live", icon: RadioTower },
+  { id: "live", label: "Live TV", icon: RadioTower },
   { id: "movies", label: "Movies", icon: Clapperboard },
   { id: "series", label: "Series", icon: Tv },
 ];
 
+/** Slim rail under the hero row: secondary content destinations. */
 const SECONDARY_TILES: HomeTile[] = [
   { id: "guide", label: "Guide", icon: ListVideo },
   { id: "favourites", label: "My Favourite", icon: Heart },
   { id: "history", label: "History", icon: HistoryIcon },
 ];
 
-/** Stacked to the right of the primary/secondary block, spanning both their rows in height — see screenshot in conversation history. */
-const SIDE_TILES: HomeTile[] = [
+/** Header icon cluster: system-level actions, not content — kept out of the content grid entirely. */
+const SYSTEM_TILES: HomeTile[] = [
   { id: "settings", label: "Settings", icon: SettingsIcon },
   { id: "refresh", label: "Refresh", icon: RefreshCw },
   { id: "exit", label: "Exit", icon: Power },
@@ -48,35 +50,40 @@ const EMPTY_PLAYLIST_INFO = { name: "", expiresAt: null as Date | null };
 const SCOPE = "home-grid";
 
 /**
- * Home hub shown after profile selection: a Netflix/Apple-TV-style launcher
- * rather than jumping straight into a content tab. Layout is a left block
- * (3 tall primary tiles over 3 short secondary tiles, column-aligned) plus a
- * side column (Settings/Refresh/Exit) stacked to its right spanning both
- * rows — see screenshot in conversation history. The side column sits
- * beside the primary row for left/right movement, but down from it lands on
- * the vertically-nearest side tile by proportional index (3 side tiles vs.
- * 2 rows) rather than a strict row-by-row mapping. The profile switcher
- * chip sits above the grid as its own single-node row so it's reachable by
- * pressing up from the primary row (it previously had no focus-graph entry
- * at all, making it unreachable via remote — see conversation history).
+ * Home hub shown after profile selection. Symmetric grid: Live TV/Movies/
+ * Series form one row of equal-width cards, and Guide/My Favourite/History
+ * sit directly beneath in a second row of equal width spanning the same
+ * total width. A header icon cluster for system-level actions (Settings/
+ * Refresh/Exit) sits above the grid, deliberately kept out of the content
+ * grid itself.
  */
-function buildHomeFocusGraph(onOpenProfiles: () => void): FocusNode[] {
+function buildHomeFocusGraph(onOpenProfiles: () => void, onSystemAction: (id: string) => void): FocusNode[] {
   const primaryIds = PRIMARY_TILES.map((t) => t.id);
   const secondaryIds = SECONDARY_TILES.map((t) => t.id);
-  const sideIds = SIDE_TILES.map((t) => t.id);
+  const systemIds = SYSTEM_TILES.map((t) => t.id);
 
   const profileNode: FocusNode = {
     id: PROFILE_SWITCHER_FOCUS_ID,
-    neighbors: { down: primaryIds[0] },
+    neighbors: { right: systemIds[0], down: primaryIds[0] },
     onSelect: onOpenProfiles,
   };
+
+  const systemNodes: FocusNode[] = systemIds.map((id, index) => ({
+    id,
+    neighbors: {
+      left: index > 0 ? systemIds[index - 1] : PROFILE_SWITCHER_FOCUS_ID,
+      right: index < systemIds.length - 1 ? systemIds[index + 1] : undefined,
+      down: primaryIds[Math.min(index, primaryIds.length - 1)],
+    },
+    onSelect: () => onSystemAction(id),
+  }));
 
   const primaryNodes: FocusNode[] = primaryIds.map((id, index) => ({
     id,
     neighbors: {
       left: index > 0 ? primaryIds[index - 1] : undefined,
-      right: index < primaryIds.length - 1 ? primaryIds[index + 1] : sideIds[0],
-      up: PROFILE_SWITCHER_FOCUS_ID,
+      right: index < primaryIds.length - 1 ? primaryIds[index + 1] : undefined,
+      up: index === 0 ? PROFILE_SWITCHER_FOCUS_ID : systemIds[Math.min(index, systemIds.length - 1)],
       down: secondaryIds[index],
     },
   }));
@@ -85,21 +92,12 @@ function buildHomeFocusGraph(onOpenProfiles: () => void): FocusNode[] {
     id,
     neighbors: {
       left: index > 0 ? secondaryIds[index - 1] : undefined,
-      right: index < secondaryIds.length - 1 ? secondaryIds[index + 1] : sideIds[sideIds.length - 1],
+      right: index < secondaryIds.length - 1 ? secondaryIds[index + 1] : undefined,
       up: primaryIds[index],
     },
   }));
 
-  const sideNodes: FocusNode[] = sideIds.map((id, index) => ({
-    id,
-    neighbors: {
-      left: index === 0 ? primaryIds[primaryIds.length - 1] : secondaryIds[secondaryIds.length - 1],
-      up: index > 0 ? sideIds[index - 1] : PROFILE_SWITCHER_FOCUS_ID,
-      down: index < sideIds.length - 1 ? sideIds[index + 1] : undefined,
-    },
-  }));
-
-  return [profileNode, ...primaryNodes, ...secondaryNodes, ...sideNodes];
+  return [profileNode, ...systemNodes, ...primaryNodes, ...secondaryNodes];
 }
 
 const EMPTY_CHANNELS: Channel[] = [];
@@ -117,11 +115,6 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
 
-  useEffect(() => {
-    setGraph(SCOPE, buildHomeFocusGraph(onOpenProfiles), PRIMARY_TILES[0].id);
-    return () => clearGraph(SCOPE);
-  }, [setGraph, clearGraph, onOpenProfiles]);
-
   const handleRefresh = useCallback(() => {
     clearAllCachedContent();
     window.location.reload();
@@ -131,7 +124,7 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
     window.close();
   }, []);
 
-  const handleSelectTile = useCallback(
+  const handleSystemAction = useCallback(
     (tileId: string) => {
       if (tileId === "refresh") return handleRefresh();
       if (tileId === "exit") return handleExit();
@@ -140,9 +133,19 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
     [handleRefresh, handleExit, onSelectTile],
   );
 
+  useEffect(() => {
+    setGraph(SCOPE, buildHomeFocusGraph(onOpenProfiles, handleSystemAction), PRIMARY_TILES[0].id);
+    return () => clearGraph(SCOPE);
+  }, [setGraph, clearGraph, onOpenProfiles, handleSystemAction]);
+
   useRemoteInput(platform, {
     onSelect: (focusedId) => {
-      if (focusedId && focusedId !== PROFILE_SWITCHER_FOCUS_ID) handleSelectTile(focusedId);
+      if (!focusedId || focusedId === PROFILE_SWITCHER_FOCUS_ID) return;
+      // System-tile nodes carry their own onSelect (see buildHomeFocusGraph)
+      // and are invoked by useFocusStore's select(); only content tiles are
+      // routed through the caller-supplied onSelectTile here.
+      const isSystemTile = SYSTEM_TILES.some((t) => t.id === focusedId);
+      if (!isSystemTile) onSelectTile(focusedId);
     },
   });
 
@@ -181,70 +184,77 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
 
   return (
     <MeshBackground>
-      <div style={{ minHeight: "100vh", padding: "32px 64px 28px", display: "flex", flexDirection: "column" }}>
-        <header style={{ position: "relative", display: "flex", alignItems: "flex-start", justifyContent: "flex-start" }}>
+      {/*
+       * Scoped scaling root: every size below this point is in rem, and this
+       * font-size ties 1rem to viewport width (1rem = 16px at a 1920px-wide
+       * viewport, 1rem = 32px at 3840px/4K, and so on — proportional at any
+       * width, not capped early). The min/max bounds only guard truly
+       * pathological window sizes (a sliver-thin browser window, or a
+       * multi-monitor-spanning one), not real TV resolutions. This makes the
+       * entire layout — cards, gaps, icons, text — scale together as one
+       * unit at any resolution, instead of just the outer margins being
+       * relative while everything inside stayed fixed-px (which looked wrong
+       * at both small and very large viewports — see conversation history).
+       */}
+      <div
+        style={{
+          minHeight: "100vh",
+          fontSize: "clamp(12px, 0.833vw, 40px)",
+          padding: "2rem 4.5rem 1.75rem",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <header style={{ position: "relative", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
           <Focusable id={PROFILE_SWITCHER_FOCUS_ID}>
             <ProfileSwitcher profile={profile} onOpen={onOpenProfiles} />
           </Focusable>
           <div style={{ position: "absolute", left: "50%", top: 0, transform: "translateX(-50%)" }}>
             <Clock />
           </div>
+          <div style={{ display: "flex", gap: "0.75rem" }}>
+            {SYSTEM_TILES.map((tile) => (
+              <SystemIconButton key={tile.id} tile={tile} onSelect={() => handleSystemAction(tile.id)} />
+            ))}
+          </div>
         </header>
 
-        <div style={{ flex: 1, display: "flex", justifyContent: "center", alignItems: "center", padding: "8px 48px" }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${PRIMARY_TILES.length + 1}, 1fr)`,
-              gridTemplateRows: "360px 140px",
-              gap: 20,
-              width: "100%",
-              maxWidth: 1160,
-            }}
-          >
-            {PRIMARY_TILES.map((tile, index) => (
-              <div key={tile.id} style={{ gridColumn: index + 1, gridRow: 1 }}>
-                <HomeTileCard
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            padding: "0.5rem 2rem",
+            margin: "12rem",
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${PRIMARY_TILES.length}, 1fr)`, gap: "1.75rem" }}>
+              {PRIMARY_TILES.map((tile) => (
+                <HeroTileCard
+                  key={tile.id}
                   tile={tile}
-                  height="100%"
-                  iconSize={52}
-                  labelSize={24}
                   collageImages={collageByTile[tile.id as keyof typeof collageByTile]}
-                  onSelect={() => handleSelectTile(tile.id)}
+                  onSelect={() => onSelectTile(tile.id)}
                 />
-              </div>
-            ))}
+              ))}
+            </div>
 
-            {SECONDARY_TILES.map((tile, index) => (
-              <div key={tile.id} style={{ gridColumn: index + 1, gridRow: 2 }}>
-                <UtilityStripItem tile={tile} height={140} onSelect={() => handleSelectTile(tile.id)} />
-              </div>
-            ))}
-
-            <div
-              style={{
-                gridColumn: PRIMARY_TILES.length + 1,
-                gridRow: "1 / 3",
-                display: "flex",
-                flexDirection: "column",
-                gap: 20,
-              }}
-            >
-              {SIDE_TILES.map((tile) => (
-                <div key={tile.id} style={{ flex: 1 }}>
-                  <UtilityStripItem tile={tile} height="100%" onSelect={() => handleSelectTile(tile.id)} />
-                </div>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${SECONDARY_TILES.length}, 1fr)`, gap: "1.25rem" }}>
+              {SECONDARY_TILES.map((tile) => (
+                <SecondaryRailItem key={tile.id} tile={tile} onSelect={() => onSelectTile(tile.id)} />
               ))}
             </div>
           </div>
         </div>
 
         <footer style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-dim)", lineHeight: 1.6 }}>
+          <div style={{ fontSize: "0.8125rem", fontWeight: 500, color: "var(--text-dim)", lineHeight: 1.6 }}>
             <div>Current Playlist: {playlistInfo.name || "—"}</div>
             <div>Current playlist expires: {formatExpiry(playlistInfo.expiresAt)}</div>
           </div>
-          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-dim)" }}>v{__APP_VERSION__}</div>
+          <div style={{ fontSize: "0.8125rem", fontWeight: 500, color: "var(--text-dim)" }}>v{__APP_VERSION__}</div>
         </footer>
       </div>
     </MeshBackground>
@@ -256,18 +266,21 @@ function formatExpiry(expiresAt: Date | null): string {
   return expiresAt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-function HomeTileCard({
+/**
+ * Hero card for the primary row (Live TV/Movies/Series). Icon+label are
+ * centered rather than bottom-anchored. The content collage (when
+ * logos/posters loaded) sits behind them as a faint, blurred texture rather
+ * than the card's primary focus — IPTV-provided logo/poster URLs are
+ * frequently missing or dead, so the card can't depend on them to look
+ * intentional; the centered icon+label is what carries the card regardless
+ * of whether any images loaded.
+ */
+function HeroTileCard({
   tile,
-  height,
-  iconSize,
-  labelSize,
   collageImages,
   onSelect,
 }: {
   tile: HomeTile;
-  height: number | string;
-  iconSize: number;
-  labelSize: number;
   collageImages?: string[];
   onSelect: () => void;
 }): JSX.Element {
@@ -277,8 +290,8 @@ function HomeTileCard({
 
   // IPTV logo/poster URLs are frequently dead — drop broken images from the
   // collage individually rather than showing a broken-image icon or falling
-  // back to nothing; if every image fails, the tile below still stands on
-  // its own (flat icon + label), so there's no error state to render here.
+  // back to nothing; if every image fails, the card still stands on its own
+  // (flat gradient + icon + label), so there's no error state to render here.
   const visibleImages = (collageImages ?? []).filter((url) => !brokenUrls.has(url));
 
   return (
@@ -288,10 +301,10 @@ function HomeTileCard({
           aria-hidden
           style={{
             position: "absolute",
-            inset: -60,
-            borderRadius: 60,
+            inset: "-3.75rem",
+            borderRadius: "3.75rem",
             background: "radial-gradient(closest-side, rgba(130,190,255,0.85) 0%, rgba(130,190,255,0.35) 45%, rgba(130,190,255,0) 75%)",
-            filter: "blur(20px)",
+            filter: "blur(1.25rem)",
             opacity: isFocused ? 1 : 0,
             transform: isFocused ? "scale(1)" : "scale(0.8)",
             transition: "opacity 260ms ease-out, transform 260ms ease-out",
@@ -304,26 +317,23 @@ function HomeTileCard({
           style={{
             position: "relative",
             width: "100%",
-            height,
+            aspectRatio: "0.82 / 1",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            gap: 14,
-            border: isFocused ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.06)",
-            borderRadius: 24,
-            background: isFocused
-              ? "linear-gradient(160deg, rgba(52,54,60,0.7) 0%, rgba(20,21,25,0.75) 100%)"
-              : "linear-gradient(160deg, rgba(30,31,36,0.6) 0%, rgba(12,13,16,0.65) 100%)",
-            backdropFilter: "blur(24px) saturate(120%)",
-            WebkitBackdropFilter: "blur(24px) saturate(120%)",
+            gap: "0.875rem",
+            border: isFocused ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "1.75rem",
+            background: "linear-gradient(160deg, rgba(40,42,48,0.6) 0%, rgba(14,15,18,0.7) 100%)",
             boxShadow: isFocused
-              ? "inset 0 1px 0 rgba(255,255,255,0.4), 0 30px 60px -12px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.06)"
-              : "inset 0 1px 0 rgba(255,255,255,0.12), 0 10px 24px -8px rgba(0,0,0,0.5)",
-            transform: isFocused ? "scale(1.09) translateY(-6px)" : "scale(1)",
-            transition: "transform 220ms cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 220ms ease-out, border-color 220ms ease-out, background 220ms ease-out",
+              ? "inset 0 1px 0 rgba(255,255,255,0.4), 0 0 0 0.1875rem var(--accent), 0 1.875rem 3.75rem -0.75rem rgba(0,0,0,0.65)"
+              : "inset 0 1px 0 rgba(255,255,255,0.1), 0 0.625rem 1.5rem -0.5rem rgba(0,0,0,0.5)",
+            transform: isFocused ? "scale(1.045) translateY(-0.375rem)" : "scale(1)",
+            transition: "transform 220ms cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 220ms ease-out, border-color 220ms ease-out",
             cursor: "pointer",
             overflow: "hidden",
+            padding: 0,
           }}
         >
           {visibleImages.length > 0 && (
@@ -334,8 +344,8 @@ function HomeTileCard({
                 inset: 0,
                 display: "flex",
                 flexWrap: "wrap",
-                opacity: 0.5,
-                filter: "blur(6px) brightness(0.4) saturate(120%)",
+                opacity: 0.65,
+                filter: "blur(0.375rem) brightness(0.65) saturate(120%)",
                 transition: "opacity 400ms ease-out",
               }}
             >
@@ -349,7 +359,7 @@ function HomeTileCard({
                   style={{
                     flex: "1 1 33%",
                     minWidth: "33%",
-                    height: "50%",
+                    height: "33.34%",
                     objectFit: "cover",
                   }}
                 />
@@ -357,14 +367,14 @@ function HomeTileCard({
             </div>
           )}
           <Icon
-            size={iconSize}
-            strokeWidth={1.5}
-            color="var(--text)"
+            size="3.25rem"
+            strokeWidth={1.25}
+            color={isFocused ? "var(--accent)" : "var(--text)"}
             style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))", position: "relative" }}
           />
           <span
             style={{
-              fontSize: labelSize,
+              fontSize: "1.5rem",
               fontWeight: 600,
               color: "var(--text)",
               letterSpacing: 0.2,
@@ -380,16 +390,14 @@ function HomeTileCard({
 }
 
 /**
- * Smaller sibling of HomeTileCard for utility/secondary nav (Guide,
- * Favourites, History) and the side column (Settings, Refresh, Exit) — same
- * glass-card material and stacked icon+label layout as the primary cards so
- * it still reads as a grid tile on a TV, just visually subordinate via
- * reduced size/weight rather than a different shape entirely (a thin inline
- * strip read as a button/toolbar instead of a tile — see conversation
- * history). `height` accepts "100%" so side-column instances can stretch to
- * fill their flex slot instead of a fixed pixel height.
+ * Secondary rail item (Guide/My Favourite/History): a wide rectangular card
+ * with icon+label inline side-by-side rather than stacked — reads as a
+ * lighter-weight nav row beneath the hero cards rather than a smaller
+ * version of them. Deliberately no content collage or color identity; this
+ * row is about navigation, not content preview, so it stays visually
+ * quieter than the hero row.
  */
-function UtilityStripItem({ tile, onSelect, height = 140 }: { tile: HomeTile; onSelect: () => void; height?: number | string }): JSX.Element {
+function SecondaryRailItem({ tile, onSelect }: { tile: HomeTile; onSelect: () => void }): JSX.Element {
   const isFocused = useFocusStore((state) => state.focusedId === tile.id);
   const Icon = tile.icon;
 
@@ -400,13 +408,13 @@ function UtilityStripItem({ tile, onSelect, height = 140 }: { tile: HomeTile; on
           aria-hidden
           style={{
             position: "absolute",
-            inset: -32,
-            borderRadius: 40,
-            background: "radial-gradient(closest-side, rgba(130,190,255,0.7) 0%, rgba(130,190,255,0.25) 45%, rgba(130,190,255,0) 75%)",
-            filter: "blur(14px)",
+            inset: "-1.25rem",
+            borderRadius: "2rem",
+            background: "radial-gradient(closest-side, rgba(130,190,255,0.6) 0%, rgba(130,190,255,0.2) 45%, rgba(130,190,255,0) 75%)",
+            filter: "blur(0.875rem)",
             opacity: isFocused ? 1 : 0,
-            transform: isFocused ? "scale(1)" : "scale(0.8)",
-            transition: "opacity 260ms ease-out, transform 260ms ease-out",
+            transform: isFocused ? "scale(1)" : "scale(0.9)",
+            transition: "opacity 220ms ease-out, transform 220ms ease-out",
             pointerEvents: "none",
           }}
         />
@@ -416,40 +424,76 @@ function UtilityStripItem({ tile, onSelect, height = 140 }: { tile: HomeTile; on
           style={{
             position: "relative",
             width: "100%",
-            height,
+            height: "6rem",
             display: "flex",
-            flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            gap: 10,
-            border: isFocused ? "1px solid rgba(255,255,255,0.5)" : "1px solid rgba(255,255,255,0.06)",
-            borderRadius: 20,
+            gap: "0.875rem",
+            border: isFocused ? "1px solid rgba(255,255,255,0.45)" : "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "1.125rem",
             background: isFocused
               ? "linear-gradient(160deg, rgba(52,54,60,0.7) 0%, rgba(20,21,25,0.75) 100%)"
-              : "linear-gradient(160deg, rgba(30,31,36,0.6) 0%, rgba(12,13,16,0.65) 100%)",
-            backdropFilter: "blur(20px) saturate(120%)",
-            WebkitBackdropFilter: "blur(20px) saturate(120%)",
+              : "linear-gradient(160deg, rgba(28,29,34,0.55) 0%, rgba(12,13,16,0.6) 100%)",
+            backdropFilter: "blur(16px) saturate(120%)",
+            WebkitBackdropFilter: "blur(16px) saturate(120%)",
             boxShadow: isFocused
-              ? "inset 0 1px 0 rgba(255,255,255,0.35), 0 16px 32px -10px rgba(0,0,0,0.55)"
-              : "inset 0 1px 0 rgba(255,255,255,0.1), 0 6px 16px -6px rgba(0,0,0,0.45)",
-            transform: isFocused ? "scale(1.06) translateY(-3px)" : "scale(1)",
+              ? "inset 0 1px 0 rgba(255,255,255,0.3), 0 0 0 0.1875rem var(--accent), 0 1rem 2rem -0.625rem rgba(0,0,0,0.55)"
+              : "inset 0 1px 0 rgba(255,255,255,0.08), 0 0.375rem 1rem -0.375rem rgba(0,0,0,0.4)",
+            transform: isFocused ? "scale(1.03)" : "scale(1)",
             transition: "transform 200ms cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 200ms ease-out, border-color 200ms ease-out, background 200ms ease-out",
             cursor: "pointer",
           }}
         >
-          <Icon size={24} strokeWidth={1.5} color="var(--text)" />
-          <span
-            style={{
-              fontSize: 14,
-              fontWeight: 600,
-              color: "var(--text)",
-              whiteSpace: "nowrap",
-            }}
-          >
+          <Icon size="1.5rem" strokeWidth={1.6} color={isFocused ? "var(--accent)" : "var(--text-dim)"} />
+          <span style={{ fontSize: "1rem", fontWeight: 600, color: isFocused ? "var(--text)" : "var(--text-dim)", whiteSpace: "nowrap" }}>
             {tile.label}
           </span>
         </button>
       </div>
+    </Focusable>
+  );
+}
+
+/**
+ * Header icon cluster (Settings/Refresh/Exit): system-level actions kept
+ * out of the content grid entirely so the grid stays purely about content
+ * destinations — see buildHomeFocusGraph's doc comment. Small circular
+ * icon-only buttons, matching the header's own scale rather than the grid's.
+ */
+function SystemIconButton({ tile, onSelect }: { tile: HomeTile; onSelect: () => void }): JSX.Element {
+  const isFocused = useFocusStore((state) => state.focusedId === tile.id);
+  const Icon = tile.icon;
+
+  return (
+    <Focusable id={tile.id}>
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-label={tile.label}
+        title={tile.label}
+        style={{
+          width: "2.75rem",
+          height: "2.75rem",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          border: isFocused ? "1px solid rgba(255,255,255,0.55)" : "1px solid rgba(255,255,255,0.1)",
+          borderRadius: 999,
+          background: isFocused
+            ? "linear-gradient(160deg, rgba(52,54,60,0.75) 0%, rgba(20,21,25,0.8) 100%)"
+            : "linear-gradient(160deg, rgba(30,31,36,0.5) 0%, rgba(12,13,16,0.55) 100%)",
+          backdropFilter: "blur(16px) saturate(120%)",
+          WebkitBackdropFilter: "blur(16px) saturate(120%)",
+          boxShadow: isFocused
+            ? "inset 0 1px 0 rgba(255,255,255,0.35), 0 0 0 0.1875rem var(--accent), 0 0.625rem 1.25rem -0.5rem rgba(0,0,0,0.55)"
+            : "inset 0 1px 0 rgba(255,255,255,0.1), 0 0.25rem 0.75rem -0.375rem rgba(0,0,0,0.4)",
+          transform: isFocused ? "scale(1.1)" : "scale(1)",
+          transition: "transform 180ms ease-out, box-shadow 180ms ease-out, border-color 180ms ease-out, background 180ms ease-out",
+          cursor: "pointer",
+        }}
+      >
+        <Icon size="1.1875rem" strokeWidth={1.75} color={isFocused ? "var(--accent)" : "var(--text)"} />
+      </button>
     </Focusable>
   );
 }
