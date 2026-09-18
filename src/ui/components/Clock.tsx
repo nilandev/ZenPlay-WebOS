@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-/** Top-right date/time readout, ticking once a minute — plenty for a wall-clock display. */
+/** Centered wall-clock readout (time + date), ticking once a minute — plenty for a TV display. */
 export function Clock(): JSX.Element {
   const [now, setNow] = useState(() => new Date());
 
@@ -13,9 +13,9 @@ export function Clock(): JSX.Element {
   const date = now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 
   return (
-    <div style={{ textAlign: "right", lineHeight: 1.3 }}>
-      <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)" }}>{time}</div>
-      <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{date}</div>
+    <div style={{ textAlign: "center", lineHeight: 1.3 }}>
+      <div style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{time}</div>
+      <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-dim)", whiteSpace: "nowrap", marginTop: 4 }}>{date}</div>
     </div>
   );
 }

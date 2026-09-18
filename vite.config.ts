@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
@@ -5,8 +6,12 @@ import react from "@vitejs/plugin-react";
 import { iptvDevProxyPlugin } from "./vite-dev-proxy.js";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(readFileSync(path.resolve(rootDir, "package.json"), "utf-8")) as { version: string };
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   // webOS TV loads the packaged app from its own local app directory, not
   // from a web server root — an absolute "/assets/..." base (Vite's
   // default) 404s there, since there's no server to resolve "/" against.

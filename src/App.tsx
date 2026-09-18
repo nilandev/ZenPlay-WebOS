@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { XtreamClient, type Category, type PlaylistSource, type Profile } from "@core";
-import { TopNav } from "@ui";
+import type { PlaylistSource, Profile } from "@core";
 import { addPlaylistSource, loadPlaylistSources } from "./playlist-store.js";
-import { addProfile, getActiveProfileId, loadProfiles, setActiveProfileId, updateProfile } from "./profile-store.js";
+import {
+  addProfile,
+  clearActiveProfile,
+  deleteProfile,
+  getActiveProfileId,
+  loadProfiles,
+  setActiveProfileId,
+  updateProfile,
+} from "./profile-store.js";
 import { AddSourceScreen } from "./screens/AddSourceScreen.js";
 import { HomeScreen } from "./screens/HomeScreen.js";
 import { LiveTvScreen } from "./screens/LiveTvScreen.js";
@@ -11,10 +18,10 @@ import { SeriesScreen } from "./screens/SeriesScreen.js";
 import { GuideScreen } from "./screens/GuideScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
 import { ProfilesScreen } from "./screens/ProfilesScreen.js";
+import { ManageProfilesScreen } from "./screens/ManageProfilesScreen.js";
 import { PlaceholderScreen } from "./screens/PlaceholderScreen.js";
 import { PlayerScreen } from "./screens/PlayerScreen.js";
 import { detectPlatform } from "./platform.js";
-import { proxyFetch } from "./proxy-fetch.js";
 
 const TABS = [
   { id: "home", label: "Home" },
@@ -36,19 +43,9 @@ export function App(): JSX.Element {
 
   const [profiles, setProfiles] = useState<Profile[]>(() => loadProfiles());
   const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
+  const [isManagingProfiles, setIsManagingProfiles] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("home");
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
-  const [liveCategories, setLiveCategories] = useState<Category[]>([]);
-
-  useEffect(() => {
-    if (activeSource?.kind !== "xtream") return;
-    const client = new XtreamClient(activeSource, proxyFetch);
-    client
-      .authenticate()
-      .then(() => client.getLiveCategories())
-      .then(setLiveCategories)
-      .catch(() => setLiveCategories([]));
-  }, [activeSource]);
 
   useEffect(() => {
     const savedId = getActiveProfileId();
@@ -76,11 +73,13 @@ export function App(): JSX.Element {
     setActiveProfileId(profile.id);
   }
 
-  function handleUpdateProfile(patch: Partial<Profile>): void {
-    if (!activeProfile) return;
-    const updated = updateProfile(activeProfile.id, patch);
-    setProfiles(updated);
-    setActiveProfile(updated.find((p) => p.id === activeProfile.id) ?? activeProfile);
+  function handleUpdateAnyProfile(profileId: string, patch: Partial<Profile>): void {
+    setProfiles(updateProfile(profileId, patch));
+  }
+
+  function handleDeleteProfile(profileId: string): void {
+    setProfiles(deleteProfile(profileId));
+    if (getActiveProfileId() === profileId) clearActiveProfile();
   }
 
   if (!activeSource) {
@@ -88,12 +87,24 @@ export function App(): JSX.Element {
   }
 
   if (!activeProfile) {
+    if (isManagingProfiles) {
+      return (
+        <ManageProfilesScreen
+          profiles={profiles}
+          platform={platform}
+          onBack={() => setIsManagingProfiles(false)}
+          onUpdateProfile={handleUpdateAnyProfile}
+          onDeleteProfile={handleDeleteProfile}
+        />
+      );
+    }
     return (
       <ProfilesScreen
         profiles={profiles}
         platform={platform}
         onSelectProfile={handleSelectProfile}
         onCreateProfile={handleCreateProfile}
+        onManageProfiles={() => setIsManagingProfiles(true)}
       />
     );
   }
@@ -102,37 +113,38 @@ export function App(): JSX.Element {
     return (
       <div style={{ minHeight: "100vh" }}>
         <HomeScreen
+          source={activeSource}
           platform={platform}
           profile={activeProfile}
-          profiles={profiles}
           onSelectTile={(tileId) => setActiveTab(tileId as TabId)}
-          onSelectProfile={handleSelectProfile}
-          onManageProfiles={() => setActiveProfile(null)}
+          onOpenProfiles={() => setActiveProfile(null)}
         />
         {playbackUrl && <PlayerScreen streamUrl={playbackUrl} platform={platform} onClose={() => setPlaybackUrl(null)} />}
       </div>
     );
   }
 
+  const goHome = () => setActiveTab("home");
+
   return (
     <div style={{ minHeight: "100vh" }}>
-      <TopNav items={TABS} activeId={activeTab} onSelect={(id) => setActiveTab(id as TabId)} />
-
-      {activeTab === "live" && <LiveTvScreen source={activeSource} platform={platform} profile={activeProfile} />}
-      {activeTab === "guide" && <GuideScreen source={activeSource} platform={platform} onPlay={setPlaybackUrl} />}
-      {activeTab === "movies" && <VodScreen source={activeSource} platform={platform} onPlay={(movie) => setPlaybackUrl(movie.streamUrl)} />}
-      {activeTab === "series" && (
-        <SeriesScreen source={activeSource} platform={platform} onPlayEpisode={(episode) => setPlaybackUrl(episode.streamUrl)} />
+      {activeTab === "live" && <LiveTvScreen source={activeSource} platform={platform} onBack={goHome} />}
+      {activeTab === "guide" && <GuideScreen source={activeSource} platform={platform} onPlay={setPlaybackUrl} onBack={goHome} />}
+      {activeTab === "movies" && (
+        <VodScreen source={activeSource} platform={platform} onPlay={(movie) => setPlaybackUrl(movie.streamUrl)} onBack={goHome} />
       )}
-      {activeTab === "favourites" && <PlaceholderScreen title="My Favourite" icon="❤" />}
-      {activeTab === "history" && <PlaceholderScreen title="History" icon="🕘" />}
-      {activeTab === "settings" && (
-        <SettingsScreen
-          profile={activeProfile}
-          categories={liveCategories}
-          onUpdateProfile={handleUpdateProfile}
-          onSwitchProfile={() => setActiveProfile(null)}
+      {activeTab === "series" && (
+        <SeriesScreen
+          source={activeSource}
+          platform={platform}
+          onPlayEpisode={(episode) => setPlaybackUrl(episode.streamUrl)}
+          onBack={goHome}
         />
+      )}
+      {activeTab === "favourites" && <PlaceholderScreen title="My Favourite" icon="❤" platform={platform} onBack={goHome} />}
+      {activeTab === "history" && <PlaceholderScreen title="History" icon="🕘" platform={platform} onBack={goHome} />}
+      {activeTab === "settings" && (
+        <SettingsScreen platform={platform} profile={activeProfile} onSwitchProfile={() => setActiveProfile(null)} onBack={goHome} />
       )}
 
       {playbackUrl && <PlayerScreen streamUrl={playbackUrl} platform={platform} onClose={() => setPlaybackUrl(null)} />}

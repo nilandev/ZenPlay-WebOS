@@ -1,178 +1,158 @@
 import { useEffect, useState } from "react";
 import type { PlatformId, Profile } from "@core";
-import { Focusable, buildGridFocusGraph, useFocusStore, useRemoteInput } from "@ui";
+import { buildGridFocusGraph, Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode } from "@ui";
+import { ProfileForm } from "./ProfileForm.js";
 
 function useIsFocused(id: string): boolean {
   return useFocusStore((state) => state.focusedId === id);
 }
-
-const AVATAR_CHOICES = ["🙂", "🐱", "🐶", "🚀", "🎬", "⭐", "🎮", "🦖"];
 
 export interface ProfilesScreenProps {
   profiles: Profile[];
   platform: PlatformId;
   onSelectProfile: (profile: Profile) => void;
   onCreateProfile: (profile: Profile) => void;
+  onManageProfiles: () => void;
 }
 
 const CREATE_ID = "create-profile";
+const MANAGE_ID = "manage-profiles";
 
 /**
  * Profile picker shown on launch, styled after Apple TV/Netflix profile
  * grids: large circular avatars, name below, focus scales the tile up.
+ * "Manage Profiles" lives here (not as a corner dropdown on Home) since
+ * this is the natural place to switch, create, or edit/delete profiles —
+ * see conversation history for why the earlier Home dropdown was removed.
+ *
+ * Delegates entirely to either the picker grid or ProfileForm, holding no
+ * useRemoteInput/focus-graph hooks of its own — a parent and child screen
+ * both calling useRemoteInput simultaneously causes every D-pad "select" to
+ * fire the focused node's onSelect twice (harmless for idempotent actions
+ * like moving focus, but silently cancels out non-idempotent ones like
+ * toggling a switch — see conversation history for the full trace).
  */
-export function ProfilesScreen({ profiles, platform, onSelectProfile, onCreateProfile }: ProfilesScreenProps): JSX.Element {
-  const setGraph = useFocusStore((state) => state.setGraph);
-  const clearGraph = useFocusStore((state) => state.clearGraph);
+export function ProfilesScreen({ profiles, platform, onSelectProfile, onCreateProfile, onManageProfiles }: ProfilesScreenProps): JSX.Element {
   const [isCreating, setIsCreating] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const [draftAvatar, setDraftAvatar] = useState(AVATAR_CHOICES[0]);
-  const [draftIsKids, setDraftIsKids] = useState(false);
-
-  const ids = [...profiles.map((p) => p.id), CREATE_ID];
-
-  useEffect(() => {
-    if (isCreating) return;
-    setGraph("content", buildGridFocusGraph(ids, ids.length), ids[0]);
-    return () => clearGraph("content");
-    // ids is derived fresh each render from profiles; only re-run when the actual profile set changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profiles.length, isCreating, setGraph, clearGraph]);
-
-  useRemoteInput(platform, {
-    onSelect: (focusedId) => {
-      if (!focusedId) return;
-      if (focusedId === CREATE_ID) {
-        setIsCreating(true);
-        return;
-      }
-      const profile = profiles.find((p) => p.id === focusedId);
-      if (profile) onSelectProfile(profile);
-    },
-  });
 
   if (isCreating) {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div
-          style={{
-            width: 440,
-            maxWidth: "92vw",
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 16,
-            padding: 36,
-            boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
-          }}
-        >
-          <h1 style={{ fontSize: 22, marginBottom: 20 }}>New profile</h1>
-
-          <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "var(--text-dim)", marginBottom: 16 }}>
-            Name
-            <input value={draftName} onChange={(e) => setDraftName(e.target.value)} autoFocus style={{ width: "100%" }} />
-          </label>
-
-          <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 8 }}>Avatar</div>
-          <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-            {AVATAR_CHOICES.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                onClick={() => setDraftAvatar(emoji)}
-                style={{
-                  width: 48,
-                  height: 48,
-                  fontSize: 22,
-                  borderRadius: "50%",
-                  border: "2px solid transparent",
-                  background: "var(--surface-raised)",
-                  boxShadow: draftAvatar === emoji ? "0 0 0 3px var(--accent)" : "none",
-                }}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24, fontSize: 14 }}>
-            <input type="checkbox" checked={draftIsKids} onChange={(e) => setDraftIsKids(e.target.checked)} />
-            Kids profile
-          </label>
-
-          <div style={{ display: "flex", gap: 10 }}>
-            <button
-              type="button"
-              onClick={() => setIsCreating(false)}
-              style={{
-                flex: 1,
-                padding: "12px 0",
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--text)",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                onCreateProfile({
-                  id: crypto.randomUUID(),
-                  name: draftName || "New Profile",
-                  avatarEmoji: draftAvatar,
-                  isKidsProfile: draftIsKids,
-                  lockedCategoryIds: [],
-                  favoriteChannelIds: [],
-                });
-                setIsCreating(false);
-                setDraftName("");
-              }}
-              style={{
-                flex: 1,
-                padding: "12px 0",
-                borderRadius: 10,
-                border: "none",
-                background: "var(--accent)",
-                color: "#062028",
-                fontWeight: 700,
-              }}
-            >
-              Create
-            </button>
-          </div>
-        </div>
-      </div>
+      <ProfileForm
+        platform={platform}
+        title="New profile"
+        saveLabel="Create"
+        onCancel={() => setIsCreating(false)}
+        onSave={(fields) => {
+          onCreateProfile({
+            id: crypto.randomUUID(),
+            name: fields.name,
+            avatarUrl: fields.avatarUrl,
+            favoriteChannelIds: [],
+          });
+          setIsCreating(false);
+        }}
+      />
     );
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", gap: 4 }}>
-      <h1 style={{ fontSize: 32, fontWeight: 700, marginBottom: 4 }}>Who's watching?</h1>
-      <p style={{ marginBottom: 44 }}>Select a profile or add a new one.</p>
-      <div style={{ display: "flex", gap: 40 }}>
-        {profiles.map((profile) => (
-          <Focusable key={profile.id} id={profile.id}>
-            <ProfileTile id={profile.id} emoji={profile.avatarEmoji} label={profile.name} onClick={() => onSelectProfile(profile)} />
+    <ProfilePickerGrid
+      profiles={profiles}
+      platform={platform}
+      onSelectProfile={onSelectProfile}
+      onManageProfiles={onManageProfiles}
+      onStartCreate={() => setIsCreating(true)}
+    />
+  );
+}
+
+function ProfilePickerGrid({
+  profiles,
+  platform,
+  onSelectProfile,
+  onManageProfiles,
+  onStartCreate,
+}: {
+  profiles: Profile[];
+  platform: PlatformId;
+  onSelectProfile: (profile: Profile) => void;
+  onManageProfiles: () => void;
+  onStartCreate: () => void;
+}): JSX.Element {
+  const setGraph = useFocusStore((state) => state.setGraph);
+  const clearGraph = useFocusStore((state) => state.clearGraph);
+
+  const tileIds = [...profiles.map((p) => p.id), CREATE_ID];
+
+  useEffect(() => {
+    // Two rows: the profile/add-profile tiles, then Manage Profiles below —
+    // buildGridFocusGraph alone can't express a second row with a different
+    // item count, so the row's neighbors are built manually here (same
+    // pattern as HomeScreen's buildHomeFocusGraph for its uneven rows).
+    const tileNodes: FocusNode[] = buildGridFocusGraph(tileIds, tileIds.length).map((node) => ({
+      ...node,
+      neighbors: { ...node.neighbors, down: MANAGE_ID },
+      onSelect: () => {
+        if (node.id === CREATE_ID) onStartCreate();
+        else {
+          const profile = profiles.find((p) => p.id === node.id);
+          if (profile) onSelectProfile(profile);
+        }
+      },
+    }));
+    const manageNode: FocusNode = { id: MANAGE_ID, neighbors: { up: tileIds[0] }, onSelect: onManageProfiles };
+    setGraph("content", [...tileNodes, manageNode], tileIds[0]);
+    return () => clearGraph("content");
+    // tileIds is derived fresh each render from profiles; only re-run when the actual profile set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profiles.length, setGraph, clearGraph, onSelectProfile, onManageProfiles, onStartCreate]);
+
+  useRemoteInput(platform, {});
+
+  return (
+    <MeshBackground>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", gap: 4 }}>
+        <h1 style={{ fontSize: 32, fontWeight: 700, marginBottom: 4, color: "var(--text)" }}>Who's watching?</h1>
+        <p style={{ marginBottom: 44, color: "var(--text-dim)" }}>Select a profile or add a new one.</p>
+        <div style={{ display: "flex", gap: 40, marginBottom: 40 }}>
+          {profiles.map((profile) => (
+            <Focusable key={profile.id} id={profile.id}>
+              <ProfileTile id={profile.id} avatarUrl={profile.avatarUrl} label={profile.name} onClick={() => onSelectProfile(profile)} />
+            </Focusable>
+          ))}
+          <Focusable id={CREATE_ID}>
+            <ProfileTile id={CREATE_ID} label="Add Profile" onClick={onStartCreate} isAdd />
           </Focusable>
-        ))}
-        <Focusable id={CREATE_ID}>
-          <ProfileTile id={CREATE_ID} emoji="+" label="Add Profile" onClick={() => setIsCreating(true)} isAdd />
-        </Focusable>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <Focusable id={MANAGE_ID}>
+            <ManageProfilesButton onClick={onManageProfiles} />
+          </Focusable>
+        </div>
       </div>
-    </div>
+    </MeshBackground>
+  );
+}
+
+function ManageProfilesButton({ onClick }: { onClick: () => void }): JSX.Element {
+  const isFocused = useIsFocused(MANAGE_ID);
+  return (
+    <PillButton onClick={onClick} isFocused={isFocused}>
+      Manage Profiles
+    </PillButton>
   );
 }
 
 function ProfileTile({
   id,
-  emoji,
+  avatarUrl,
   label,
   onClick,
   isAdd,
 }: {
   id: string;
-  emoji: string;
+  avatarUrl?: string;
   label: string;
   onClick: () => void;
   isAdd?: boolean;
@@ -183,13 +163,22 @@ function ProfileTile({
     <button
       type="button"
       onClick={onClick}
-      style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, background: "transparent", border: "none" }}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 14,
+        background: "transparent",
+        border: "none",
+        outline: "none",
+      }}
     >
       <div
         style={{
           width: 128,
           height: 128,
           borderRadius: "50%",
+          overflow: "hidden",
           background: isAdd ? "transparent" : "linear-gradient(160deg, var(--surface-raised), var(--surface))",
           border: isAdd ? "2px dashed var(--border)" : "1px solid var(--border)",
           display: "flex",
@@ -201,7 +190,7 @@ function ProfileTile({
           transition: "transform 160ms ease-out, box-shadow 160ms ease-out",
         }}
       >
-        {emoji}
+        {isAdd ? "+" : <img src={avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
       </div>
       <span style={{ fontSize: 16, fontWeight: isFocused ? 700 : 500, color: isFocused ? "var(--text)" : "var(--text-dim)" }}>
         {label}

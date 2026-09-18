@@ -7,4 +7,3 @@ export * from "./epg/parse-xmltv.js";
 export * from "./epg/epg-lookup.js";
 export * from "./xtream/xtream-client.js";
 export * from "./input/keymap.js";
-export * from "./profile/pin.js";

@@ -1,10 +1,17 @@
+import type { PlatformId } from "@core";
+import { useRemoteInput } from "@ui";
+
 export interface PlaceholderScreenProps {
   title: string;
   icon: string;
+  platform: PlatformId;
+  onBack: () => void;
 }
 
 /** Stand-in for a screen that isn't built yet, so a Home tile has somewhere to go without misrepresenting a real feature. */
-export function PlaceholderScreen({ title, icon }: PlaceholderScreenProps): JSX.Element {
+export function PlaceholderScreen({ title, icon, platform, onBack }: PlaceholderScreenProps): JSX.Element {
+  useRemoteInput(platform, { onBack });
+
   return (
     <div
       style={{

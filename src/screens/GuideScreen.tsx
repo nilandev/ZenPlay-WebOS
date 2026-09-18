@@ -9,6 +9,7 @@ export interface GuideScreenProps {
   platform: PlatformId;
   /** Live playback (programme is currently airing) or catch-up (past programme with an archive URL). */
   onPlay: (streamUrl: string) => void;
+  onBack: () => void;
 }
 
 const WINDOW_HOURS = 3;
@@ -27,7 +28,7 @@ function groupChannelsByCategory(channels: Channel[]): Array<{ id: string; label
   return Array.from(byGroup.entries()).map(([label, groupChannels]) => ({ id: label, label, channels: groupChannels }));
 }
 
-export function GuideScreen({ source, platform, onPlay }: GuideScreenProps): JSX.Element {
+export function GuideScreen({ source, platform, onPlay, onBack }: GuideScreenProps): JSX.Element {
   const loadChannels = useCallback(() => loadChannelsByKind(source, "live"), [source]);
   const { data: channels, isInitialLoading: isChannelsLoading } = useCachedContent(
     `guide-channels:${source.id}`,
@@ -76,6 +77,7 @@ export function GuideScreen({ source, platform, onPlay }: GuideScreenProps): JSX
   useRemoteInput(platform, {
     onChannelUp: () => setWindowStart((prev) => new Date(prev.getTime() - WINDOW_HOURS * 3600_000)),
     onChannelDown: () => setWindowStart((prev) => new Date(prev.getTime() + WINDOW_HOURS * 3600_000)),
+    onBack,
   });
 
   function handleSelectProgramme(channel: Channel, programme: EpgProgramme): void {
@@ -99,7 +101,7 @@ export function GuideScreen({ source, platform, onPlay }: GuideScreenProps): JSX
   const isInitialLoading = isChannelsLoading || isEpgLoading;
 
   return (
-    <div style={{ height: "calc(100vh - 76px)", display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: "16px 40px 12px", display: "flex", alignItems: "baseline", gap: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700 }}>Guide</h1>
         <span style={{ fontSize: 14, color: "var(--text-dim)" }}>

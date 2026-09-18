@@ -33,6 +33,12 @@ export function updateProfile(profileId: string, patch: Partial<Profile>): Profi
   return profiles;
 }
 
+export function deleteProfile(profileId: string): Profile[] {
+  const profiles = loadProfiles().filter((p) => p.id !== profileId);
+  saveProfiles(profiles);
+  return profiles;
+}
+
 export function getActiveProfileId(): string | null {
   return localStorage.getItem(ACTIVE_PROFILE_KEY);
 }

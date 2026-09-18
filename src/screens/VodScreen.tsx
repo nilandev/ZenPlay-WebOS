@@ -8,6 +8,7 @@ export interface VodScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
   onPlay: (movie: Channel) => void;
+  onBack: () => void;
 }
 
 const EMPTY_MOVIES: Channel[] = [];
@@ -24,7 +25,7 @@ function groupByCategory(movies: Channel[]): Array<{ title: string; items: Chann
   return Array.from(byGroup.entries()).map(([title, items]) => ({ title, items }));
 }
 
-export function VodScreen({ source, platform, onPlay }: VodScreenProps): JSX.Element {
+export function VodScreen({ source, platform, onPlay, onBack }: VodScreenProps): JSX.Element {
   const load = useCallback(() => loadChannelsByKind(source, "movie"), [source]);
   const { data: movies, isInitialLoading, error } = useCachedContent(`vod:${source.id}`, load, EMPTY_MOVIES);
 
@@ -46,6 +47,7 @@ export function VodScreen({ source, platform, onPlay }: VodScreenProps): JSX.Ele
       const movie = movies.find((m) => m.id === id);
       if (movie) onPlay(movie);
     },
+    onBack,
   });
 
   const focusedMovie = movies.find((m) => m.id === focusedId);

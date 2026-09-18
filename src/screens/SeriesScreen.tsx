@@ -17,6 +17,7 @@ export interface SeriesScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
   onPlayEpisode: (episode: SeriesEpisode) => void;
+  onBack: () => void;
 }
 
 type SeriesSummary = Awaited<ReturnType<typeof loadSeriesList>>[number];
@@ -35,7 +36,7 @@ function groupByCategory(list: SeriesSummary[]): Array<{ title: string; items: S
   return Array.from(byGroup.entries()).map(([title, items]) => ({ title, items }));
 }
 
-export function SeriesScreen({ source, platform, onPlayEpisode }: SeriesScreenProps): JSX.Element {
+export function SeriesScreen({ source, platform, onPlayEpisode, onBack }: SeriesScreenProps): JSX.Element {
   const loadList = useCallback(() => loadSeriesList(source), [source]);
   const { data: seriesList, isInitialLoading: isListLoading } = useCachedContent(`series-list:${source.id}`, loadList, EMPTY_SERIES);
 
@@ -84,6 +85,7 @@ export function SeriesScreen({ source, platform, onPlayEpisode }: SeriesScreenPr
     },
     onBack: () => {
       if (selected) setSelected(null);
+      else onBack();
     },
   });
 

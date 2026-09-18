@@ -1,124 +1,75 @@
-import { useEffect, useRef, useState } from "react";
 import type { Profile } from "@core";
+import { useFocusStore } from "../focus/focus-store.js";
 
 export interface ProfileSwitcherProps {
   profile: Profile;
-  profiles: Profile[];
-  onSelectProfile: (profile: Profile) => void;
-  onManageProfiles: () => void;
+  onOpen: () => void;
 }
 
+/** Shared with callers (e.g. HomeScreen's focus graph) so the id used to register this in useFocusStore always matches the id it reads its own focus state from. */
+export const PROFILE_SWITCHER_FOCUS_ID = "profile-switcher";
+
 /**
- * Top-left profile control, styled after Netflix's "who's watching" account
- * menu: current avatar + name with a caret, opening a dropdown of the other
- * profiles plus a "Manage profiles" escape hatch. Opens/closes on click
- * rather than hover since hover has no equivalent on a remote.
+ * Top-left profile chip: current avatar + name. Selecting it (click or
+ * D-pad select) navigates straight to the full "Who's watching?" screen —
+ * there's no in-place dropdown to switch profiles or manage them, since
+ * that screen already exists and is a more natural place for both actions
+ * (matches Netflix/Disney+/Apple TV, which don't have a corner dropdown
+ * either). An earlier version of this component had its own dropdown with
+ * per-node D-pad focus wiring; removed in favor of this simpler flow — see
+ * conversation history.
  */
-export function ProfileSwitcher({ profile, profiles, onSelectProfile, onManageProfiles }: ProfileSwitcherProps): JSX.Element {
-  const [isOpen, setIsOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    function onPointerDown(event: PointerEvent): void {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [isOpen]);
-
-  const otherProfiles = profiles.filter((p) => p.id !== profile.id);
+export function ProfileSwitcher({ profile, onOpen }: ProfileSwitcherProps): JSX.Element {
+  const isFocused = useFocusStore((state) => state.focusedId === PROFILE_SWITCHER_FOCUS_ID);
 
   return (
-    <div ref={rootRef} style={{ position: "relative" }}>
+    <div style={{ position: "relative" }}>
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: -20,
+          borderRadius: 999,
+          background: "radial-gradient(closest-side, rgba(130,190,255,0.7) 0%, rgba(130,190,255,0.25) 45%, rgba(130,190,255,0) 75%)",
+          filter: "blur(12px)",
+          opacity: isFocused ? 1 : 0,
+          transform: isFocused ? "scale(1)" : "scale(0.8)",
+          transition: "opacity 260ms ease-out, transform 260ms ease-out",
+          pointerEvents: "none",
+        }}
+      />
       <button
         type="button"
-        onClick={() => setIsOpen((open) => !open)}
+        onClick={onOpen}
         style={{
+          position: "relative",
           display: "flex",
           alignItems: "center",
           gap: 10,
-          background: "transparent",
-          border: "none",
-          padding: "6px 10px 6px 6px",
-          borderRadius: 10,
+          border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 999,
+          background: isFocused
+            ? "linear-gradient(160deg, rgba(52,54,60,0.7) 0%, rgba(20,21,25,0.75) 100%)"
+            : "linear-gradient(160deg, rgba(30,31,36,0.55) 0%, rgba(12,13,16,0.6) 100%)",
+          backdropFilter: "blur(20px) saturate(120%)",
+          WebkitBackdropFilter: "blur(20px) saturate(120%)",
+          boxShadow: isFocused
+            ? "inset 0 1px 0 rgba(255,255,255,0.4), 0 0 0 3px var(--accent), 0 12px 28px -10px rgba(0,0,0,0.55)"
+            : "inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 12px -6px rgba(0,0,0,0.4)",
+          padding: "6px 18px 6px 6px",
+          transform: isFocused ? "scale(1.08)" : "scale(1)",
+          transition: "transform 180ms ease-out, box-shadow 180ms ease-out, border-color 180ms ease-out, background 180ms ease-out",
           cursor: "pointer",
         }}
       >
-        <AvatarBadge emoji={profile.avatarEmoji} size={40} />
+        <AvatarBadge avatarUrl={profile.avatarUrl} size={40} />
         <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{profile.name}</span>
-        <Caret direction={isOpen ? "up" : "down"} />
       </button>
-
-      {isOpen && (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 8px)",
-            left: 0,
-            minWidth: 220,
-            background: "rgba(26,26,32,0.85)",
-            backdropFilter: "blur(24px) saturate(160%)",
-            WebkitBackdropFilter: "blur(24px) saturate(160%)",
-            border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 14,
-            padding: 8,
-            boxShadow: "0 20px 48px rgba(0,0,0,0.5)",
-            zIndex: 20,
-          }}
-        >
-          {otherProfiles.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => {
-                onSelectProfile(p);
-                setIsOpen(false);
-              }}
-              style={dropdownItemStyle}
-            >
-              <AvatarBadge emoji={p.avatarEmoji} size={30} />
-              <span>{p.name}</span>
-            </button>
-          ))}
-
-          {otherProfiles.length > 0 && <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "6px 4px" }} />}
-
-          <button
-            type="button"
-            onClick={() => {
-              onManageProfiles();
-              setIsOpen(false);
-            }}
-            style={dropdownItemStyle}
-          >
-            <span style={{ width: 30, textAlign: "center", fontSize: 16, color: "var(--text-dim)" }}>⚙</span>
-            <span>Manage profiles</span>
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
-const dropdownItemStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: 10,
-  width: "100%",
-  padding: "8px 8px",
-  background: "transparent",
-  border: "none",
-  borderRadius: 8,
-  color: "var(--text)",
-  fontSize: 14,
-  cursor: "pointer",
-  textAlign: "left" as const,
-};
-
-function AvatarBadge({ emoji, size }: { emoji: string; size: number }): JSX.Element {
+function AvatarBadge({ avatarUrl, size }: { avatarUrl: string; size: number }): JSX.Element {
   return (
     <div
       style={{
@@ -126,28 +77,12 @@ function AvatarBadge({ emoji, size }: { emoji: string; size: number }): JSX.Elem
         height: size,
         flexShrink: 0,
         borderRadius: "50%",
+        overflow: "hidden",
         background: "linear-gradient(160deg, var(--surface-raised), var(--surface))",
         border: "1px solid var(--border)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: size * 0.5,
       }}
     >
-      {emoji}
+      <img src={avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
     </div>
-  );
-}
-
-function Caret({ direction }: { direction: "up" | "down" }): JSX.Element {
-  return (
-    <svg
-      width="10"
-      height="6"
-      viewBox="0 0 10 6"
-      style={{ transform: direction === "up" ? "rotate(180deg)" : "none", transition: "transform 140ms ease-out" }}
-    >
-      <path d="M1 1L5 5L9 1" stroke="var(--text-dim)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }

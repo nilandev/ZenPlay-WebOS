@@ -1,6 +1,20 @@
 import { XtreamClient, parseM3u, parseXmltvToArray, type Channel, type EpgProgramme, type PlaylistSource, type SeriesEpisode } from "@core";
 import { proxyFetch } from "./proxy-fetch.js";
 
+export interface PlaylistInfo {
+  name: string;
+  /** null for an unlimited/no-expiry account, or for source kinds (M3U) that don't expose expiry at all. */
+  expiresAt: Date | null;
+}
+
+/** Playlist name + expiry for the home screen footer. Only Xtream sources expose expiry via the provider API. */
+export async function loadPlaylistInfo(source: PlaylistSource): Promise<PlaylistInfo> {
+  if (source.kind !== "xtream") return { name: source.name, expiresAt: null };
+  const client = new XtreamClient(source, proxyFetch);
+  const { expiresAt } = await client.getAccountInfo();
+  return { name: source.name, expiresAt };
+}
+
 /**
  * Xtream credentials give us live/VOD/series streams directly from the
  * provider API. M3U sources are a flat channel list with no separate

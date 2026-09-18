@@ -6,12 +6,20 @@ interface XtreamAuthResponse {
     auth: number;
     status: string;
     username: string;
+    /** Unix seconds as a string, or null/"0" for an account with no expiry ("Unlimited"). */
+    exp_date: string | null;
   };
   server_info: {
     url: string;
     port: string;
     https_port: string;
   };
+}
+
+export interface XtreamAccountInfo {
+  status: string;
+  /** null when the account has no expiry ("Unlimited"). */
+  expiresAt: Date | null;
 }
 
 interface XtreamLiveStream {
@@ -111,6 +119,16 @@ export class XtreamClient {
       throw new XtreamAuthError();
     }
     return result;
+  }
+
+  /** Account status + expiry, e.g. for a "playlist expires on X" footer. Re-authenticates rather than caching, since expiry can change server-side. */
+  async getAccountInfo(): Promise<XtreamAccountInfo> {
+    const { user_info } = await this.authenticate();
+    const expSeconds = user_info.exp_date ? Number(user_info.exp_date) : 0;
+    return {
+      status: user_info.status,
+      expiresAt: expSeconds > 0 ? new Date(expSeconds * 1000) : null,
+    };
   }
 
   async getLiveCategories(): Promise<Category[]> {

@@ -1,27 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Channel, PlaylistSource, PlatformId, Profile } from "@core";
+import type { Channel, PlaylistSource, PlatformId } from "@core";
 import { ChannelPreloader } from "@player";
 import { ChannelGridSkeleton, GlassPanel, LiveOverlayGrid, useRemoteInput, VideoSurface } from "@ui";
 import { loadChannelsByKind } from "../content-loader.js";
 import { useCachedContent } from "../use-cached-content.js";
-import { PinGate } from "./PinGate.js";
 
 export interface LiveTvScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
-  profile: Profile;
+  onBack: () => void;
 }
 
 const EMPTY_CHANNELS: Channel[] = [];
 const OVERLAY_DISMISS_MS = 30_000;
 
-export function LiveTvScreen({ source, platform, profile }: LiveTvScreenProps): JSX.Element {
+export function LiveTvScreen({ source, platform, onBack }: LiveTvScreenProps): JSX.Element {
   const load = useCallback(() => loadChannelsByKind(source, "live"), [source]);
   const { data: channels, isInitialLoading, error: loadError } = useCachedContent(`live:${source.id}`, load, EMPTY_CHANNELS);
 
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
-  const [pendingUnlock, setPendingUnlock] = useState<Channel | null>(null);
-  const [unlockedCategoryIds, setUnlockedCategoryIds] = useState<Set<string>>(new Set());
   const [isOverlayVisible, setIsOverlayVisible] = useState(true);
   const preloaderRef = useRef(new ChannelPreloader());
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -56,23 +53,14 @@ export function LiveTvScreen({ source, platform, profile }: LiveTvScreenProps): 
       if (isOverlayVisible) {
         setIsOverlayVisible(false);
       } else {
-        setActiveChannel(null);
+        onBack();
       }
     },
   });
 
   const streamUrl = useMemo(() => activeChannel?.streamUrl ?? null, [activeChannel]);
 
-  function isLocked(channel: Channel): boolean {
-    if (!profile.pinHash || !channel.groupTitle) return false;
-    return profile.lockedCategoryIds.includes(channel.groupTitle) && !unlockedCategoryIds.has(channel.groupTitle);
-  }
-
   function handleSelect(channel: Channel): void {
-    if (isLocked(channel)) {
-      setPendingUnlock(channel);
-      return;
-    }
     setActiveChannel(channel);
     setIsOverlayVisible(false);
   }
@@ -102,25 +90,11 @@ export function LiveTvScreen({ source, platform, profile }: LiveTvScreenProps): 
           columns={5}
           onHighlight={(channel) => {
             registerActivity();
-            if (!isLocked(channel)) preloaderRef.current.warm(channel.streamUrl);
+            preloaderRef.current.warm(channel.streamUrl);
           }}
           onSelect={handleSelect}
         />
       </GlassPanel>
-
-      {pendingUnlock && profile.pinHash && (
-        <PinGate
-          pinHash={profile.pinHash}
-          title={`Unlock ${pendingUnlock.groupTitle}`}
-          onUnlock={() => {
-            setUnlockedCategoryIds((prev) => new Set(prev).add(pendingUnlock.groupTitle!));
-            setActiveChannel(pendingUnlock);
-            setPendingUnlock(null);
-            setIsOverlayVisible(false);
-          }}
-          onCancel={() => setPendingUnlock(null)}
-        />
-      )}
     </div>
   );
 }

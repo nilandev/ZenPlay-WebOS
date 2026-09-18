@@ -46,3 +46,16 @@ export function setCachedContent<T>(key: string, value: T): void {
   MEMORY_CACHE.set(key, value);
   writeToSessionStorage(key, value);
 }
+
+/** Drops every cached entry (memory + sessionStorage) so the next load of each screen re-fetches from the source — used by the home screen's "Refresh" tile. */
+export function clearAllCachedContent(): void {
+  MEMORY_CACHE.clear();
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(STORAGE_PREFIX)) sessionStorage.removeItem(key);
+    }
+  } catch {
+    // sessionStorage unavailable — in-memory cache is already cleared, which is enough for the current tab session.
+  }
+}

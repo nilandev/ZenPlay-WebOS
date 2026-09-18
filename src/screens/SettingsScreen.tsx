@@ -1,75 +1,89 @@
-import { useState } from "react";
-import { hashPin, type Category, type Profile } from "@core";
+import { useEffect } from "react";
+import type { PlatformId, Profile } from "@core";
+import { Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode } from "@ui";
+import { LogOut } from "lucide-react";
+
+const SWITCH_PROFILE_ID = "settings-switch-profile";
+
+function useIsFocused(id: string): boolean {
+  return useFocusStore((state) => state.focusedId === id);
+}
 
 export interface SettingsScreenProps {
+  platform: PlatformId;
   profile: Profile;
-  categories: Category[];
-  onUpdateProfile: (patch: Partial<Profile>) => void;
   onSwitchProfile: () => void;
+  onBack: () => void;
 }
 
 /**
- * Parental-control + profile settings. PIN is set once per profile and
- * gates any category toggled into lockedCategoryIds — enforced by callers
- * (VodScreen/SeriesScreen/live channel list) filtering against it, since
- * this screen is only responsible for configuring the lock, not enforcing
- * it during browsing.
+ * Profile settings — currently just Switch Profile, matching the visual
+ * language of ProfilesScreen/ProfileForm (MeshBackground, avatar header,
+ * glass-tile rows).
  */
-export function SettingsScreen({ profile, categories, onUpdateProfile, onSwitchProfile }: SettingsScreenProps): JSX.Element {
-  const [newPin, setNewPin] = useState("");
+export function SettingsScreen({ platform, profile, onSwitchProfile, onBack }: SettingsScreenProps): JSX.Element {
+  const setGraph = useFocusStore((state) => state.setGraph);
+  const clearGraph = useFocusStore((state) => state.clearGraph);
+  const focus = useFocusStore((state) => state.focus);
 
-  async function handleSetPin(): Promise<void> {
-    if (newPin.length < 4) return;
-    onUpdateProfile({ pinHash: await hashPin(newPin) });
-    setNewPin("");
-  }
+  useEffect(() => {
+    const switchProfileNode: FocusNode = {
+      id: SWITCH_PROFILE_ID,
+      neighbors: {},
+      onSelect: onSwitchProfile,
+    };
+    setGraph("settings", [switchProfileNode], SWITCH_PROFILE_ID);
+    // setGraph only defaults focus to a scope's first node when the
+    // currently focused id is no longer valid anywhere — TopNav's own
+    // "chrome" scope still has a valid focused tab id at this point, so
+    // focus must be forced into the content explicitly (same fix as
+    // ProfileForm's confirm dialog — see conversation history).
+    focus(SWITCH_PROFILE_ID);
+    return () => clearGraph("settings");
+  }, [setGraph, clearGraph, focus, onSwitchProfile]);
 
-  function toggleLockedCategory(categoryId: string): void {
-    const isLocked = profile.lockedCategoryIds.includes(categoryId);
-    const updated = isLocked
-      ? profile.lockedCategoryIds.filter((id) => id !== categoryId)
-      : [...profile.lockedCategoryIds, categoryId];
-    onUpdateProfile({ lockedCategoryIds: updated });
-  }
+  useRemoteInput(platform, { onBack });
 
   return (
-    <div style={{ padding: "24px 40px", maxWidth: 560 }}>
-      <h1>Settings — {profile.name}</h1>
-
-      <section style={{ marginBottom: 32 }}>
-        <h2>Parental controls</h2>
-        <p>{profile.pinHash ? "A PIN is set for this profile." : "No PIN set — locked categories are not enforced."}</p>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            type="password"
-            inputMode="numeric"
-            placeholder="New 4+ digit PIN"
-            value={newPin}
-            onChange={(e) => setNewPin(e.target.value)}
-          />
-          <button type="button" onClick={handleSetPin}>
-            {profile.pinHash ? "Change PIN" : "Set PIN"}
-          </button>
+    <MeshBackground>
+      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", padding: "56px 48px", gap: 40 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+          <div
+            style={{
+              width: 120,
+              height: 120,
+              borderRadius: "50%",
+              overflow: "hidden",
+              border: "3px solid var(--accent)",
+              boxShadow: "0 16px 40px rgba(0,0,0,0.5)",
+            }}
+          >
+            <img src={profile.avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          </div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--text)" }}>Settings — {profile.name}</h1>
         </div>
 
-        <h3 style={{ marginTop: 20 }}>Locked categories</h3>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {categories.map((category) => (
-            <label key={category.id}>
-              <input
-                type="checkbox"
-                checked={profile.lockedCategoryIds.includes(category.id)}
-                onChange={() => toggleLockedCategory(category.id)}
-              />{" "}
-              {category.name}
-            </label>
-          ))}
+        <div style={{ width: "100%", maxWidth: 1100, display: "flex", flexDirection: "column", gap: 28 }}>
+          <Focusable id={SWITCH_PROFILE_ID}>
+            <SwitchProfileButton onClick={onSwitchProfile} />
+          </Focusable>
         </div>
-      </section>
+      </div>
+    </MeshBackground>
+  );
+}
 
-      <button type="button" onClick={onSwitchProfile}>
-        Switch profile
-      </button>
+function SwitchProfileButton({ onClick }: { onClick: () => void }): JSX.Element {
+  const isFocused = useIsFocused(SWITCH_PROFILE_ID);
+
+  return (
+    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <PillButton onClick={onClick} isFocused={isFocused}>
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <LogOut size={17} strokeWidth={2} />
+          Switch profile
+        </span>
+      </PillButton>
     </div>
   );
 }
