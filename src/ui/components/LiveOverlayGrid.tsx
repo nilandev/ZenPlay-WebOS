@@ -3,6 +3,7 @@ import type { Channel } from "@core";
 import { useFocusStore } from "../focus/focus-store.js";
 import { buildGridFocusGraph } from "../focus/build-grid-graph.js";
 import { Focusable } from "../focus/Focusable.js";
+import { FavoriteHeart } from "./FavoriteHeart.js";
 
 const VISIBLE_ROWS = 2;
 const CARD_HEIGHT_PX = 84;
@@ -14,6 +15,7 @@ export interface LiveOverlayGridProps {
   /** Fired as the user's highlight moves, for channel-preload ("zap-ahead") and glass-panel dismiss-timer resets. */
   onHighlight?: (channel: Channel) => void;
   onSelect?: (channel: Channel) => void;
+  isFavorite?: (channel: Channel) => boolean;
 }
 
 /**
@@ -27,7 +29,7 @@ export interface LiveOverlayGridProps {
  * row to reveal the next one" without needing a special direction-blocked
  * signal from the focus store itself.
  */
-export function LiveOverlayGrid({ channels, columns = 5, onHighlight, onSelect }: LiveOverlayGridProps): JSX.Element {
+export function LiveOverlayGrid({ channels, columns = 5, onHighlight, onSelect, isFavorite }: LiveOverlayGridProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focusedId = useFocusStore((state) => state.focusedId);
@@ -76,19 +78,35 @@ export function LiveOverlayGrid({ channels, columns = 5, onHighlight, onSelect }
     >
       {visibleChannels.map((channel) => (
         <Focusable key={channel.id} id={channel.id}>
-          <ChannelCard channel={channel} isFocused={focusedId === channel.id} onSelect={() => onSelect?.(channel)} />
+          <ChannelCard
+            channel={channel}
+            isFocused={focusedId === channel.id}
+            isFavorite={isFavorite?.(channel) ?? false}
+            onSelect={() => onSelect?.(channel)}
+          />
         </Focusable>
       ))}
     </div>
   );
 }
 
-function ChannelCard({ channel, isFocused, onSelect }: { channel: Channel; isFocused: boolean; onSelect: () => void }): JSX.Element {
+function ChannelCard({
+  channel,
+  isFocused,
+  isFavorite,
+  onSelect,
+}: {
+  channel: Channel;
+  isFocused: boolean;
+  isFavorite: boolean;
+  onSelect: () => void;
+}): JSX.Element {
   return (
     <button
       type="button"
       onClick={onSelect}
       style={{
+        position: "relative",
         width: "100%",
         height: "100%",
         display: "flex",
@@ -107,6 +125,11 @@ function ChannelCard({ channel, isFocused, onSelect }: { channel: Channel; isFoc
         overflow: "hidden",
       }}
     >
+      {isFavorite && (
+        <div style={{ position: "absolute", top: 4, right: 4 }}>
+          <FavoriteHeart isFavorite size={12} />
+        </div>
+      )}
       {channel.logoUrl ? (
         <img src={channel.logoUrl} alt="" style={{ height: 28, maxWidth: "70%", objectFit: "contain" }} />
       ) : (

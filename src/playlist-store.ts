@@ -1,6 +1,7 @@
 import type { PlaylistSource } from "@core";
 
 const STORAGE_KEY = "iptv.playlist-sources.v1";
+const ACTIVE_SOURCE_KEY = "iptv.active-playlist-source-id.v1";
 
 /**
  * Minimal localStorage-backed persistence for configured playlist sources.
@@ -24,4 +25,22 @@ export function addPlaylistSource(source: PlaylistSource): PlaylistSource[] {
   const sources = [...loadPlaylistSources(), source];
   savePlaylistSources(sources);
   return sources;
+}
+
+export function removePlaylistSource(sourceId: string): PlaylistSource[] {
+  const sources = loadPlaylistSources().filter((s) => s.id !== sourceId);
+  savePlaylistSources(sources);
+  return sources;
+}
+
+export function getActivePlaylistSourceId(): string | null {
+  return localStorage.getItem(ACTIVE_SOURCE_KEY);
+}
+
+export function setActivePlaylistSourceId(sourceId: string): void {
+  localStorage.setItem(ACTIVE_SOURCE_KEY, sourceId);
+}
+
+export function clearActivePlaylistSourceId(): void {
+  localStorage.removeItem(ACTIVE_SOURCE_KEY);
 }

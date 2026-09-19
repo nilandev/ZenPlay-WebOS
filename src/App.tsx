@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PlaylistSource, Profile } from "@core";
-import { addPlaylistSource, loadPlaylistSources } from "./playlist-store.js";
+import {
+  addPlaylistSource,
+  getActivePlaylistSourceId,
+  loadPlaylistSources,
+  removePlaylistSource,
+  setActivePlaylistSourceId,
+} from "./playlist-store.js";
 import {
   addProfile,
   clearActiveProfile,
@@ -17,6 +23,8 @@ import { VodScreen } from "./screens/VodScreen.js";
 import { SeriesScreen } from "./screens/SeriesScreen.js";
 import { GuideScreen } from "./screens/GuideScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
+import { ManagePlaylistsScreen } from "./screens/ManagePlaylistsScreen.js";
+import { FavouritesScreen } from "./screens/FavouritesScreen.js";
 import { ProfilesScreen } from "./screens/ProfilesScreen.js";
 import { ManageProfilesScreen } from "./screens/ManageProfilesScreen.js";
 import { PlaceholderScreen } from "./screens/PlaceholderScreen.js";
@@ -32,6 +40,7 @@ const TABS = [
   { id: "favourites", label: "My Favourite" },
   { id: "history", label: "History" },
   { id: "settings", label: "Settings" },
+  { id: "manage-playlists", label: "Manage Playlists" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -39,13 +48,18 @@ type TabId = (typeof TABS)[number]["id"];
 export function App(): JSX.Element {
   const platform = useMemo(() => detectPlatform(), []);
   const [sources, setSources] = useState<PlaylistSource[]>(() => loadPlaylistSources());
-  const [activeSource, setActiveSource] = useState<PlaylistSource | null>(sources[0] ?? null);
+  const [activeSourceId, setActiveSourceIdState] = useState<string | null>(() => getActivePlaylistSourceId());
+  const activeSource = sources.find((s) => s.id === activeSourceId) ?? sources[0] ?? null;
 
   const [profiles, setProfiles] = useState<Profile[]>(() => loadProfiles());
   const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
   const [isManagingProfiles, setIsManagingProfiles] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("home");
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  // Set when navigating to Series from a favourited series (My Favourite),
+  // so SeriesScreen opens straight into that series' episode list instead
+  // of its shelf browser. Cleared once SeriesScreen mounts with it.
+  const [pendingSeriesId, setPendingSeriesId] = useState<string | null>(null);
 
   useEffect(() => {
     const savedId = getActiveProfileId();
@@ -58,7 +72,27 @@ export function App(): JSX.Element {
   function handleSourceAdded(source: PlaylistSource): void {
     const updated = addPlaylistSource(source);
     setSources(updated);
-    setActiveSource(source);
+    setActivePlaylistSourceId(source.id);
+    setActiveSourceIdState(source.id);
+  }
+
+  function handleRemoveSource(sourceId: string): void {
+    const updated = removePlaylistSource(sourceId);
+    setSources(updated);
+    if (activeSourceId === sourceId) {
+      const fallback = updated[0] ?? null;
+      if (fallback) {
+        setActivePlaylistSourceId(fallback.id);
+        setActiveSourceIdState(fallback.id);
+      } else {
+        setActiveSourceIdState(null);
+      }
+    }
+  }
+
+  function handleSetActiveSource(sourceId: string): void {
+    setActivePlaylistSourceId(sourceId);
+    setActiveSourceIdState(sourceId);
   }
 
   function handleCreateProfile(profile: Profile): void {
@@ -116,7 +150,10 @@ export function App(): JSX.Element {
           source={activeSource}
           platform={platform}
           profile={activeProfile}
-          onSelectTile={(tileId) => setActiveTab(tileId as TabId)}
+          onSelectTile={(tileId) => {
+            setPendingSeriesId(null);
+            setActiveTab(tileId as TabId);
+          }}
           onOpenProfiles={() => setActiveProfile(null)}
         />
         {playbackUrl && <PlayerScreen streamUrl={playbackUrl} platform={platform} onClose={() => setPlaybackUrl(null)} />}
@@ -124,27 +161,62 @@ export function App(): JSX.Element {
     );
   }
 
-  const goHome = () => setActiveTab("home");
+  const goHome = () => {
+    setPendingSeriesId(null);
+    setActiveTab("home");
+  };
 
   return (
     <div style={{ minHeight: "100vh" }}>
-      {activeTab === "live" && <LiveTvScreen source={activeSource} platform={platform} onBack={goHome} />}
+      {activeTab === "live" && <LiveTvScreen source={activeSource} platform={platform} profile={activeProfile} onBack={goHome} />}
       {activeTab === "guide" && <GuideScreen source={activeSource} platform={platform} onPlay={setPlaybackUrl} onBack={goHome} />}
       {activeTab === "movies" && (
-        <VodScreen source={activeSource} platform={platform} onPlay={(movie) => setPlaybackUrl(movie.streamUrl)} onBack={goHome} />
+        <VodScreen
+          source={activeSource}
+          platform={platform}
+          profile={activeProfile}
+          onPlay={(movie) => setPlaybackUrl(movie.streamUrl)}
+          onBack={goHome}
+        />
       )}
       {activeTab === "series" && (
         <SeriesScreen
           source={activeSource}
           platform={platform}
+          profile={activeProfile}
           onPlayEpisode={(episode) => setPlaybackUrl(episode.streamUrl)}
           onBack={goHome}
+          initialSelectedId={pendingSeriesId ?? undefined}
         />
       )}
-      {activeTab === "favourites" && <PlaceholderScreen title="My Favourite" icon="❤" platform={platform} onBack={goHome} />}
+      {activeTab === "favourites" && (
+        <FavouritesScreen
+          source={activeSource}
+          profileId={activeProfile.id}
+          platform={platform}
+          onBack={goHome}
+          onPlayChannel={(channel) => setPlaybackUrl(channel.streamUrl)}
+          onPlayMovie={(movie) => setPlaybackUrl(movie.streamUrl)}
+          onOpenSeries={(seriesId) => {
+            setPendingSeriesId(seriesId);
+            setActiveTab("series");
+          }}
+        />
+      )}
       {activeTab === "history" && <PlaceholderScreen title="History" icon="🕘" platform={platform} onBack={goHome} />}
       {activeTab === "settings" && (
-        <SettingsScreen platform={platform} profile={activeProfile} onSwitchProfile={() => setActiveProfile(null)} onBack={goHome} />
+        <SettingsScreen platform={platform} onManagePlaylists={() => setActiveTab("manage-playlists")} onBack={goHome} />
+      )}
+      {activeTab === "manage-playlists" && (
+        <ManagePlaylistsScreen
+          sources={sources}
+          activeSourceId={activeSource?.id}
+          platform={platform}
+          onBack={() => setActiveTab("settings")}
+          onAddSource={handleSourceAdded}
+          onRemoveSource={handleRemoveSource}
+          onSetActiveSource={handleSetActiveSource}
+        />
       )}
 
       {playbackUrl && <PlayerScreen streamUrl={playbackUrl} platform={platform} onClose={() => setPlaybackUrl(null)} />}

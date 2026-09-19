@@ -3,7 +3,6 @@ export interface Profile {
   name: string;
   /** Path under public/avatar (e.g. "avatar/toon_1.png") chosen from AVATAR_CHOICES at creation. */
   avatarUrl: string;
-  favoriteChannelIds: string[];
 }
 
 /**
@@ -25,4 +24,22 @@ export interface ContinueWatchingEntry {
   positionSeconds: number;
   durationSeconds: number;
   updatedAt: string;
+}
+
+export type FavoriteKind = "live" | "movie" | "series";
+
+/**
+ * Channel/movie/series ids are only unique within one playlist source's one
+ * content-kind listing — an Xtream stream_id or an M3U tvg-id can easily
+ * collide across two different sources, and a live channel and a movie can
+ * even share a raw id within the same source since they're separate API
+ * listings. sourceId + contentKind + contentId together are what actually
+ * identify a favourited item.
+ */
+export interface FavoriteEntry {
+  profileId: string;
+  sourceId: string;
+  contentKind: FavoriteKind;
+  contentId: string;
+  addedAt: string;
 }

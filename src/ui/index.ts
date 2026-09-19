@@ -21,3 +21,4 @@ export * from "./components/ProfileSwitcher.js";
 export * from "./components/Clock.js";
 export * from "./components/MeshBackground.js";
 export * from "./components/PillButton.js";
+export * from "./components/FavoriteHeart.js";

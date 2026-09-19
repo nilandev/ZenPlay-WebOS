@@ -47,6 +47,43 @@ export function setCachedContent<T>(key: string, value: T): void {
   writeToSessionStorage(key, value);
 }
 
+/** Drops a single cached entry (memory + sessionStorage) so its next load re-fetches from the source — used by ManagePlaylistsScreen's per-source Refresh action. */
+export function clearCachedContent(key: string): void {
+  MEMORY_CACHE.delete(key);
+  try {
+    sessionStorage.removeItem(STORAGE_PREFIX + key);
+  } catch {
+    // sessionStorage unavailable — in-memory cache is already cleared, which is enough for the current tab session.
+  }
+}
+
+/**
+ * Drops every cached entry belonging to one playlist source (memory +
+ * sessionStorage) — live/VOD/series/EPG/playlist-info, anything cached under
+ * a `<kind>:${sourceId}` key — so the next visit to any screen re-fetches
+ * fresh data for that source. Every cache key in this app follows that
+ * `<kind>:${sourceId}` shape (see LiveTvScreen/VodScreen/SeriesScreen/
+ * HomeScreen), so matching on a `:${sourceId}` suffix catches all of them
+ * without ManagePlaylistsScreen needing to know each kind's exact prefix.
+ * Used by ManagePlaylistsScreen's per-source "Delete Cache" action.
+ */
+export function clearCachedContentForSource(sourceId: string): void {
+  const suffix = `:${sourceId}`;
+  for (const key of MEMORY_CACHE.keys()) {
+    if (key.endsWith(suffix)) MEMORY_CACHE.delete(key);
+  }
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(STORAGE_PREFIX) && key.endsWith(suffix)) toRemove.push(key);
+    }
+    for (const key of toRemove) sessionStorage.removeItem(key);
+  } catch {
+    // sessionStorage unavailable — in-memory cache is already cleared, which is enough for the current tab session.
+  }
+}
+
 /** Drops every cached entry (memory + sessionStorage) so the next load of each screen re-fetches from the source — used by the home screen's "Refresh" tile. */
 export function clearAllCachedContent(): void {
   MEMORY_CACHE.clear();

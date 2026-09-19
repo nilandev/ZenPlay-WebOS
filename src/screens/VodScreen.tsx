@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo } from "react";
-import type { Channel, PlatformId, PlaylistSource } from "@core";
-import { FocusBackdrop, FocusCard, Shelf, ShelfRowSkeleton, buildShelfFocusGraph, useFocusStore, useRemoteInput } from "@ui";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Channel, PlatformId, PlaylistSource, Profile } from "@core";
+import { FavoriteHeart, FocusBackdrop, FocusCard, Shelf, ShelfRowSkeleton, buildShelfFocusGraph, useFocusStore, useRemoteInput } from "@ui";
 import { loadChannelsByKind } from "../content-loader.js";
+import { toggleFavorite, isFavorite as checkIsFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 
 export interface VodScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
+  profile: Profile;
   onPlay: (movie: Channel) => void;
   onBack: () => void;
 }
@@ -25,13 +27,19 @@ function groupByCategory(movies: Channel[]): Array<{ title: string; items: Chann
   return Array.from(byGroup.entries()).map(([title, items]) => ({ title, items }));
 }
 
-export function VodScreen({ source, platform, onPlay, onBack }: VodScreenProps): JSX.Element {
+export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScreenProps): JSX.Element {
   const load = useCallback(() => loadChannelsByKind(source, "movie"), [source]);
   const { data: movies, isInitialLoading, error } = useCachedContent(`vod:${source.id}`, load, EMPTY_MOVIES);
 
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focusedId = useFocusStore((state) => state.focusedId);
+
+  // Bumped on every favourite toggle to force each FocusCard's heart badge
+  // to re-render — see LiveTvScreen's identical comment for why this is
+  // needed (toggleFavorite persists to localStorage but isn't itself
+  // reactive state).
+  const [favoritesVersion, setFavoritesVersion] = useState(0);
 
   const shelves = useMemo(() => groupByCategory(movies), [movies]);
 
@@ -46,6 +54,12 @@ export function VodScreen({ source, platform, onPlay, onBack }: VodScreenProps):
     onSelect: (id) => {
       const movie = movies.find((m) => m.id === id);
       if (movie) onPlay(movie);
+    },
+    onLongSelect: (id) => {
+      const movie = movies.find((m) => m.id === id);
+      if (!movie) return;
+      toggleFavorite(profile.id, source.id, "movie", movie.id);
+      setFavoritesVersion((v) => v + 1);
     },
     onBack,
   });
@@ -66,7 +80,20 @@ export function VodScreen({ source, platform, onPlay, onBack }: VodScreenProps):
           items={shelf.items}
           getId={(item) => item.id}
           renderItem={(item) => (
-            <FocusCard id={item.id} title={item.name} imageUrl={item.logoUrl} onSelect={() => onPlay(item)} />
+            <FocusCard
+              id={item.id}
+              title={item.name}
+              imageUrl={item.logoUrl}
+              onSelect={() => onPlay(item)}
+              badge={
+                <FavoriteHeart
+                  isFavorite={(() => {
+                    void favoritesVersion; // re-evaluate on every toggle — see favoritesVersion's declaration
+                    return checkIsFavorite(profile.id, source.id, "movie", item.id);
+                  })()}
+                />
+              }
+            />
           )}
         />
       ))}

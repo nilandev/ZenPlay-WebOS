@@ -3,16 +3,19 @@ import type { PlaylistSource } from "@core";
 
 export interface AddSourceScreenProps {
   onSourceAdded: (source: PlaylistSource) => void;
+  /** Omitted on first-run setup (no existing source to fall back to); provided when reused inside Manage Playlists to add an additional source. */
+  onCancel?: () => void;
 }
 
 /**
- * First-run setup: add an Xtream Codes provider or an M3U playlist URL.
- * Kept as plain form inputs (not spatial-nav Focusable tiles) since text
- * entry on TV remotes goes through an on-screen keyboard the webOS
- * runtime provides natively — this screen just needs standard focusable
- * form controls, which webOS's browser already supports.
+ * First-run setup: add an Xtream Codes provider or an M3U playlist URL. Also
+ * reused inside ManagePlaylistsScreen's "Add playlist" flow (onCancel is
+ * only passed there). Kept as plain form inputs (not spatial-nav Focusable
+ * tiles) since text entry on TV remotes goes through an on-screen keyboard
+ * the webOS runtime provides natively — this screen just needs standard
+ * focusable form controls, which webOS's browser already supports.
  */
-export function AddSourceScreen({ onSourceAdded }: AddSourceScreenProps): JSX.Element {
+export function AddSourceScreen({ onSourceAdded, onCancel }: AddSourceScreenProps): JSX.Element {
   const [mode, setMode] = useState<"xtream" | "m3u-url">("xtream");
   const [name, setName] = useState("My Provider");
   const [baseUrl, setBaseUrl] = useState("");
@@ -116,6 +119,24 @@ export function AddSourceScreen({ onSourceAdded }: AddSourceScreenProps): JSX.El
           >
             Save & Continue
           </button>
+
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              style={{
+                padding: "12px 0",
+                borderRadius: 10,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text-dim)",
+                fontWeight: 600,
+                fontSize: 14,
+              }}
+            >
+              Cancel
+            </button>
+          )}
         </form>
       </div>
     </div>

@@ -1,8 +1,9 @@
-import type { ContinueWatchingEntry, Profile } from "@core";
+import type { ContinueWatchingEntry, FavoriteEntry, FavoriteKind, Profile } from "@core";
 
 const PROFILES_KEY = "iptv.profiles.v1";
 const ACTIVE_PROFILE_KEY = "iptv.active-profile-id.v1";
 const CONTINUE_WATCHING_KEY = "iptv.continue-watching.v1";
+const FAVORITES_KEY = "iptv.favorites.v1";
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -61,4 +62,31 @@ export function upsertContinueWatching(entry: ContinueWatchingEntry): void {
   const filtered = all.filter((e) => key(e) !== key(entry));
   filtered.push(entry);
   localStorage.setItem(CONTINUE_WATCHING_KEY, JSON.stringify(filtered));
+}
+
+function favoriteKey(e: Pick<FavoriteEntry, "profileId" | "sourceId" | "contentKind" | "contentId">): string {
+  return `${e.profileId}:${e.sourceId}:${e.contentKind}:${e.contentId}`;
+}
+
+export function loadFavorites(profileId: string): FavoriteEntry[] {
+  return readJson<FavoriteEntry[]>(FAVORITES_KEY, []).filter((f) => f.profileId === profileId);
+}
+
+export function isFavorite(profileId: string, sourceId: string, contentKind: FavoriteKind, contentId: string): boolean {
+  const target = favoriteKey({ profileId, sourceId, contentKind, contentId });
+  return readJson<FavoriteEntry[]>(FAVORITES_KEY, []).some((f) => favoriteKey(f) === target);
+}
+
+/** Adds the entry if not already favourited, removes it if it is. Returns the new favourited state. */
+export function toggleFavorite(profileId: string, sourceId: string, contentKind: FavoriteKind, contentId: string): boolean {
+  const all = readJson<FavoriteEntry[]>(FAVORITES_KEY, []);
+  const target = favoriteKey({ profileId, sourceId, contentKind, contentId });
+  const exists = all.some((f) => favoriteKey(f) === target);
+
+  const next = exists
+    ? all.filter((f) => favoriteKey(f) !== target)
+    : [...all, { profileId, sourceId, contentKind, contentId, addedAt: new Date().toISOString() }];
+
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+  return !exists;
 }

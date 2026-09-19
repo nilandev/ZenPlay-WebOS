@@ -47,7 +47,6 @@ export function ProfilesScreen({ profiles, platform, onSelectProfile, onCreatePr
             id: crypto.randomUUID(),
             name: fields.name,
             avatarUrl: fields.avatarUrl,
-            favoriteChannelIds: [],
           });
           setIsCreating(false);
         }}

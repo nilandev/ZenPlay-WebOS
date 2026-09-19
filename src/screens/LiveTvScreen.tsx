@@ -1,22 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Channel, PlaylistSource, PlatformId } from "@core";
+import type { Channel, PlaylistSource, PlatformId, Profile } from "@core";
 import { ChannelPreloader } from "@player";
 import { ChannelGridSkeleton, GlassPanel, LiveOverlayGrid, useRemoteInput, VideoSurface } from "@ui";
 import { loadChannelsByKind } from "../content-loader.js";
+import { toggleFavorite, isFavorite as checkIsFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 
 export interface LiveTvScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
+  profile: Profile;
   onBack: () => void;
 }
 
 const EMPTY_CHANNELS: Channel[] = [];
 const OVERLAY_DISMISS_MS = 30_000;
 
-export function LiveTvScreen({ source, platform, onBack }: LiveTvScreenProps): JSX.Element {
+export function LiveTvScreen({ source, platform, profile, onBack }: LiveTvScreenProps): JSX.Element {
   const load = useCallback(() => loadChannelsByKind(source, "live"), [source]);
   const { data: channels, isInitialLoading, error: loadError } = useCachedContent(`live:${source.id}`, load, EMPTY_CHANNELS);
+
+  // Bumped on every favourite toggle to force LiveOverlayGrid's heart badges
+  // to re-render (toggleFavorite persists synchronously to localStorage but
+  // isn't itself reactive state, so nothing would otherwise re-render).
+  const [favoritesVersion, setFavoritesVersion] = useState(0);
 
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [isOverlayVisible, setIsOverlayVisible] = useState(true);
@@ -56,6 +63,12 @@ export function LiveTvScreen({ source, platform, onBack }: LiveTvScreenProps): J
         onBack();
       }
     },
+    onLongSelect: (focusedId) => {
+      const channel = channels.find((c) => c.id === focusedId);
+      if (!channel) return;
+      toggleFavorite(profile.id, source.id, "live", channel.id);
+      setFavoritesVersion((v) => v + 1);
+    },
   });
 
   const streamUrl = useMemo(() => activeChannel?.streamUrl ?? null, [activeChannel]);
@@ -93,6 +106,10 @@ export function LiveTvScreen({ source, platform, onBack }: LiveTvScreenProps): J
             preloaderRef.current.warm(channel.streamUrl);
           }}
           onSelect={handleSelect}
+          isFavorite={(channel) => {
+            void favoritesVersion; // re-evaluate on every toggle — see favoritesVersion's declaration
+            return checkIsFavorite(profile.id, source.id, "live", channel.id);
+          }}
         />
       </GlassPanel>
     </div>

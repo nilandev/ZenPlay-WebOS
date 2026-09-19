@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,9 +9,21 @@ import { iptvDevProxyPlugin } from "./vite-dev-proxy.js";
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(path.resolve(rootDir, "package.json"), "utf-8")) as { version: string };
 
+// Best-effort short commit hash for the Settings > About screen — falls back
+// to "dev" outside a git checkout (e.g. a source tarball) rather than
+// failing the build.
+function getBuildId(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", { cwd: rootDir }).toString().trim();
+  } catch {
+    return "dev";
+  }
+}
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_ID__: JSON.stringify(getBuildId()),
   },
   // webOS TV loads the packaged app from its own local app directory, not
   // from a web server root — an absolute "/assets/..." base (Vite's
