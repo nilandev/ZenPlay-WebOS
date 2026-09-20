@@ -36,7 +36,7 @@ through to a script, so these scripts take positional args instead):
 pnpm build                 # vite build, then copies webos-meta/ (appinfo.json + icons) into dist/
 pnpm package                # ares-package dist -o webos-dist  →  produces an .ipk
 pnpm install-device myTV    # finds the .ipk in webos-dist/, runs ares-install --device myTV <ipk>
-pnpm launch-device myTV     # ares-launch com.nilandev.freeiptvplayer --device myTV
+pnpm launch-device myTV     # ares-launch com.stacktips.zenplay --device myTV
 ```
 
 For fast iteration without packaging/installing every time, launch the
@@ -109,9 +109,11 @@ always serves from `/` regardless of this setting).
 
 ## appinfo.json notes
 
-- `id` (`com.nilandev.freeiptvplayer`) is the app's reverse-DNS identifier;
+- `id` (`com.stacktips.zenplay`) is the app's reverse-DNS identifier;
   change this if you fork the project, since it's what uniquely identifies
-  the installed app on a TV.
+  the installed app on a TV — changing it later means a device with the
+  old id already installed gets a second, separate app entry rather than
+  an in-place upgrade.
 - `requiredACG: []` is set explicitly (empty Access Control Group list) —
   this app makes no Luna Service Bus calls, only standard web APIs
   (`fetch`, `crypto.subtle`, DOM/keyboard events), so it needs no elevated

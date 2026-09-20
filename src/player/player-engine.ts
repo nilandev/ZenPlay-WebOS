@@ -10,6 +10,12 @@ export interface PlayerStats {
   bufferSeconds: number;
 }
 
+export interface PlaybackProgress {
+  positionSeconds: number;
+  /** NaN for a live stream with no known length — callers should treat that as "don't persist progress". */
+  durationSeconds: number;
+}
+
 export type PlayerErrorKind = "network" | "media" | "manifest" | "unknown";
 
 export interface PlayerError {
@@ -38,4 +44,6 @@ export interface PlayerEngine {
   getStats(): PlayerStats;
 
   onError(callback: (error: PlayerError) => void): () => void;
+  /** Fires on the underlying media element's native timeupdate — used to persist resume position for VOD/series (see profile-store's upsertContinueWatching). */
+  onTimeUpdate(callback: (progress: PlaybackProgress) => void): () => void;
 }

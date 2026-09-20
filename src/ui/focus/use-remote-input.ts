@@ -45,8 +45,22 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
       }
     }
 
+    // A native <input>/<textarea> holding real DOM focus (e.g. a search box
+    // — see SeriesScreen's search field) needs its own arrow
+    // keys/Enter for text-cursor movement and form submission, not the
+    // spatial focus graph's move()/select(). Only Back is still let through
+    // globally, as the way to leave the field (its own onKeyDown, if any,
+    // can still stop propagation before this document-level listener runs).
+    function isTypingIntoTextField(): boolean {
+      const el = document.activeElement;
+      if (!(el instanceof HTMLElement)) return false;
+      return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+    }
+
     function onKeyDown(event: KeyboardEvent): void {
       const action = resolveRemoteAction(platform, event);
+
+      if (action !== "back" && isTypingIntoTextField()) return;
 
       switch (action) {
         case "up":
@@ -88,6 +102,7 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
 
     function onKeyUp(event: KeyboardEvent): void {
       if (resolveRemoteAction(platform, event) !== "select") return;
+      if (isTypingIntoTextField()) return;
       clearLongPressTimer();
       if (longPressFiredRef.current) return; // onLongSelect already fired — don't also fire the tap action
       // Per-node onSelect (e.g. TopNav tabs) fires first; screens that

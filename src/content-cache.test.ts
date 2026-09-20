@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getCachedContent, setCachedContent } from "./content-cache.js";
+import { getCachedContent, isCacheStale, setCachedContent } from "./content-cache.js";
 
 describe("content cache", () => {
   beforeEach(() => {
@@ -20,9 +20,10 @@ describe("content cache", () => {
     // Simulate a reload: sessionStorage survives, but nothing simulates
     // clearing the in-memory Map here since it's module-level — instead we
     // verify the sessionStorage entry itself was written with the expected key prefix.
+    // Stored as {value, cachedAt} so isCacheStale can check entry age (see below).
     const raw = sessionStorage.getItem("iptv.cache.v1:epg:1");
     expect(raw).not.toBeNull();
-    expect(JSON.parse(raw!)).toEqual([{ title: "News" }]);
+    expect(JSON.parse(raw!).value).toEqual([{ title: "News" }]);
   });
 
   it("revives ISO date strings back into Date instances on read", () => {
@@ -38,8 +39,8 @@ describe("content cache", () => {
     const revived = JSON.parse(raw!, (_key, value) =>
       typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) ? new Date(value) : value,
     );
-    expect(revived.start).toBeInstanceOf(Date);
-    expect(revived.start.toISOString()).toBe("2024-01-15T20:00:00.000Z");
+    expect(revived.value.start).toBeInstanceOf(Date);
+    expect(revived.value.start.toISOString()).toBe("2024-01-15T20:00:00.000Z");
   });
 
   it("does not mistake an arbitrary string for a date", () => {
@@ -68,6 +69,28 @@ describe("content cache", () => {
     it("still serves the value from the in-memory tier without throwing", () => {
       expect(() => setCachedContent("large-epg", { huge: "payload" })).not.toThrow();
       expect(getCachedContent("large-epg")).toEqual({ huge: "payload" });
+    });
+  });
+
+  describe("isCacheStale", () => {
+    it("is stale (true) for a key that was never cached", () => {
+      expect(isCacheStale("never-cached")).toBe(true);
+    });
+
+    it("is fresh (false) immediately after caching", () => {
+      setCachedContent("fresh-key", { ok: true });
+      expect(isCacheStale("fresh-key")).toBe(false);
+    });
+
+    it("becomes stale once the entry's age exceeds the freshness window", () => {
+      const now = Date.now();
+      const dateSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+      setCachedContent("aging-key", { ok: true });
+      expect(isCacheStale("aging-key")).toBe(false);
+
+      dateSpy.mockReturnValue(now + 10 * 60 * 1000); // 10 minutes later, past the 5-minute freshness window
+      expect(isCacheStale("aging-key")).toBe(true);
+      dateSpy.mockRestore();
     });
   });
 });

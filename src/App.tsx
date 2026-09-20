@@ -28,7 +28,7 @@ import { FavouritesScreen } from "./screens/FavouritesScreen.js";
 import { ProfilesScreen } from "./screens/ProfilesScreen.js";
 import { ManageProfilesScreen } from "./screens/ManageProfilesScreen.js";
 import { PlaceholderScreen } from "./screens/PlaceholderScreen.js";
-import { PlayerScreen } from "./screens/PlayerScreen.js";
+import { PlayerScreen, type PlaybackIdentity } from "./screens/PlayerScreen.js";
 import { detectPlatform } from "./platform.js";
 
 const TABS = [
@@ -56,10 +56,22 @@ export function App(): JSX.Element {
   const [isManagingProfiles, setIsManagingProfiles] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("home");
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const [playbackIdentity, setPlaybackIdentity] = useState<PlaybackIdentity | undefined>(undefined);
   // Set when navigating to Series from a favourited series (My Favourite),
   // so SeriesScreen opens straight into that series' episode list instead
   // of its shelf browser. Cleared once SeriesScreen mounts with it.
   const [pendingSeriesId, setPendingSeriesId] = useState<string | null>(null);
+  // Mirrors SeriesScreen's own "which series is open" state up here, since
+  // switching tabs unmounts SeriesScreen and discards its local state —
+  // without this, leaving Series mid-episode-list and coming back would
+  // always drop the user back at the shelf browser instead of where they
+  // left off. Reported via SeriesScreen's onSelectionChange.
+  const [seriesSelectionId, setSeriesSelectionId] = useState<string | null>(null);
+  // Bumped every time playback closes, so SeriesScreen/VodScreen can re-read
+  // Continue Watching (upsertContinueWatching persists to localStorage
+  // during playback, which isn't itself reactive state — same shape as the
+  // favoritesVersion pattern those screens already use for favourites).
+  const [playbackCloseVersion, setPlaybackCloseVersion] = useState(0);
 
   useEffect(() => {
     const savedId = getActiveProfileId();
@@ -143,6 +155,36 @@ export function App(): JSX.Element {
     );
   }
 
+  // Continue Watching identity helpers — defined here (rather than above)
+  // so they can close over activeProfile once it's narrowed non-null by the
+  // guard above; live TV/catch-up playback skips identity entirely since
+  // Continue Watching doesn't apply to it.
+  const playMovie = (movie: { id: string; streamUrl: string }): void => {
+    setPlaybackIdentity({ profileId: activeProfile.id, contentId: movie.id, contentKind: "movie" });
+    setPlaybackUrl(movie.streamUrl);
+  };
+  const playEpisode = (episode: { id: string; seriesId: string; streamUrl: string }): void => {
+    setPlaybackIdentity({
+      profileId: activeProfile.id,
+      contentId: episode.seriesId,
+      contentKind: "series-episode",
+      episodeId: episode.id,
+    });
+    setPlaybackUrl(episode.streamUrl);
+  };
+  const playWithoutIdentity = (streamUrl: string): void => {
+    setPlaybackIdentity(undefined);
+    setPlaybackUrl(streamUrl);
+  };
+  const closePlayback = (): void => {
+    setPlaybackUrl(null);
+    setPlaybackIdentity(undefined);
+    // Only bump when identity was set, i.e. this was resumable VOD/series
+    // playback that may have just written a new Continue Watching entry —
+    // no need to force a re-read after closing live TV/catch-up.
+    if (playbackIdentity) setPlaybackCloseVersion((v) => v + 1);
+  };
+
   if (activeTab === "home") {
     return (
       <div style={{ minHeight: "100vh" }}>
@@ -156,7 +198,9 @@ export function App(): JSX.Element {
           }}
           onOpenProfiles={() => setActiveProfile(null)}
         />
-        {playbackUrl && <PlayerScreen streamUrl={playbackUrl} platform={platform} onClose={() => setPlaybackUrl(null)} />}
+        {playbackUrl && (
+          <PlayerScreen streamUrl={playbackUrl} platform={platform} identity={playbackIdentity} onClose={closePlayback} />
+        )}
       </div>
     );
   }
@@ -169,24 +213,22 @@ export function App(): JSX.Element {
   return (
     <div style={{ minHeight: "100vh" }}>
       {activeTab === "live" && <LiveTvScreen source={activeSource} platform={platform} profile={activeProfile} onBack={goHome} />}
-      {activeTab === "guide" && <GuideScreen source={activeSource} platform={platform} onPlay={setPlaybackUrl} onBack={goHome} />}
+      {activeTab === "guide" && (
+        <GuideScreen source={activeSource} platform={platform} onPlay={playWithoutIdentity} onBack={goHome} />
+      )}
       {activeTab === "movies" && (
-        <VodScreen
-          source={activeSource}
-          platform={platform}
-          profile={activeProfile}
-          onPlay={(movie) => setPlaybackUrl(movie.streamUrl)}
-          onBack={goHome}
-        />
+        <VodScreen source={activeSource} platform={platform} profile={activeProfile} onPlay={playMovie} onBack={goHome} />
       )}
       {activeTab === "series" && (
         <SeriesScreen
           source={activeSource}
           platform={platform}
           profile={activeProfile}
-          onPlayEpisode={(episode) => setPlaybackUrl(episode.streamUrl)}
+          onPlayEpisode={playEpisode}
           onBack={goHome}
-          initialSelectedId={pendingSeriesId ?? undefined}
+          initialSelectedId={pendingSeriesId ?? seriesSelectionId ?? undefined}
+          onSelectionChange={setSeriesSelectionId}
+          continueWatchingVersion={playbackCloseVersion}
         />
       )}
       {activeTab === "favourites" && (
@@ -195,8 +237,8 @@ export function App(): JSX.Element {
           profileId={activeProfile.id}
           platform={platform}
           onBack={goHome}
-          onPlayChannel={(channel) => setPlaybackUrl(channel.streamUrl)}
-          onPlayMovie={(movie) => setPlaybackUrl(movie.streamUrl)}
+          onPlayChannel={(channel) => playWithoutIdentity(channel.streamUrl)}
+          onPlayMovie={playMovie}
           onOpenSeries={(seriesId) => {
             setPendingSeriesId(seriesId);
             setActiveTab("series");
@@ -219,7 +261,9 @@ export function App(): JSX.Element {
         />
       )}
 
-      {playbackUrl && <PlayerScreen streamUrl={playbackUrl} platform={platform} onClose={() => setPlaybackUrl(null)} />}
+      {playbackUrl && (
+        <PlayerScreen streamUrl={playbackUrl} platform={platform} identity={playbackIdentity} onClose={closePlayback} />
+      )}
     </div>
   );
 }

@@ -18,6 +18,15 @@ export interface FocusCardProps {
  * focus (driven by the focus store, not native :focus), animated purely via
  * CSS transform/box-shadow so it stays GPU-composited on weak TV hardware —
  * see PLAN.md "Performance principles".
+ *
+ * The title renders on top of the artwork itself, anchored to the bottom
+ * behind a gradient scrim (Netflix/Apple TV poster-tile style), rather than
+ * in a caption strip below it — a fixed-height caption either clips long
+ * titles or reserves enough height to look empty for short ones. Anchoring
+ * from the bottom with flexbox instead of a fixed height lets the text
+ * block grow upward for longer titles without a fixed cap, and without
+ * pushing the card's own layout height around (it's positioned over the
+ * image, not stacked after it).
  */
 export function FocusCard({
   id,
@@ -57,29 +66,29 @@ export function FocusCard({
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
           ) : (
-            <div
-              style={{
-                width: "100%",
-                height: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#8b8b93",
-                fontSize: 13,
-                textAlign: "center",
-                padding: 8,
-              }}
-            >
-              {title}
-            </div>
+            <div style={{ width: "100%", height: "100%", background: "#1c1c22" }} />
           )}
           {badge && <div style={{ position: "absolute", top: 8, right: 8 }}>{badge}</div>}
-        </div>
-        <div style={{ padding: "8px 10px" }}>
-          <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {title}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "flex-end",
+              background: "linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(0,0,0,0.55) 80%, rgba(0,0,0,0.85) 100%)",
+              padding: "16px 10px 8px",
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", lineHeight: 1.3, textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
+              {title}
+            </div>
+            {subtitle && (
+              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.8)", marginTop: 3, textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
+                {subtitle}
+              </div>
+            )}
           </div>
-          {subtitle && <div style={{ fontSize: 12, color: "#a0a0a8" }}>{subtitle}</div>}
         </div>
       </div>
     </Focusable>

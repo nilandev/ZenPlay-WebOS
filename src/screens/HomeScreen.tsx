@@ -14,8 +14,8 @@ import {
 import type { Channel, PlatformId, PlaylistSource, Profile, SeriesInfo } from "@core";
 import { Clock, Focusable, MeshBackground, ProfileSwitcher, PROFILE_SWITCHER_FOCUS_ID, useFocusStore, useRemoteInput } from "@ui";
 import type { FocusNode } from "@ui";
-import { clearAllCachedContent } from "../content-cache.js";
-import { loadChannelsByKind, loadPlaylistInfo, loadSeriesList } from "../content-loader.js";
+import { clearAllCachedContent, getCachedContent } from "../content-cache.js";
+import { loadPlaylistInfo } from "../content-loader.js";
 import { useCachedContent } from "../use-cached-content.js";
 
 export interface HomeTile {
@@ -149,23 +149,28 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
     },
   });
 
-  // Reuses the same cache keys as LiveTvScreen/VodScreen/SeriesScreen so
-  // visiting Home doesn't trigger a second fetch of data those screens
-  // already loaded (or will load) this session — see use-cached-content.ts.
-  const loadLive = useCallback(() => loadChannelsByKind(source, "live"), [source]);
-  const { data: liveChannels } = useCachedContent(`live:${source.id}`, loadLive, EMPTY_CHANNELS);
-
-  const loadMovies = useCallback(() => loadChannelsByKind(source, "movie"), [source]);
-  const { data: movies } = useCachedContent(`vod:${source.id}`, loadMovies, EMPTY_CHANNELS);
-
-  const loadSeries = useCallback(() => loadSeriesList(source), [source]);
-  const { data: series } = useCachedContent(`series-list:${source.id}`, loadSeries, EMPTY_SERIES);
-
   const loadInfo = useCallback(() => loadPlaylistInfo(source), [source]);
   const { data: playlistInfo } = useCachedContent(`playlist-info:${source.id}`, loadInfo, EMPTY_PLAYLIST_INFO);
 
-  const collageByTile = useMemo(
-    () => ({
+  // Tile collages are read passively from whatever LiveTvScreen/VodScreen/
+  // SeriesScreen have already cached (see content-cache.ts) — Home never
+  // triggers its own live/movies/series fetch for this. It used to, via
+  // useCachedContent, purely to get 6 thumbnail URLs per tile; VOD catalogs
+  // in particular can be tens of thousands of entries, so fetching the
+  // entire thing just for a handful of collage images made Home's mount
+  // (and by extension every subsequent tab it's cached-shared with, since
+  // they raced the same request) noticeably slower for no visible benefit
+  // — HeroTileCard's own doc comment already treats the collage as optional
+  // texture, not something the card depends on. A plain, one-time
+  // getCachedContent read is enough here: Home fully unmounts/remounts on
+  // every tab switch (see App.tsx), so a fresh mount always re-reads
+  // whatever's cached by then rather than needing to react to a fetch that
+  // finishes while already mounted.
+  const collageByTile = useMemo(() => {
+    const liveChannels = getCachedContent<Channel[]>(`live:${source.id}`) ?? EMPTY_CHANNELS;
+    const movies = getCachedContent<Channel[]>(`vod:${source.id}`) ?? EMPTY_CHANNELS;
+    const series = getCachedContent<SeriesInfo[]>(`series-list:${source.id}`) ?? EMPTY_SERIES;
+    return {
       live: liveChannels
         .map((c) => c.logoUrl)
         .filter((url): url is string => Boolean(url))
@@ -178,9 +183,9 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
         .map((s) => s.posterUrl)
         .filter((url): url is string => Boolean(url))
         .slice(0, 6),
-    }),
-    [liveChannels, movies, series],
-  );
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source.id]);
 
   return (
     <MeshBackground>

@@ -1,4 +1,14 @@
-import { XtreamClient, parseM3u, parseXmltvToArray, type Channel, type EpgProgramme, type PlaylistSource, type SeriesEpisode } from "@core";
+import {
+  XtreamClient,
+  parseM3u,
+  parseXmltvToArray,
+  type Category,
+  type Channel,
+  type EpgProgramme,
+  type PlaylistSource,
+  type SeriesDetails,
+  type SeriesEpisode,
+} from "@core";
 import { proxyFetch } from "./proxy-fetch.js";
 
 export interface PlaylistInfo {
@@ -27,7 +37,7 @@ export async function loadChannelsByKind(source: PlaylistSource, kind: Channel["
     await client.authenticate();
     if (kind === "live") return client.getLiveChannels();
     if (kind === "movie") return client.getVodStreams();
-    return []; // series are fetched via loadSeriesList/loadSeriesEpisodes instead.
+    return []; // series are fetched via loadSeriesList/loadSeriesDetails instead.
   }
 
   const content = source.kind === "m3u-file" ? source.content : await (await proxyFetch(source.url)).text();
@@ -41,10 +51,41 @@ export async function loadSeriesList(source: PlaylistSource): ReturnType<XtreamC
   return client.getSeriesList();
 }
 
-export async function loadSeriesEpisodes(source: PlaylistSource, seriesId: string): Promise<SeriesEpisode[]> {
+/** Series categories for the browse grid's category filter — M3U sources have no separate category API, so this is Xtream-only like loadSeriesList. */
+export async function loadSeriesCategories(source: PlaylistSource): Promise<Category[]> {
   if (source.kind !== "xtream") return [];
   const client = new XtreamClient(source, proxyFetch);
-  return client.getSeriesInfo(seriesId);
+  await client.authenticate();
+  return client.getSeriesCategories();
+}
+
+/** VOD categories for the movies browse grid's category filter — M3U sources have no separate category API, so this is Xtream-only like loadChannelsByKind. */
+export async function loadVodCategories(source: PlaylistSource): Promise<Category[]> {
+  if (source.kind !== "xtream") return [];
+  const client = new XtreamClient(source, proxyFetch);
+  await client.authenticate();
+  return client.getVodCategories();
+}
+
+export interface SeriesDetailsResult {
+  details: SeriesDetails;
+  episodes: SeriesEpisode[];
+}
+
+const EMPTY_SERIES_DETAILS: SeriesDetailsResult = { details: {}, episodes: [] };
+
+/**
+ * Episodes plus series-level metadata (plot/cast/genre/rating/backdrop) for
+ * the detail hero. `details` comes back empty (never undefined) when the
+ * source isn't Xtream, or when a provider's get_series_info response omits
+ * its `info` block entirely (seen on some panels for older/less-maintained
+ * titles) — callers fall back to the browse-grid summary (name/poster) they
+ * already have from loadSeriesList rather than showing a blank hero.
+ */
+export async function loadSeriesDetails(source: PlaylistSource, seriesId: string): Promise<SeriesDetailsResult> {
+  if (source.kind !== "xtream") return EMPTY_SERIES_DETAILS;
+  const client = new XtreamClient(source, proxyFetch);
+  return client.getSeriesDetails(seriesId);
 }
 
 export async function loadEpg(source: PlaylistSource): Promise<EpgProgramme[]> {

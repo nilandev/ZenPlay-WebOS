@@ -1,4 +1,4 @@
-import type { Category, Channel, SeriesEpisode, SeriesInfo } from "../models/channel.js";
+import type { Category, Channel, SeriesDetails, SeriesEpisode, SeriesInfo } from "../models/channel.js";
 import type { XtreamCredentials } from "../models/playlist-source.js";
 
 interface XtreamAuthResponse {
@@ -53,6 +53,23 @@ interface XtreamCategory {
 }
 
 interface XtreamSeriesInfoResponse {
+  info?: {
+    name?: string;
+    cover?: string;
+    plot?: string;
+    cast?: string;
+    director?: string;
+    genre?: string;
+    releaseDate?: string;
+    /** Some panels send this key instead of releaseDate. */
+    release_date?: string;
+    last_modified?: string;
+    /** 0-10 as a string, sometimes "0" or "" when the provider has no rating. */
+    rating?: string;
+    /** Usually a single-element array; some panels send a bare string instead. */
+    backdrop_path?: string[] | string;
+    youtube_trailer?: string;
+  };
   episodes: Record<
     string,
     Array<{
@@ -61,9 +78,25 @@ interface XtreamSeriesInfoResponse {
       container_extension: string;
       episode_num: number;
       season: number;
-      info?: { movie_image?: string; duration_secs?: number };
+      info?: { movie_image?: string; duration_secs?: number; plot?: string; releasedate?: string; rating?: string | number };
     }>
   >;
+}
+
+/** Splits a provider's comma-separated field (cast, genre, director) into trimmed, non-empty entries. */
+function splitList(value?: string): string[] | undefined {
+  if (!value) return undefined;
+  const parts = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : undefined;
+}
+
+/** Parses a provider rating string ("8.4", "0", "") into a number, treating 0/blank/NaN as "no rating" rather than a real zero score. */
+function parseRating(value?: string | number): number | undefined {
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) && num > 0 ? num : undefined;
 }
 
 export class XtreamAuthError extends Error {
@@ -71,6 +104,35 @@ export class XtreamAuthError extends Error {
     super(message);
     this.name = "XtreamAuthError";
   }
+}
+
+/**
+ * Short-lived cache of in-flight/just-settled player_api.php calls, keyed by
+ * playlist source id + the exact request params, and shared across every
+ * XtreamClient instance for that source (screens each construct their own
+ * client per call — see content-loader.ts — so this can't just be
+ * per-instance state).
+ *
+ * Exists to collapse bursts of near-simultaneous, identical requests that
+ * happen on first load: HomeScreen fires four independent live/movies/
+ * series/playlist-info loads in parallel, each authenticating from scratch,
+ * and switching straight into a content tab (e.g. Series from the home CTA)
+ * repeats several of the same get_series/get_series_categories/
+ * get_live_streams/get_vod_streams calls Home already made — all competing
+ * for the same connection to a provider that can already be slow, which is
+ * what made a fresh session's first navigation feel stuck (see conversation
+ * history). REQUEST_DEDUPE_MS is short (not a real cache — get_series etc.
+ * still need to reflect provider-side catalog changes within a session) so
+ * it only catches calls that are genuinely concurrent, not later revisits;
+ * see content-cache.ts's much longer-lived STALE_AFTER_MS for the
+ * screen-level "instant tab-switch" cache this complements.
+ */
+const REQUEST_DEDUPE_MS = 3000;
+const requestCache = new Map<string, { promise: Promise<unknown>; cachedAt: number }>();
+
+/** Test-only escape hatch: clears the module-level request dedupe cache so each test starts with a clean slate instead of reusing a previous test's mocked response for the same source id + params. */
+export function __resetRequestDedupeCacheForTests(): void {
+  requestCache.clear();
 }
 
 /**
@@ -105,7 +167,41 @@ export class XtreamClient {
     return url.endsWith("/") ? url.slice(0, -1) : url;
   }
 
+  private requestCacheKey(params: Record<string, string>): string {
+    return `${this.credentials.id}:${JSON.stringify(Object.entries(params).sort())}`;
+  }
+
+  /**
+   * Fetches one player_api.php action, deduped against any identical
+   * (same source + same params) call still within REQUEST_DEDUPE_MS —
+   * see requestCache's doc comment for why. Keyed on the params rather
+   * than the full URL so it dedupes correctly regardless of key ordering
+   * or which XtreamClient instance issues the call.
+   */
   private async fetchJson<T>(params: Record<string, string>): Promise<T> {
+    const cacheKey = this.requestCacheKey(params);
+    const cached = requestCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < REQUEST_DEDUPE_MS) {
+      return cached.promise as Promise<T>;
+    }
+
+    const promise = this.performFetchJson<T>(params);
+    requestCache.set(cacheKey, { promise, cachedAt: Date.now() });
+    // A failed request shouldn't keep poisoning the dedupe window for the
+    // rest of its lifetime — drop it immediately so the next call (e.g.
+    // after a transient network blip, or the user fixing bad credentials)
+    // gets a real retry instead of the same rejected promise replayed
+    // until REQUEST_DEDUPE_MS elapses. This only catches an HTTP-level/
+    // network failure (performFetchJson's own throw) — a *successful*
+    // response that some caller then decides represents a semantic failure
+    // (e.g. authenticate()'s auth !== 1 check below) needs to evict the
+    // cache itself, since fetchJson has no way to know that a 200 response
+    // shaped like {"user_info":{"auth":0}} isn't perfectly cacheable data.
+    promise.catch(() => requestCache.delete(cacheKey));
+    return promise;
+  }
+
+  private async performFetchJson<T>(params: Record<string, string>): Promise<T> {
     const response = await this.fetchImpl(this.buildApiUrl(params));
     if (!response.ok) {
       throw new Error(`Xtream request failed: HTTP ${response.status}`);
@@ -114,8 +210,15 @@ export class XtreamClient {
   }
 
   async authenticate(): Promise<XtreamAuthResponse> {
-    const result = await this.fetchJson<XtreamAuthResponse>({});
+    const params = {};
+    const result = await this.fetchJson<XtreamAuthResponse>(params);
     if (!result.user_info || result.user_info.auth !== 1) {
+      // See fetchJson's comment: a failed login is a valid, successfully
+      // fetched response, not something its own generic failure-eviction
+      // catches — without evicting it here too, a user retrying right after
+      // fixing bad credentials would keep getting this same rejected
+      // dedupe-window entry replayed instead of a fresh authentication.
+      requestCache.delete(this.requestCacheKey(params));
       throw new XtreamAuthError();
     }
     return result;
@@ -189,7 +292,13 @@ export class XtreamClient {
     }));
   }
 
-  async getSeriesInfo(seriesId: string): Promise<SeriesEpisode[]> {
+  /**
+   * Single get_series_info round-trip, returning both the episode list and
+   * the series-level metadata (plot/cast/genre/rating/backdrop) the same
+   * response carries — see SeriesDetails' doc comment for why every detail
+   * field is optional.
+   */
+  async getSeriesDetails(seriesId: string): Promise<{ details: SeriesDetails; episodes: SeriesEpisode[] }> {
     const raw = await this.fetchJson<XtreamSeriesInfoResponse>({
       action: "get_series_info",
       series_id: seriesId,
@@ -206,10 +315,34 @@ export class XtreamClient {
           title: ep.title,
           posterUrl: ep.info?.movie_image,
           durationSeconds: ep.info?.duration_secs,
+          plot: ep.info?.plot,
+          releaseDate: ep.info?.releasedate,
+          rating: parseRating(ep.info?.rating),
           streamUrl: this.buildStreamUrl("series", Number(ep.id), ep.container_extension || "mp4"),
         });
       }
     }
+
+    const info = raw.info;
+    const backdrop = Array.isArray(info?.backdrop_path) ? info.backdrop_path[0] : info?.backdrop_path;
+    const details: SeriesDetails = {
+      plot: info?.plot || undefined,
+      cast: splitList(info?.cast),
+      director: splitList(info?.director),
+      genre: splitList(info?.genre),
+      releaseDate: info?.releaseDate || info?.release_date || undefined,
+      lastAirDate: info?.last_modified || undefined,
+      rating: parseRating(info?.rating),
+      backdropUrl: backdrop || undefined,
+      trailerUrl: info?.youtube_trailer || undefined,
+    };
+
+    return { details, episodes };
+  }
+
+  /** @deprecated Use getSeriesDetails, which also returns series-level metadata from the same response. Kept for any caller that only wants the flat episode list. */
+  async getSeriesInfo(seriesId: string): Promise<SeriesEpisode[]> {
+    const { episodes } = await this.getSeriesDetails(seriesId);
     return episodes;
   }
 

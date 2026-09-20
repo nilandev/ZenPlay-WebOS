@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { HlsPlayerEngine, type PlayerEngine, type PlayerError } from "@player";
+import { HlsPlayerEngine, type PlaybackProgress, type PlayerEngine, type PlayerError } from "@player";
 
 export interface VideoSurfaceProps {
   streamUrl: string | null;
   engineFactory?: () => PlayerEngine;
   onError?: (error: PlayerError) => void;
+  /** Fires on every native timeupdate tick — opt-in, used by PlayerScreen to persist VOD/series resume position. LiveTvScreen leaves this unset. */
+  onProgress?: (progress: PlaybackProgress) => void;
 }
 
 /**
@@ -14,20 +16,24 @@ export interface VideoSurfaceProps {
  * hls.js-backed one, though webOS TV's own Chromium <video> + MSE is
  * expected to be sufficient without a native playback bridge.
  */
-export function VideoSurface({ streamUrl, engineFactory, onError }: VideoSurfaceProps): JSX.Element {
+export function VideoSurface({ streamUrl, engineFactory, onError, onProgress }: VideoSurfaceProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
   const engineRef = useRef<PlayerEngine | null>(null);
   const [isBuffering, setIsBuffering] = useState(false);
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
 
   useEffect(() => {
     const engine = (engineFactory ?? (() => new HlsPlayerEngine()))();
     engineRef.current = engine;
     if (videoRef.current) engine.attach(videoRef.current);
 
-    const unsubscribe = engine.onError((error) => onError?.(error));
+    const unsubscribeError = engine.onError((error) => onError?.(error));
+    const unsubscribeProgress = engine.onTimeUpdate((progress) => onProgressRef.current?.(progress));
 
     return () => {
-      unsubscribe();
+      unsubscribeError();
+      unsubscribeProgress();
       engine.destroy();
       engineRef.current = null;
     };

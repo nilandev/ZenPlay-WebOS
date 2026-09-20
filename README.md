@@ -1,4 +1,4 @@
-# Free IPTV Player
+# ZenPlay
 
 An open-source IPTV player for **LG webOS TV**. See [PLAN.md](./PLAN.md)
 for the Phase 1 (webOS) architecture and tech-stack rationale, and

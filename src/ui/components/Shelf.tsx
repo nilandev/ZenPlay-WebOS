@@ -31,14 +31,21 @@ export function Shelf<T>({ title, items, getId, renderItem }: ShelfProps<T>): JS
 
   return (
     <section style={{ marginBottom: 32 }}>
-      <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 12px 40px" }}>{title}</h2>
+      <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 -8px 40px" }}>{title}</h2>
       <div
         ref={trackRef}
         style={{
           display: "flex",
           gap: 16,
           overflowX: "auto",
-          padding: "12px 40px 24px",
+          // overflow-x: auto forces overflow-y to clip too (the two axes
+          // can't be independently visible/auto per spec), so top padding
+          // has to be generous enough to contain FocusCard's focused-state
+          // scale(1.08) + translateY(-4px) growth — otherwise the focused
+          // card's top edge gets cut off by this track instead of just
+          // rendering outside its unpadded box. 32px covers that headroom
+          // for FocusCard's default 220x330 size with margin to spare.
+          padding: "32px 40px 24px",
           scrollbarWidth: "none",
         }}
       >

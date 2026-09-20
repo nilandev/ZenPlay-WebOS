@@ -1,5 +1,22 @@
-const MEMORY_CACHE = new Map<string, unknown>();
+interface CacheEntry<T> {
+  value: T;
+  /** Date.now() when this entry was written — used to decide staleness, see getCacheAge/isCacheStale. */
+  cachedAt: number;
+}
+
+const MEMORY_CACHE = new Map<string, CacheEntry<unknown>>();
 const STORAGE_PREFIX = "iptv.cache.v1:";
+
+/**
+ * How long a cached entry is considered fresh enough to skip a background
+ * refetch entirely (see isCacheStale / useCachedContent). Chosen to make
+ * routine tab-switch/back-navigation revisits within a session instant and
+ * network-free, while still picking up channel/EPG/catalog changes within a
+ * viewing session. Manual refresh actions (ManagePlaylistsScreen's
+ * Refresh/Delete Cache, HomeScreen's Refresh tile) bypass this by clearing
+ * the entry outright, so they always force a real fetch regardless of age.
+ */
+const STALE_AFTER_MS = 5 * 60 * 1000;
 
 /** Revives ISO 8601 date strings back into Date instances (JSON.stringify turns Date into a string on write). */
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -8,19 +25,19 @@ function reviveDates(_key: string, value: unknown): unknown {
   return typeof value === "string" && ISO_DATE_RE.test(value) ? new Date(value) : value;
 }
 
-function readFromSessionStorage<T>(key: string): T | undefined {
+function readFromSessionStorage<T>(key: string): CacheEntry<T> | undefined {
   try {
     const raw = sessionStorage.getItem(STORAGE_PREFIX + key);
-    return raw ? (JSON.parse(raw, reviveDates) as T) : undefined;
+    return raw ? (JSON.parse(raw, reviveDates) as CacheEntry<T>) : undefined;
   } catch {
     // Corrupt entry or sessionStorage unavailable (private browsing, quota) — treat as a cache miss.
     return undefined;
   }
 }
 
-function writeToSessionStorage(key: string, value: unknown): void {
+function writeToSessionStorage<T>(key: string, entry: CacheEntry<T>): void {
   try {
-    sessionStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
+    sessionStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(entry));
   } catch {
     // Quota exceeded (large EPG payloads) or storage disabled — the in-memory
     // cache still works for the current tab session, so this is non-fatal.
@@ -36,15 +53,28 @@ function writeToSessionStorage(key: string, value: unknown): void {
  * fresh-ish per session rather than kept indefinitely.
  */
 export function getCachedContent<T>(key: string): T | undefined {
-  if (MEMORY_CACHE.has(key)) return MEMORY_CACHE.get(key) as T;
+  const entry = getCacheEntry<T>(key);
+  return entry?.value;
+}
+
+function getCacheEntry<T>(key: string): CacheEntry<T> | undefined {
+  if (MEMORY_CACHE.has(key)) return MEMORY_CACHE.get(key) as CacheEntry<T>;
   const fromStorage = readFromSessionStorage<T>(key);
   if (fromStorage !== undefined) MEMORY_CACHE.set(key, fromStorage);
   return fromStorage;
 }
 
+/** True when there's no cached entry, or it's older than STALE_AFTER_MS and due for a background refetch. */
+export function isCacheStale(key: string): boolean {
+  const entry = getCacheEntry(key);
+  if (!entry) return true;
+  return Date.now() - entry.cachedAt > STALE_AFTER_MS;
+}
+
 export function setCachedContent<T>(key: string, value: T): void {
-  MEMORY_CACHE.set(key, value);
-  writeToSessionStorage(key, value);
+  const entry: CacheEntry<T> = { value, cachedAt: Date.now() };
+  MEMORY_CACHE.set(key, entry);
+  writeToSessionStorage(key, entry);
 }
 
 /** Drops a single cached entry (memory + sessionStorage) so its next load re-fetches from the source — used by ManagePlaylistsScreen's per-source Refresh action. */

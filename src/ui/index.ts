@@ -22,3 +22,6 @@ export * from "./components/Clock.js";
 export * from "./components/MeshBackground.js";
 export * from "./components/PillButton.js";
 export * from "./components/FavoriteHeart.js";
+export * from "./components/CategoryDropdown.js";
+export * from "./components/SlowLoadHint.js";
+export * from "./components/SplashScreen.js";

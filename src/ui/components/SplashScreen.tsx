@@ -1,0 +1,138 @@
+import { useEffect, useState } from "react";
+
+export interface SplashScreenProps {
+  /** Fires once the exit fade-out has fully finished, so the caller can unmount this component. */
+  onExited: () => void;
+}
+
+/**
+ * ZenPlay's animated launch splash — an in-app overlay (not webOS's own
+ * static splashBackground, which the OS shows between tap-to-launch and
+ * this app's first paint and can't animate) that bridges the moment React
+ * takes over. See public/brand/zenplay-splash.svg for the editable master.
+ *
+ * Held for at least MIN_VISIBLE_MS so the ring-draw/logo/wordmark animation
+ * always completes even if the app's first real screen paints instantly —
+ * a splash that vanishes mid-draw reads as a glitch, not a brand moment.
+ * Deliberately NOT tied to any data fetch (auth, catalogs, etc.): those can
+ * take several seconds on a slow provider, and stacking that wait on top of
+ * this splash would turn a ~2s brand beat into an indefinite blocking
+ * screen. App.tsx hides this on first render of a real screen instead.
+ */
+const MIN_VISIBLE_MS = 1900;
+const FADE_OUT_MS = 700;
+
+export function SplashScreen({ onExited }: SplashScreenProps): JSX.Element {
+  const [isHidden, setIsHidden] = useState(false);
+
+  useEffect(() => {
+    const shownAt = Date.now();
+    // The parent decides *when* to start hiding (via unmounting its own
+    // "still splashing" state), but this component still owns the minimum
+    // hold + fade timing itself so the animation never gets cut short.
+    const wait = Math.max(0, MIN_VISIBLE_MS - (Date.now() - shownAt));
+    const hideTimer = setTimeout(() => setIsHidden(true), wait);
+    return () => clearTimeout(hideTimer);
+  }, []);
+
+  useEffect(() => {
+    if (!isHidden) return;
+    const exitTimer = setTimeout(onExited, FADE_OUT_MS);
+    return () => clearTimeout(exitTimer);
+  }, [isHidden, onExited]);
+
+  return (
+    <div
+      role="status"
+      aria-label="ZenPlay is loading"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9999,
+        background: "#08090B",
+        opacity: isHidden ? 0 : 1,
+        pointerEvents: isHidden ? "none" : "auto",
+        transition: `opacity ${FADE_OUT_MS}ms ease`,
+      }}
+    >
+      <style>{`
+        @keyframes zenplay-splash-fade { to { opacity: 1; } }
+        @keyframes zenplay-splash-draw { to { stroke-dashoffset: 0; } }
+        .zenplay-splash-glow { opacity: 0; animation: zenplay-splash-fade 0.9s ease-out 0s forwards; }
+        .zenplay-splash-draw { stroke-dasharray: 942.5; stroke-dashoffset: 942.5; animation: zenplay-splash-draw 1.1s cubic-bezier(.45,.05,.25,1) 0.15s forwards; }
+        .zenplay-splash-play { opacity: 0; animation: zenplay-splash-fade 0.5s ease-out 0.95s forwards; }
+        .zenplay-splash-word { opacity: 0; animation: zenplay-splash-fade 0.6s ease-out 1.15s forwards; }
+        @media (prefers-reduced-motion: reduce) {
+          .zenplay-splash-glow, .zenplay-splash-draw, .zenplay-splash-play, .zenplay-splash-word {
+            animation: none;
+            opacity: 1;
+            stroke-dashoffset: 0;
+          }
+        }
+      `}</style>
+      <svg viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" style={{ display: "block", width: "100%", height: "100%" }}>
+        <defs>
+          <linearGradient id="zenplay-splash-ring" gradientUnits="userSpaceOnUse" x1="110" y1="400" x2="400" y2="110">
+            <stop offset="0" stopColor="#2FE3B0" />
+            <stop offset="0.55" stopColor="#4FB4FF" />
+            <stop offset="1" stopColor="#9A86FF" />
+          </linearGradient>
+          <linearGradient id="zenplay-splash-play" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#FFFFFF" />
+            <stop offset="1" stopColor="#D9D4FF" />
+          </linearGradient>
+          <radialGradient id="zenplay-splash-glow" gradientUnits="userSpaceOnUse" cx="960" cy="520" r="860">
+            <stop offset="0" stopColor="#262B55" stopOpacity="1" />
+            <stop offset="0.2" stopColor="#262B55" stopOpacity="0.92" />
+            <stop offset="0.4" stopColor="#262B55" stopOpacity="0.68" />
+            <stop offset="0.6" stopColor="#262B55" stopOpacity="0.4" />
+            <stop offset="0.8" stopColor="#262B55" stopOpacity="0.11" />
+            <stop offset="1" stopColor="#262B55" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id="zenplay-splash-floor" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#0B1113" stopOpacity="0" />
+            <stop offset="1" stopColor="#0B1113" stopOpacity="0.9" />
+          </linearGradient>
+          <mask id="zenplay-splash-reveal" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+            <circle
+              className="zenplay-splash-draw"
+              cx="256"
+              cy="256"
+              r="150"
+              fill="none"
+              stroke="#fff"
+              strokeWidth="100"
+              transform="rotate(20 256 256)"
+            />
+          </mask>
+        </defs>
+        <rect width="1920" height="1080" fill="#08090B" />
+        <rect y="648" width="1920" height="432" fill="url(#zenplay-splash-floor)" />
+        <rect className="zenplay-splash-glow" width="1920" height="1080" fill="url(#zenplay-splash-glow)" />
+        <g transform="translate(704.00 199.00) scale(1.0)">
+          <g mask="url(#zenplay-splash-reveal)">
+            <path
+              d="M409.69 330.96 L406.98 336.03 L404.11 340.99 L401.07 345.86 L397.87 350.62 L394.52 355.26 L391.01 359.79 L387.36 364.19 L383.57 368.46 L379.63 372.61 L375.56 376.61 L371.37 380.48 L367.04 384.19 L362.60 387.76 L358.05 391.18 L353.38 394.44 L348.62 397.53 L343.75 400.47 L338.79 403.23 L333.75 405.83 L328.62 408.26 L323.42 410.51 L318.15 412.58 L312.82 414.48 L307.43 416.19 L301.99 417.72 L296.51 419.06 L290.98 420.22 L285.43 421.20 L279.84 421.98 L274.24 422.58 L268.63 422.99 L263.01 423.21 L257.39 423.24 L251.77 423.09 L246.17 422.74 L240.58 422.21 L235.02 421.49 L229.49 420.59 L224.00 419.50 L218.55 418.23 L213.15 416.77 L207.80 415.14 L202.52 413.33 L197.30 411.35 L192.15 409.19 L187.09 406.87 L182.11 404.37 L177.21 401.71 L172.42 398.90 L167.72 395.92 L163.13 392.79 L158.64 389.51 L154.28 386.08 L150.03 382.51 L145.91 378.81 L141.92 374.97 L138.06 370.99 L134.34 366.90 L130.76 362.69 L127.32 358.36 L124.04 353.92 L120.90 349.37 L117.93 344.73 L115.11 339.99 L112.45 335.16 L109.96 330.25 L107.64 325.26 L105.49 320.20 L103.51 315.07 L101.70 309.88 L100.07 304.64 L98.62 299.35 L97.34 294.02 L96.25 288.65 L95.33 283.25 L94.60 277.82 L94.05 272.38 L93.69 266.92 L93.51 261.46 L93.51 256.00 L93.69 250.54 L94.06 245.10 L94.61 239.68 L95.34 234.28 L96.25 228.91 L97.34 223.58 L98.60 218.28 L100.04 213.04 L101.66 207.85 L103.45 202.73 L105.41 197.66 L107.53 192.67 L109.82 187.76 L112.27 182.93 L114.89 178.18 L117.65 173.53 L120.57 168.97 L123.64 164.52 L126.86 160.18 L130.22 155.95 L133.71 151.83 L137.34 147.84 L141.10 143.97 L144.98 140.23 L148.99 136.63 L153.11 133.17 L157.35 129.84 L161.69 126.66 L166.13 123.64 L170.67 120.76 L175.30 118.04 L180.02 115.47 L184.81 113.07 L189.69 110.83 L194.63 108.75 L199.64 106.84 L204.70 105.10 L209.82 103.54 L214.99 102.14 L220.20 100.92 L225.44 99.88 L230.71 99.01 L236.01 98.32 L241.33 97.81 L246.65 97.48 L251.98 97.32 L257.32 97.34 L262.64 97.55 L267.96 97.92 L273.25 98.48 L278.52 99.21 L283.77 100.12 L288.97 101.21 L294.14 102.46 L299.26 103.89 L304.32 105.49 L309.33 107.25 L314.28 109.18 L319.15 111.28 L323.95 113.53 L328.68 115.94 L333.31 118.51 L337.86 121.23 L342.31 124.10 L346.66 127.12 L350.91 130.28 L355.05 133.58 L359.07 137.01 L362.98 140.57 L366.76 144.27 L370.42 148.08 L373.95 152.01 L377.35 156.06 L380.60 160.21 L383.72 164.48 L386.70 168.84 L389.52 173.29 L392.20 177.84 L394.73 182.47 L397.11 187.18 A7.00 7.00 0 0 1 384.53 193.31 L382.34 189.04 L380.00 184.84 L377.51 180.73 L374.89 176.71 L372.13 172.78 L369.24 168.95 L366.22 165.22 L363.08 161.59 L359.82 158.08 L356.44 154.68 L352.95 151.40 L349.35 148.23 L345.65 145.20 L341.84 142.29 L337.95 139.51 L333.96 136.87 L329.89 134.36 L325.73 131.99 L321.50 129.77 L317.20 127.69 L312.83 125.76 L308.40 123.98 L303.92 122.35 L299.38 120.87 L294.80 119.55 L290.18 118.39 L285.53 117.38 L280.84 116.53 L276.14 115.83 L271.41 115.30 L266.67 114.93 L261.92 114.72 L257.17 114.67 L252.43 114.78 L247.69 115.04 L242.96 115.47 L238.26 116.06 L233.58 116.80 L228.93 117.71 L224.32 118.76 L219.74 119.98 L215.22 121.34 L210.74 122.86 L206.32 124.52 L201.96 126.34 L197.67 128.29 L193.44 130.39 L189.30 132.63 L185.23 135.01 L181.25 137.52 L177.35 140.17 L173.55 142.94 L169.85 145.83 L166.25 148.85 L162.76 151.99 L159.37 155.24 L156.10 158.60 L152.95 162.06 L149.91 165.63 L147.00 169.30 L144.22 173.06 L141.57 176.91 L139.04 180.84 L136.66 184.86 L134.41 188.95 L132.31 193.11 L130.34 197.34 L128.52 201.63 L126.85 205.97 L125.33 210.37 L123.95 214.81 L122.73 219.29 L121.66 223.81 L120.74 228.36 L119.98 232.93 L119.37 237.53 L118.92 242.14 L118.62 246.75 L118.48 251.38 L118.49 256.00 L118.66 260.62 L118.99 265.22 L119.47 269.81 L120.10 274.37 L120.89 278.91 L121.83 283.42 L122.92 287.89 L124.16 292.32 L125.54 296.70 L127.07 301.02 L128.75 305.29 L130.57 309.50 L132.52 313.64 L134.62 317.71 L136.84 321.71 L139.20 325.63 L141.69 329.46 L144.30 333.20 L147.04 336.85 L149.90 340.40 L152.87 343.85 L155.95 347.20 L159.14 350.44 L162.44 353.56 L165.84 356.57 L169.33 359.47 L172.92 362.24 L176.60 364.89 L180.36 367.41 L184.20 369.80 L188.11 372.06 L192.10 374.18 L196.15 376.17 L200.27 378.01 L204.44 379.72 L208.66 381.28 L212.93 382.70 L217.24 383.98 L221.59 385.10 L225.97 386.08 L230.37 386.91 L234.80 387.60 L239.25 388.13 L243.71 388.51 L248.17 388.74 L252.64 388.82 L257.10 388.75 L261.55 388.53 L265.99 388.15 L270.42 387.64 L274.81 386.97 L279.18 386.15 L283.52 385.19 L287.82 384.09 L292.07 382.84 L296.28 381.45 L300.43 379.92 L304.53 378.26 L308.56 376.45 L312.53 374.52 L316.43 372.45 L320.25 370.26 L323.99 367.94 L327.65 365.50 L331.22 362.93 L334.70 360.26 L338.09 357.46 L341.38 354.56 L344.56 351.55 L347.64 348.44 L350.61 345.23 L353.47 341.93 L356.21 338.53 L358.83 335.05 L361.33 331.48 L363.71 327.84 L365.97 324.12 L368.09 320.32 L370.08 316.47 L371.94 312.55 A21.00 21.00 0 0 1 409.69 330.96 Z"
+              fill="url(#zenplay-splash-ring)"
+            />
+          </g>
+          <g className="zenplay-splash-play">
+            <path
+              d="M216 192 L216 320 L326 256 Z"
+              fill="url(#zenplay-splash-play)"
+              stroke="url(#zenplay-splash-play)"
+              strokeWidth="20"
+              strokeLinejoin="round"
+            />
+          </g>
+        </g>
+        <g className="zenplay-splash-word" transform="translate(774.90 738) scale(0.04492)">
+          <path
+            d="M120 0V-166L745 -1066Q797 -1140 859 -1215Q881 -1242 904 -1270Q857 -1267 810 -1267Q712 -1265 614 -1265H116V-1490H1216V-1322L602 -438Q547 -360 483 -282Q457 -251 431 -220Q482 -223 532 -224Q632 -225 732 -225H1221V0Z M2008.96 23Q1839.96 23 1718.46 -48.0Q1596.96 -119 1531.46 -248.0Q1465.96 -377 1465.96 -552Q1465.96 -725 1530.46 -855.0Q1594.96 -985 1713.46 -1058.5Q1831.96 -1132 1991.96 -1132Q2093.96 -1132 2186.46 -1099.0Q2278.96 -1066 2350.46 -997.0Q2421.96 -928 2462.46 -821.5Q2502.96 -715 2502.96 -568V-486H1723.96Q1727.96 -394 1759.96 -328Q1795.96 -255 1860.96 -218.0Q1925.96 -181 2011.96 -181Q2068.96 -181 2115.46 -197.5Q2161.96 -214 2195.96 -246.5Q2229.96 -279 2246.96 -326L2485.96 -277Q2458.96 -187 2393.96 -119.5Q2328.96 -52 2231.46 -14.5Q2133.96 23 2008.96 23ZM1724.96 -663H2249.96Q2243.96 -725 2222.96 -777Q2193.96 -848 2136.46 -888.0Q2078.96 -928 1992.96 -928.0Q1906.96 -928 1846.96 -887.5Q1786.96 -847 1755.96 -780Q1730.96 -726 1724.96 -663Z M3026.92 -655V0H2766.92V-1118H3012.92L3015.92 -896Q3060.92 -1001 3133.92 -1060Q3224.92 -1132 3361.92 -1132Q3476.92 -1132 3562.92 -1083.0Q3648.92 -1034 3696.42 -940.0Q3743.92 -846 3743.92 -711V0H3483.92V-671Q3483.92 -783 3425.92 -847.0Q3367.92 -911 3265.92 -911Q3196.92 -911 3142.92 -881.0Q3088.92 -851 3057.92 -793.5Q3026.92 -736 3026.92 -655Z M4060.88 418V-1118H4314.88V-933H4331.88Q4351.88 -973 4388.88 -1019.0Q4425.88 -1065 4489.38 -1098.5Q4552.88 -1132 4651.88 -1132Q4781.88 -1132 4885.88 -1066.0Q4989.88 -1000 5051.38 -871.5Q5112.88 -743 5112.88 -557Q5112.88 -373 5052.88 -244.0Q4992.88 -115 4888.38 -47.5Q4783.88 20 4650.88 20Q4555.88 20 4491.88 -12.5Q4427.88 -45 4389.88 -91.0Q4351.88 -137 4331.88 -177H4320.88V418ZM4580.88 -194Q4667.88 -194 4726.88 -241.5Q4785.88 -289 4815.88 -371.5Q4845.88 -454 4845.88 -558Q4845.88 -662 4816.38 -743.5Q4786.88 -825 4727.88 -871.5Q4668.88 -918 4580.88 -918Q4494.88 -918 4435.88 -873.0Q4376.88 -828 4346.38 -747.5Q4315.88 -667 4315.88 -558Q4315.88 -449 4346.38 -367.0Q4376.88 -285 4436.38 -239.5Q4495.88 -194 4580.88 -194Z M5639.84 -1490V0H5379.84V-1490Z M6268.8 23Q6162.8 23 6077.8 -15.5Q5992.8 -54 5943.8 -129.0Q5894.8 -204 5894.8 -314Q5894.8 -409 5930.3 -471.0Q5965.8 -533 6026.3 -570.0Q6086.8 -607 6162.8 -626.0Q6238.8 -645 6320.8 -653Q6417.8 -664 6478.8 -672.0Q6539.8 -680 6568.3 -698.0Q6596.8 -716 6596.8 -754V-759Q6596.8 -814 6574.8 -852.5Q6552.8 -891 6509.3 -911.5Q6465.8 -932 6401.8 -932Q6336.8 -932 6289.3 -912.0Q6241.8 -892 6211.8 -860.0Q6181.8 -828 6167.8 -791L5926.8 -840Q5959.8 -939 6028.8 -1003.5Q6097.8 -1068 6193.3 -1100.0Q6288.8 -1132 6400.8 -1132Q6479.8 -1132 6560.3 -1113.5Q6640.8 -1095 6707.8 -1051.0Q6774.8 -1007 6815.8 -933.0Q6856.8 -859 6856.8 -747V0H6607.8V-154H6597.8Q6572.8 -107 6529.3 -66.5Q6485.8 -26 6421.3 -1.5Q6356.8 23 6268.8 23ZM6335.8 -170Q6416.8 -170 6475.3 -202.0Q6533.8 -234 6566.3 -286.5Q6598.8 -339 6598.8 -401V-533Q6585.8 -523 6555.3 -514.0Q6524.8 -505 6487.3 -498.0Q6449.8 -491 6413.3 -486.0Q6376.8 -481 6351.8 -478Q6293.8 -470 6246.8 -452.0Q6199.8 -434 6173.3 -401.5Q6146.8 -369 6146.8 -317Q6146.8 -269 6171.3 -236.5Q6195.8 -204 6238.3 -187.0Q6280.8 -170 6335.8 -170Z M7162.76 399 7223.76 196 7254.76 204Q7313.76 219 7359.76 212.5Q7405.76 206 7436.76 172.5Q7467.76 139 7480.76 75L7496.76 4L7074.76 -1118H7352.76L7556.76 -510Q7592.76 -402 7615.76 -295Q7623.76 -256 7632.76 -217Q7642.76 -256 7652.76 -296Q7679.76 -403 7715.76 -510L7926.76 -1118H8201.76L7721.76 144Q7687.76 233 7636.76 296.5Q7585.76 360 7511.76 393.0Q7437.76 426 7336.76 426Q7281.76 426 7235.26 418.0Q7188.76 410 7162.76 399Z"
+            fill="#F4F4F6"
+          />
+        </g>
+      </svg>
+    </div>
+  );
+}

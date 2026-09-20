@@ -1,5 +1,5 @@
 import Hls, { ErrorData, Events, type HlsConfig } from "hls.js";
-import type { AudioTrackInfo, PlayerEngine, PlayerError, PlayerStats } from "./player-engine.js";
+import type { AudioTrackInfo, PlaybackProgress, PlayerEngine, PlayerError, PlayerStats } from "./player-engine.js";
 
 /**
  * hls.js-backed engine used on webOS TV's Chromium-based runtime. Tuned
@@ -21,10 +21,17 @@ export class HlsPlayerEngine implements PlayerEngine {
   private hls: Hls | null = null;
   private video: HTMLVideoElement | null = null;
   private errorCallbacks = new Set<(error: PlayerError) => void>();
+  private timeUpdateCallbacks = new Set<(progress: PlaybackProgress) => void>();
   private droppedFrames = 0;
+  private handleTimeUpdate = (): void => {
+    if (!this.video) return;
+    const progress: PlaybackProgress = { positionSeconds: this.video.currentTime, durationSeconds: this.video.duration };
+    for (const cb of this.timeUpdateCallbacks) cb(progress);
+  };
 
   attach(videoElement: HTMLVideoElement): void {
     this.video = videoElement;
+    this.video.addEventListener("timeupdate", this.handleTimeUpdate);
   }
 
   async load(streamUrl: string): Promise<void> {
@@ -75,7 +82,9 @@ export class HlsPlayerEngine implements PlayerEngine {
 
   destroy(): void {
     this.destroyHlsInstance();
+    this.video?.removeEventListener("timeupdate", this.handleTimeUpdate);
     this.errorCallbacks.clear();
+    this.timeUpdateCallbacks.clear();
     this.video = null;
   }
 
@@ -105,6 +114,11 @@ export class HlsPlayerEngine implements PlayerEngine {
   onError(callback: (error: PlayerError) => void): () => void {
     this.errorCallbacks.add(callback);
     return () => this.errorCallbacks.delete(callback);
+  }
+
+  onTimeUpdate(callback: (progress: PlaybackProgress) => void): () => void {
+    this.timeUpdateCallbacks.add(callback);
+    return () => this.timeUpdateCallbacks.delete(callback);
   }
 
   private computeBufferedSeconds(): number {
