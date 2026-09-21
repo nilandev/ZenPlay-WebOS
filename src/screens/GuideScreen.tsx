@@ -32,6 +32,7 @@ export function GuideScreen({ source, platform, onPlay, onBack }: GuideScreenPro
   const loadChannels = useCallback(() => loadChannelsByKind(source, "live"), [source]);
   const { data: channels, isInitialLoading: isChannelsLoading } = useCachedContent(
     `guide-channels:${source.id}`,
+    "catalog",
     loadChannels,
     EMPTY_CHANNELS,
   );
@@ -39,6 +40,7 @@ export function GuideScreen({ source, platform, onPlay, onBack }: GuideScreenPro
   const loadProgrammes = useCallback(() => loadEpg(source), [source]);
   const { data: programmes, isInitialLoading: isEpgLoading } = useCachedContent(
     `guide-epg:${source.id}`,
+    "epg",
     loadProgrammes,
     EMPTY_PROGRAMMES,
   );

@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Focusable } from "../focus/Focusable.js";
 import { useFocusStore } from "../focus/focus-store.js";
+import { URLImage } from "./URLImage.js";
 
 export interface FocusCardProps {
   id: string;
@@ -58,16 +59,7 @@ export function FocusCard({
     <Focusable id={id} className="focus-card">
       <div style={style} onClick={onSelect} role="button" tabIndex={-1}>
         <div style={{ position: "relative", width: "100%", aspectRatio }}>
-          {imageUrl ? (
-            <img
-              src={imageUrl}
-              alt=""
-              loading="lazy"
-              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-            />
-          ) : (
-            <div style={{ width: "100%", height: "100%", background: "#1c1c22" }} />
-          )}
+          <URLImage src={imageUrl} alt="" seed={id} loading="lazy" />
           {badge && <div style={{ position: "absolute", top: 8, right: 8 }}>{badge}</div>}
           <div
             style={{

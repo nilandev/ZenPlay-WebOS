@@ -12,6 +12,7 @@ import {
   Shelf,
   ShelfRowSkeleton,
   Shimmer,
+  URLImage,
   buildGridFocusGraph,
   buildShelfFocusGraph,
   useFocusStore,
@@ -25,7 +26,8 @@ export interface SeriesScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
   profile: Profile;
-  onPlayEpisode: (episode: SeriesEpisode) => void;
+  /** allEpisodes is every episode across all seasons for this series (not just the current season) — lets the caller (App.tsx) compute the next episode for the player's Next Episode control. */
+  onPlayEpisode: (episode: SeriesEpisode, allEpisodes: SeriesEpisode[]) => void;
   onBack: () => void;
   /** Opens directly into this series' episode list instead of the shelf browser — used when arriving from My Favourite, or when returning to a series left open before the tab was switched away (see App.tsx's seriesSelectionId). */
   initialSelectedId?: string;
@@ -101,14 +103,6 @@ export function SeriesScreen({
   onSelectionChange,
   continueWatchingVersion,
 }: SeriesScreenProps): JSX.Element {
-  const loadList = useCallback(() => loadSeriesList(source), [source]);
-  const { data: seriesList, isInitialLoading: isListLoading } = useCachedContent(`series-list:${source.id}`, loadList, EMPTY_SERIES);
-
-  const gridColumns = useMemo(() => computeGridColumns(), []);
-
-  const loadCategories = useCallback(() => loadSeriesCategories(source), [source]);
-  const { data: categories } = useCachedContent(`series-categories:${source.id}`, loadCategories, EMPTY_CATEGORIES);
-
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focusedId = useFocusStore((state) => state.focusedId);
@@ -118,6 +112,41 @@ export function SeriesScreen({
   const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  const isAllCategories = activeCategoryId === ALL_CATEGORIES_ID;
+
+  // Same category-lazy split as VodScreen (see its identical comment): the
+  // "All Categories" shelf browser and search both need the full list, but
+  // a single selected category is fetched straight from the provider's
+  // server-side category filter instead, so picking one category never
+  // depends on the full series catalog having been fetched at all.
+  const needsFullCatalog = isAllCategories || trimmedQuery.length > 0;
+  const loadList = useCallback(() => loadSeriesList(source), [source]);
+  const { data: seriesList, isInitialLoading: isListLoading } = useCachedContent(
+    `series-list:${source.id}`,
+    "catalog",
+    loadList,
+    EMPTY_SERIES,
+    { enabled: needsFullCatalog },
+  );
+
+  const loadCategorySeries = useCallback(
+    () => loadSeriesList(source, isAllCategories ? undefined : activeCategoryId),
+    [source, isAllCategories, activeCategoryId],
+  );
+  const { data: categorySeries, isInitialLoading: isCategoryListLoading } = useCachedContent(
+    isAllCategories ? "series-list:none" : `series-list:${source.id}:cat:${activeCategoryId}`,
+    "catalog",
+    loadCategorySeries,
+    EMPTY_SERIES,
+    { enabled: !isAllCategories },
+  );
+
+  const gridColumns = useMemo(() => computeGridColumns(), []);
+
+  const loadCategories = useCallback(() => loadSeriesCategories(source), [source]);
+  const { data: categories } = useCachedContent(`series-categories:${source.id}`, "category", loadCategories, EMPTY_CATEGORIES);
 
   const setSelected = useCallback(
     (seriesId: string | null) => {
@@ -140,24 +169,27 @@ export function SeriesScreen({
   );
   const { data: seriesData, isInitialLoading: isEpisodesLoading } = useCachedContent(
     selected ? `series-details:${source.id}:${selected}` : "series-details:none",
+    "catalog",
     loadDetails,
     EMPTY_SERIES_DETAILS,
   );
   const { details, episodes } = seriesData;
 
   const categoryNameById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
+  // Shelves only ever need the full catalog (no per-shelf lazy fetch), so
+  // this naturally reads [] while a single category is selected — fine
+  // since shelves aren't rendered in that mode anyway (see gridSeries below).
   const shelves = useMemo(() => groupByCategory(seriesList, categoryNameById), [seriesList, categoryNameById]);
 
   const categoryItems = useMemo(
     () => [
       { id: ALL_CATEGORIES_ID, label: "All Categories", count: seriesList.length },
-      ...shelves.map((shelf) => ({ id: shelf.id, label: shelf.title, count: shelf.items.length })),
+      ...categories.map((c) => ({ id: c.id, label: c.name, count: undefined as number | undefined })),
     ],
-    [seriesList.length, shelves],
+    [seriesList.length, categories],
   );
   const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "All Categories";
 
-  const trimmedQuery = searchQuery.trim().toLowerCase();
   // A category other than "All Categories", or a non-empty search query,
   // replaces the shelf browser with a single flat, vertically-scrolling
   // grid — Netflix's own "browsing a category"/search-results behavior,
@@ -166,10 +198,10 @@ export function SeriesScreen({
   // Search takes priority over the category filter when both are active,
   // searching within the selected category rather than across all series.
   const gridSeries = useMemo(() => {
-    const withinCategory = activeCategoryId === ALL_CATEGORIES_ID ? seriesList : (shelves.find((s) => s.id === activeCategoryId)?.items ?? EMPTY_SERIES);
+    const withinCategory = isAllCategories ? seriesList : categorySeries;
     if (trimmedQuery) return withinCategory.filter((item) => item.name.toLowerCase().includes(trimmedQuery));
-    return activeCategoryId === ALL_CATEGORIES_ID ? null : withinCategory;
-  }, [activeCategoryId, shelves, seriesList, trimmedQuery]);
+    return isAllCategories ? null : withinCategory;
+  }, [isAllCategories, categorySeries, seriesList, trimmedQuery]);
 
   const seasons = useMemo(() => Array.from(new Set(episodes.map((ep) => ep.season))).sort((a, b) => a - b), [episodes]);
   const currentSeason = activeSeason ?? seasons[0] ?? null;
@@ -178,7 +210,14 @@ export function SeriesScreen({
     [episodes, currentSeason],
   );
 
-  const series = seriesList.find((s) => s.id === selected);
+  // Lookups (open detail/favourite/backdrop) need to search whichever list
+  // is actually on screen — the full catalog in "All Categories"/search
+  // mode, or the category-scoped fetch when one category is selected
+  // (which `seriesList` deliberately doesn't hold, see needsFullCatalog
+  // above).
+  const visibleSeries = isAllCategories ? seriesList : categorySeries;
+
+  const series = visibleSeries.find((s) => s.id === selected);
   const continueEntry = useMemo(
     () => (selected ? loadContinueWatching(profile.id).find((e) => e.contentId === selected) : undefined),
     // continueWatchingVersion isn't read, only depended on — see its prop doc comment.
@@ -282,17 +321,17 @@ export function SeriesScreen({
       if (!id) return;
       if (selected) {
         const episode = seasonEpisodes.find((ep) => ep.id === id);
-        if (episode) onPlayEpisode(episode);
+        if (episode) onPlayEpisode(episode, episodes);
         return;
       }
-      const s = seriesList.find((item) => item.id === resolveSeriesIdFromFocusId(id));
+      const s = visibleSeries.find((item) => item.id === resolveSeriesIdFromFocusId(id));
       if (s) setSelected(s.id);
     },
     onLongSelect: (id) => {
       // Favouriting applies to the series as a whole, not individual
       // episodes — only act while browsing the series list.
       if (!id || selected) return;
-      const s = seriesList.find((item) => item.id === resolveSeriesIdFromFocusId(id));
+      const s = visibleSeries.find((item) => item.id === resolveSeriesIdFromFocusId(id));
       if (!s) return;
       toggleFavorite(profile.id, source.id, "series", s.id);
       setFavoritesVersion((v) => v + 1);
@@ -323,7 +362,7 @@ export function SeriesScreen({
           isLoading={isEpisodesLoading}
           isFavorited={isFavorited}
           canResume={Boolean(resumeEpisode)}
-          onPlay={() => playTarget && onPlayEpisode(playTarget)}
+          onPlay={() => playTarget && onPlayEpisode(playTarget, episodes)}
           onToggleFavorite={() => {
             toggleFavorite(profile.id, source.id, "series", selected);
             setFavoritesVersion((v) => v + 1);
@@ -347,7 +386,7 @@ export function SeriesScreen({
                 }}
               >
                 {seasonEpisodes.map((episode) => (
-                  <EpisodeCard key={episode.id} episode={episode} onSelect={() => onPlayEpisode(episode)} />
+                  <EpisodeCard key={episode.id} episode={episode} onSelect={() => onPlayEpisode(episode, episodes)} />
                 ))}
               </div>
             </>
@@ -357,10 +396,11 @@ export function SeriesScreen({
     );
   }
 
-  if (isListLoading) return <ShelfRowSkeleton />;
+  const isBrowseLoading = isAllCategories ? isListLoading : isCategoryListLoading;
+  if (isBrowseLoading) return <ShelfRowSkeleton />;
 
   const focusedSeriesId = focusedId ? resolveSeriesIdFromFocusId(focusedId) : undefined;
-  const focusedSeries = seriesList.find((s) => s.id === focusedSeriesId);
+  const focusedSeries = visibleSeries.find((s) => s.id === focusedSeriesId);
   const firstContentId = gridSeries ? (gridSeries[0] ? gridItemId(gridSeries[0].id) : undefined) : shelves[0]?.items[0]?.id;
 
   return (
@@ -528,13 +568,9 @@ function SeriesHero({
         }}
       />
       <div style={{ position: "relative", padding: "40px 40px 32px", display: "flex", gap: 28, alignItems: "flex-end", width: "100%" }}>
-        {posterUrl && (
-          <img
-            src={posterUrl}
-            alt=""
-            style={{ width: 160, aspectRatio: "2 / 3", objectFit: "cover", borderRadius: 10, boxShadow: "0 12px 32px rgba(0,0,0,0.5)", flexShrink: 0 }}
-          />
-        )}
+        <div style={{ width: 160, aspectRatio: "2 / 3", borderRadius: 10, overflow: "hidden", boxShadow: "0 12px 32px rgba(0,0,0,0.5)", flexShrink: 0 }}>
+          <URLImage src={posterUrl} alt="" seed={name} />
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           {isLoading ? (
             <>

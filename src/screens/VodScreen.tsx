@@ -72,14 +72,6 @@ function groupByCategory(movies: Channel[], categoryNameById: Map<string, string
 }
 
 export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScreenProps): JSX.Element {
-  const load = useCallback(() => loadChannelsByKind(source, "movie"), [source]);
-  const { data: movies, isInitialLoading, error } = useCachedContent(`vod:${source.id}`, load, EMPTY_MOVIES);
-
-  const gridColumns = useMemo(() => computeGridColumns(), []);
-
-  const loadCategories = useCallback(() => loadVodCategories(source), [source]);
-  const { data: categories } = useCachedContent(`vod-categories:${source.id}`, loadCategories, EMPTY_CATEGORIES);
-
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focusedId = useFocusStore((state) => state.focusedId);
@@ -88,6 +80,50 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  const isAllCategories = activeCategoryId === ALL_CATEGORIES_ID;
+
+  // The "All Categories" shelf browser and search both need the whole
+  // catalog (building N shelves, or searching across everything, both need
+  // every movie in hand) — but a single selected category doesn't, so this
+  // fetch is skipped (enabled: false) while one is active and no search is
+  // in progress, which is exactly when the category-scoped fetch below runs
+  // instead. This is what makes browsing straight into one category, on a
+  // catalog nobody has ever fully loaded this session, avoid a full-catalog
+  // fetch entirely.
+  const needsFullCatalog = isAllCategories || trimmedQuery.length > 0;
+  const load = useCallback(() => loadChannelsByKind(source, "movie"), [source]);
+  const {
+    data: movies,
+    isInitialLoading: isMoviesLoading,
+    error,
+    isStale,
+  } = useCachedContent(`vod:${source.id}`, "catalog", load, EMPTY_MOVIES, { enabled: needsFullCatalog });
+
+  // Powers the single-category grid: fetched straight from the provider's
+  // server-side category filter (see content-loader.ts's categoryId
+  // passthrough) rather than derived by filtering the full catalog, so
+  // selecting one category never depends on the full catalog having been
+  // fetched at all.
+  const loadCategoryMovies = useCallback(
+    () => loadChannelsByKind(source, "movie", isAllCategories ? undefined : activeCategoryId),
+    [source, isAllCategories, activeCategoryId],
+  );
+  const { data: categoryMovies, isInitialLoading: isCategoryLoading } = useCachedContent(
+    isAllCategories ? "vod:none" : `vod:${source.id}:cat:${activeCategoryId}`,
+    "catalog",
+    loadCategoryMovies,
+    EMPTY_MOVIES,
+    { enabled: !isAllCategories },
+  );
+
+  const isInitialLoading = isAllCategories ? isMoviesLoading : isCategoryLoading;
+
+  const gridColumns = useMemo(() => computeGridColumns(), []);
+
+  const loadCategories = useCallback(() => loadVodCategories(source), [source]);
+  const { data: categories } = useCachedContent(`vod-categories:${source.id}`, "category", loadCategories, EMPTY_CATEGORIES);
+
   // Bumped on every favourite toggle to force each FocusCard's heart badge
   // to re-render — see LiveTvScreen's identical comment for why this is
   // needed (toggleFavorite persists to localStorage but isn't itself
@@ -95,28 +131,31 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   const [favoritesVersion, setFavoritesVersion] = useState(0);
 
   const categoryNameById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
+  // Shelves only ever need the full catalog (there's no per-shelf lazy
+  // fetch — see needsFullCatalog above), so this naturally reads [] while a
+  // single category is selected, which is fine since shelves aren't
+  // rendered in that mode anyway (see gridMovies/the render branch below).
   const shelves = useMemo(() => groupByCategory(movies, categoryNameById), [movies, categoryNameById]);
 
   const categoryItems = useMemo(
     () => [
       { id: ALL_CATEGORIES_ID, label: "All Categories", count: movies.length },
-      ...shelves.map((shelf) => ({ id: shelf.id, label: shelf.title, count: shelf.items.length })),
+      ...categories.map((c) => ({ id: c.id, label: c.name, count: undefined as number | undefined })),
     ],
-    [movies.length, shelves],
+    [movies.length, categories],
   );
   const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "All Categories";
 
-  const trimmedQuery = searchQuery.trim().toLowerCase();
   // A category other than "All Categories", or a non-empty search query,
   // replaces the shelf browser with a single flat, vertically-scrolling
   // grid — same behavior as SeriesScreen's browse page. Search takes
   // priority over the category filter when both are active, searching
   // within the selected category rather than across all movies.
   const gridMovies = useMemo(() => {
-    const withinCategory = activeCategoryId === ALL_CATEGORIES_ID ? movies : (shelves.find((s) => s.id === activeCategoryId)?.items ?? EMPTY_MOVIES);
+    const withinCategory = isAllCategories ? movies : categoryMovies;
     if (trimmedQuery) return withinCategory.filter((item) => item.name.toLowerCase().includes(trimmedQuery));
-    return activeCategoryId === ALL_CATEGORIES_ID ? null : withinCategory;
-  }, [activeCategoryId, shelves, movies, trimmedQuery]);
+    return isAllCategories ? null : withinCategory;
+  }, [isAllCategories, categoryMovies, movies, trimmedQuery]);
 
   // Search input's proxy focus node — see VodSearchInput's doc comment for
   // why a native <input> needs a Focusable stand-in rather than being a
@@ -163,15 +202,21 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   // once — resolve back to the raw movie id here before lookups.
   const resolveMovieIdFromFocusId = useCallback((id: string) => (id.startsWith("vod-grid:") ? id.slice("vod-grid:".length) : id), []);
 
+  // Lookups (play/favourite/backdrop) need to search whichever list is
+  // actually on screen — the full catalog in "All Categories"/search mode,
+  // or the category-scoped fetch when one category is selected (which
+  // `movies` deliberately doesn't hold, see needsFullCatalog above).
+  const visibleMovies = isAllCategories ? movies : categoryMovies;
+
   useRemoteInput(platform, {
     onSelect: (id) => {
       if (!id) return;
-      const movie = movies.find((m) => m.id === resolveMovieIdFromFocusId(id));
+      const movie = visibleMovies.find((m) => m.id === resolveMovieIdFromFocusId(id));
       if (movie) onPlay(movie);
     },
     onLongSelect: (id) => {
       if (!id) return;
-      const movie = movies.find((m) => m.id === resolveMovieIdFromFocusId(id));
+      const movie = visibleMovies.find((m) => m.id === resolveMovieIdFromFocusId(id));
       if (!movie) return;
       toggleFavorite(profile.id, source.id, "movie", movie.id);
       setFavoritesVersion((v) => v + 1);
@@ -183,9 +228,16 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   });
 
   const focusedMovieId = focusedId ? resolveMovieIdFromFocusId(focusedId) : undefined;
-  const focusedMovie = movies.find((m) => m.id === focusedMovieId);
+  const focusedMovie = visibleMovies.find((m) => m.id === focusedMovieId);
 
-  if (error) return <div role="alert">Failed to load movies: {error}</div>;
+  // Only a fetch failure with nothing to show at all is a hard error — a
+  // failed background refresh with a good (possibly stale) cache hit
+  // already in `movies` should keep rendering that content rather than
+  // discarding a perfectly good screen (see useCachedContent's isStale doc
+  // comment). isStale is available here if a "couldn't refresh" affordance
+  // is wanted later; for now this just stops the false-positive hard error.
+  if (error && isInitialLoading) return <div role="alert">Failed to load movies: {error}</div>;
+  void isStale;
 
   if (isInitialLoading) return <ShelfRowSkeleton />;
 

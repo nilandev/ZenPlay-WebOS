@@ -1,5 +1,14 @@
 import type { Category, Channel, SeriesDetails, SeriesEpisode, SeriesInfo } from "../models/channel.js";
 import type { XtreamCredentials } from "../models/playlist-source.js";
+import {
+  buildXtreamStreamUrl,
+  mapLiveStream,
+  mapSeriesEntry,
+  mapVodStream,
+  type XtreamLiveStreamRaw,
+  type XtreamSeriesRaw,
+  type XtreamVodStreamRaw,
+} from "./xtream-mappers.js";
 
 interface XtreamAuthResponse {
   user_info: {
@@ -20,31 +29,6 @@ export interface XtreamAccountInfo {
   status: string;
   /** null when the account has no expiry ("Unlimited"). */
   expiresAt: Date | null;
-}
-
-interface XtreamLiveStream {
-  stream_id: number;
-  name: string;
-  stream_icon?: string;
-  category_id?: string;
-  epg_channel_id?: string;
-  tv_archive?: number;
-  tv_archive_duration?: number;
-}
-
-interface XtreamVodStream {
-  stream_id: number;
-  name: string;
-  stream_icon?: string;
-  category_id?: string;
-  container_extension?: string;
-}
-
-interface XtreamSeries {
-  series_id: number;
-  name: string;
-  cover?: string;
-  category_id?: string;
 }
 
 interface XtreamCategory {
@@ -252,44 +236,22 @@ export class XtreamClient {
   async getLiveChannels(categoryId?: string): Promise<Channel[]> {
     const params: Record<string, string> = { action: "get_live_streams" };
     if (categoryId) params.category_id = categoryId;
-    const raw = await this.fetchJson<XtreamLiveStream[]>(params);
-    return raw.map((s) => ({
-      id: String(s.stream_id),
-      name: s.name,
-      logoUrl: s.stream_icon,
-      groupTitle: s.category_id,
-      epgChannelId: s.epg_channel_id,
-      streamUrl: this.buildStreamUrl("live", s.stream_id, "m3u8"),
-      kind: "live" as const,
-      hasArchive: s.tv_archive === 1,
-      archiveDurationDays: s.tv_archive_duration,
-    }));
+    const raw = await this.fetchJson<XtreamLiveStreamRaw[]>(params);
+    return raw.map((s) => mapLiveStream(this.credentials, s));
   }
 
   async getVodStreams(categoryId?: string): Promise<Channel[]> {
     const params: Record<string, string> = { action: "get_vod_streams" };
     if (categoryId) params.category_id = categoryId;
-    const raw = await this.fetchJson<XtreamVodStream[]>(params);
-    return raw.map((s) => ({
-      id: String(s.stream_id),
-      name: s.name,
-      logoUrl: s.stream_icon,
-      groupTitle: s.category_id,
-      streamUrl: this.buildStreamUrl("movie", s.stream_id, s.container_extension || "mp4"),
-      kind: "movie" as const,
-    }));
+    const raw = await this.fetchJson<XtreamVodStreamRaw[]>(params);
+    return raw.map((s) => mapVodStream(this.credentials, s));
   }
 
   async getSeriesList(categoryId?: string): Promise<Array<Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle">>> {
     const params: Record<string, string> = { action: "get_series" };
     if (categoryId) params.category_id = categoryId;
-    const raw = await this.fetchJson<XtreamSeries[]>(params);
-    return raw.map((s) => ({
-      id: String(s.series_id),
-      name: s.name,
-      posterUrl: s.cover,
-      groupTitle: s.category_id,
-    }));
+    const raw = await this.fetchJson<XtreamSeriesRaw[]>(params);
+    return raw.map(mapSeriesEntry);
   }
 
   /**
@@ -318,7 +280,7 @@ export class XtreamClient {
           plot: ep.info?.plot,
           releaseDate: ep.info?.releasedate,
           rating: parseRating(ep.info?.rating),
-          streamUrl: this.buildStreamUrl("series", Number(ep.id), ep.container_extension || "mp4"),
+          streamUrl: buildXtreamStreamUrl(this.credentials, "series", Number(ep.id), ep.container_extension || "mp4"),
         });
       }
     }
@@ -354,10 +316,5 @@ export class XtreamClient {
     )}&password=${encodeURIComponent(
       this.credentials.password,
     )}&stream=${streamId}&start=${startUnixSeconds}&duration=${durationMinutes}`;
-  }
-
-  private buildStreamUrl(kind: "live" | "movie" | "series", streamId: number, extension: string): string {
-    const base = this.stripTrailingSlash(this.credentials.baseUrl);
-    return `${base}/${kind}/${this.credentials.username}/${this.credentials.password}/${streamId}.${extension}`;
   }
 }

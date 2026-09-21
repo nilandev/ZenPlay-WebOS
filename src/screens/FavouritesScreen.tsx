@@ -55,13 +55,13 @@ export function FavouritesScreen({ source, profileId, platform, onBack, onPlayCh
   }, [profileId, source.id, favoritesVersion]);
 
   const loadLive = useCallback(() => loadChannelsByKind(source, "live"), [source]);
-  const { data: liveChannels } = useCachedContent(`live:${source.id}`, loadLive, EMPTY_CHANNELS);
+  const { data: liveChannels } = useCachedContent(`live:${source.id}`, "catalog", loadLive, EMPTY_CHANNELS);
 
   const loadMovies = useCallback(() => loadChannelsByKind(source, "movie"), [source]);
-  const { data: movies } = useCachedContent(`vod:${source.id}`, loadMovies, EMPTY_CHANNELS);
+  const { data: movies } = useCachedContent(`vod:${source.id}`, "catalog", loadMovies, EMPTY_CHANNELS);
 
   const loadSeries = useCallback(() => loadSeriesList(source), [source]);
-  const { data: series } = useCachedContent(`series-list:${source.id}`, loadSeries, EMPTY_SERIES);
+  const { data: series } = useCachedContent(`series-list:${source.id}`, "catalog", loadSeries, EMPTY_SERIES);
 
   const items = useMemo(() => {
     const liveById = new Map(liveChannels.map((c) => [c.id, c]));

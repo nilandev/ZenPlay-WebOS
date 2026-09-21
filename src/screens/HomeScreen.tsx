@@ -14,8 +14,10 @@ import {
 import type { Channel, PlatformId, PlaylistSource, Profile, SeriesInfo } from "@core";
 import { Clock, Focusable, MeshBackground, ProfileSwitcher, PROFILE_SWITCHER_FOCUS_ID, useFocusStore, useRemoteInput } from "@ui";
 import type { FocusNode } from "@ui";
-import { clearAllCachedContent, getCachedContent } from "../content-cache.js";
+import { buildRevalidationTargets, revalidateStaleTargets, startBackgroundRevalidation } from "../cache-revalidator.js";
+import { getCachedContent } from "../content-cache.js";
 import { loadPlaylistInfo } from "../content-loader.js";
+import { schedulePrefetch } from "../idle-prefetch.js";
 import { useCachedContent } from "../use-cached-content.js";
 
 export interface HomeTile {
@@ -115,10 +117,22 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
 
+  // Bumped while a manual refresh is in flight so the Refresh icon can show
+  // a spinning affordance instead of looking like a no-op click.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Replaces the old clearAllCachedContent() + window.location.reload() —
+  // that nuked every cache tier and reloaded the entire SPA shell just to
+  // re-sync one source's content, guaranteeing the worst-case full
+  // multi-MB refetch cascade right when the user explicitly asked for a
+  // quick refresh. In-place revalidation re-fetches the same target list
+  // the background revalidator (below) uses, forced regardless of
+  // staleness so Refresh always does real work, and writes results back
+  // into the cache/notifies mounted screens without ever reloading.
   const handleRefresh = useCallback(() => {
-    clearAllCachedContent();
-    window.location.reload();
-  }, []);
+    setIsRefreshing(true);
+    void revalidateStaleTargets(buildRevalidationTargets(source), { force: true }).finally(() => setIsRefreshing(false));
+  }, [source]);
 
   const handleExit = useCallback(() => {
     window.close();
@@ -138,6 +152,27 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
     return () => clearGraph(SCOPE);
   }, [setGraph, clearGraph, onOpenProfiles, handleSystemAction]);
 
+  // Keeps this source's catalogs/EPG/account info from going stale while the
+  // user lingers on Home or elsewhere in the app, so navigating into a tab
+  // rarely has to wait on a real fetch — see cache-revalidator.ts. Home is
+  // the natural anchor for this: it's the hub every tab returns through, and
+  // it fully unmounts/remounts on each tab switch (see App.tsx), so this
+  // effectively restarts each time the user comes back here, which is fine
+  // given the hours-long TTLs involved (see content-cache.ts's CacheKind
+  // thresholds).
+  useEffect(() => {
+    const stop = startBackgroundRevalidation(() => buildRevalidationTargets(source));
+    return stop;
+  }, [source]);
+
+  // Warms whatever this source's VOD/series catalogs haven't been fetched at
+  // all yet (never a merely-stale one — see idle-prefetch.ts) a few seconds
+  // after Home settles, so the very first navigation into Movies/Series this
+  // session also feels instant, not just revisits.
+  useEffect(() => {
+    return schedulePrefetch(buildRevalidationTargets(source));
+  }, [source]);
+
   useRemoteInput(platform, {
     onSelect: (focusedId) => {
       if (!focusedId || focusedId === PROFILE_SWITCHER_FOCUS_ID) return;
@@ -150,7 +185,7 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
   });
 
   const loadInfo = useCallback(() => loadPlaylistInfo(source), [source]);
-  const { data: playlistInfo } = useCachedContent(`playlist-info:${source.id}`, loadInfo, EMPTY_PLAYLIST_INFO);
+  const { data: playlistInfo } = useCachedContent(`playlist-info:${source.id}`, "playlist-info", loadInfo, EMPTY_PLAYLIST_INFO);
 
   // Tile collages are read passively from whatever LiveTvScreen/VodScreen/
   // SeriesScreen have already cached (see content-cache.ts) — Home never
@@ -237,6 +272,7 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
               <SystemIconButton
                 key={tile.id}
                 tile={tile}
+                isSpinning={tile.id === "refresh" && isRefreshing}
                 onSelect={() => handleSystemAction(tile.id)}
               />
             ))}
@@ -528,7 +564,7 @@ function SecondaryRailItem({ tile, onSelect }: { tile: HomeTile; onSelect: () =>
  * destinations — see buildHomeFocusGraph's doc comment. Small circular
  * icon-only buttons, matching the header's own scale rather than the grid's.
  */
-function SystemIconButton({ tile, onSelect }: { tile: HomeTile; onSelect: () => void }): JSX.Element {
+function SystemIconButton({ tile, isSpinning, onSelect }: { tile: HomeTile; isSpinning?: boolean; onSelect: () => void }): JSX.Element {
   const isFocused = useFocusStore((state) => state.focusedId === tile.id);
   const Icon = tile.icon;
 
@@ -560,8 +596,16 @@ function SystemIconButton({ tile, onSelect }: { tile: HomeTile; onSelect: () => 
           cursor: "pointer",
         }}
       >
-        <Icon size="1.1875rem" strokeWidth={1.75} color={isFocused ? "var(--accent)" : "var(--text)"} />
+        <Icon
+          size="1.1875rem"
+          strokeWidth={1.75}
+          color={isFocused ? "var(--accent)" : "var(--text)"}
+          style={isSpinning ? { animation: "iptv-spin 900ms linear infinite" } : undefined}
+        />
       </button>
+      {isSpinning && (
+        <style>{`@keyframes iptv-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      )}
     </Focusable>
   );
 }

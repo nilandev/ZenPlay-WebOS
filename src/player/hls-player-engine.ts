@@ -1,5 +1,12 @@
 import Hls, { ErrorData, Events, type HlsConfig } from "hls.js";
-import type { AudioTrackInfo, PlaybackProgress, PlayerEngine, PlayerError, PlayerStats } from "./player-engine.js";
+import type {
+  AudioTrackInfo,
+  PlaybackProgress,
+  PlayerEngine,
+  PlayerError,
+  PlayerStats,
+  SubtitleTrackInfo,
+} from "./player-engine.js";
 
 /**
  * hls.js-backed engine used on webOS TV's Chromium-based runtime. Tuned
@@ -16,6 +23,20 @@ const IPTV_TUNED_CONFIG: Partial<HlsConfig> = {
   fragLoadingMaxRetry: 6,
   enableWorker: true,
 };
+
+/**
+ * True for an actual HLS manifest URL (live channels and catch-up always
+ * are — see XtreamClient.getLiveChannels/buildCatchupUrl, both fixed
+ * `.m3u8`), false for a direct-play file (VOD/series streams, whose
+ * extension mirrors the provider's own container_extension — mp4/mkv/avi/
+ * ts/etc., see xtream-mappers.ts). Query strings/fragments are stripped
+ * before checking since a provider occasionally appends `?token=...` after
+ * the extension.
+ */
+function isHlsStream(streamUrl: string): boolean {
+  const path = streamUrl.split(/[?#]/)[0];
+  return path.toLowerCase().endsWith(".m3u8");
+}
 
 export class HlsPlayerEngine implements PlayerEngine {
   private hls: Hls | null = null;
@@ -38,6 +59,21 @@ export class HlsPlayerEngine implements PlayerEngine {
     if (!this.video) throw new Error("HlsPlayerEngine.attach() must be called before load()");
 
     this.destroyHlsInstance();
+
+    if (!isHlsStream(streamUrl)) {
+      // Xtream VOD/series streams aren't always .m3u8 — container_extension
+      // can be mp4/mkv/avi/etc. (see XtreamClient's stream URL builder),
+      // meaning these are direct-play files, not segmented HLS manifests.
+      // Handing one of those to hls.js makes it try to parse raw container
+      // bytes as an HLS playlist, which fails fatally (surfaced as a
+      // manifest-parsing error) — that's why MKV/MP4 VOD playback broke:
+      // every stream was being routed through hls.js unconditionally.
+      // The <video> element's own native decoding (Chromium's MSE/demuxer
+      // pipeline on webOS) is what actually plays these, same as the
+      // Hls.isSupported()-false fallback below already does for HLS itself.
+      this.video.src = streamUrl;
+      return;
+    }
 
     if (!Hls.isSupported()) {
       // Safari/some WebKit builds support HLS natively via <video src>.
@@ -99,6 +135,33 @@ export class HlsPlayerEngine implements PlayerEngine {
 
   setAudioTrack(id: number): void {
     if (this.hls) this.hls.audioTrack = id;
+  }
+
+  getSubtitleTracks(): SubtitleTrackInfo[] {
+    // hls.js only — a direct-play file (MKV/MP4 VOD, see isHlsStream above)
+    // relies on the container's own baked-in tracks, which the <video>
+    // element's native <track>/TextTrack API doesn't expose for Xtream's
+    // provider streams (no sidecar subtitle files are ever supplied), so
+    // there's nothing to list in that case.
+    if (!this.hls) return [];
+    return this.hls.subtitleTracks.map((track) => ({
+      id: track.id,
+      label: track.name || track.lang || `Subtitle ${track.id}`,
+      language: track.lang,
+    }));
+  }
+
+  setSubtitleTrack(id: number | null): void {
+    if (!this.hls) return;
+    this.hls.subtitleTrack = id ?? -1;
+  }
+
+  setVolume(volume: number): void {
+    if (this.video) this.video.volume = Math.min(1, Math.max(0, volume));
+  }
+
+  setMuted(muted: boolean): void {
+    if (this.video) this.video.muted = muted;
   }
 
   getStats(): PlayerStats {

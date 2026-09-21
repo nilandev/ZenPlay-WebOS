@@ -10,6 +10,14 @@ import {
   type SeriesEpisode,
 } from "@core";
 import { proxyFetch } from "./proxy-fetch.js";
+import { createCatalogWorkerClient } from "./workers/catalog-worker-client.js";
+
+/**
+ * One catalog worker, reused across every VOD/series fetch this tab session
+ * makes — see catalog-worker-client.ts's doc comment for why the worker
+ * itself is a lazily-created singleton rather than one per call.
+ */
+const catalogWorker = createCatalogWorkerClient();
 
 export interface PlaylistInfo {
   name: string;
@@ -30,25 +38,46 @@ export async function loadPlaylistInfo(source: PlaylistSource): Promise<Playlist
  * provider API. M3U sources are a flat channel list with no separate
  * VOD/series split from the API — v1 relies on parseM3u's kind detection
  * (see src/core/m3u/parse-m3u.ts) to bucket entries.
+ *
+ * `categoryId`, when given, is passed straight through to Xtream's
+ * server-side category filter (see XtreamClient.getLiveChannels/
+ * getVodStreams) so a screen showing just one category's grid doesn't need
+ * to fetch and then filter the entire catalog — see VodScreen's per-category
+ * cache key. M3U sources have no server-side category filter, so this is
+ * applied client-side there instead, over the same groupTitle field the
+ * screens already group by.
+ *
+ * VOD (potentially tens of thousands of entries, 10MB+ of JSON) is fetched
+ * and parsed inside a Web Worker (see workers/catalog-fetch-worker.ts)
+ * rather than on the main thread — live channels stay on the direct
+ * XtreamClient path since they're not large enough to be worth the
+ * postMessage/structured-clone overhead. authenticate() still runs first on
+ * the main thread (cheap, and deduped against other concurrent calls via
+ * XtreamClient's own request cache — see its doc comment) purely so a bad
+ * login surfaces as the familiar XtreamAuthError rather than a generic
+ * fetch failure from inside the worker.
  */
-export async function loadChannelsByKind(source: PlaylistSource, kind: Channel["kind"]): Promise<Channel[]> {
+export async function loadChannelsByKind(source: PlaylistSource, kind: Channel["kind"], categoryId?: string): Promise<Channel[]> {
   if (source.kind === "xtream") {
     const client = new XtreamClient(source, proxyFetch);
     await client.authenticate();
-    if (kind === "live") return client.getLiveChannels();
-    if (kind === "movie") return client.getVodStreams();
+    if (kind === "live") return client.getLiveChannels(categoryId);
+    if (kind === "movie") {
+      return catalogWorker.fetchCatalog({ credentials: source, action: "get_vod_streams", categoryId }) as Promise<Channel[]>;
+    }
     return []; // series are fetched via loadSeriesList/loadSeriesDetails instead.
   }
 
   const content = source.kind === "m3u-file" ? source.content : await (await proxyFetch(source.url)).text();
-  return parseM3u(content).filter((c) => c.kind === kind);
+  const channels = parseM3u(content).filter((c) => c.kind === kind);
+  return categoryId ? channels.filter((c) => c.groupTitle === categoryId) : channels;
 }
 
-export async function loadSeriesList(source: PlaylistSource): ReturnType<XtreamClient["getSeriesList"]> {
+export async function loadSeriesList(source: PlaylistSource, categoryId?: string): ReturnType<XtreamClient["getSeriesList"]> {
   if (source.kind !== "xtream") return [];
   const client = new XtreamClient(source, proxyFetch);
   await client.authenticate();
-  return client.getSeriesList();
+  return catalogWorker.fetchCatalog({ credentials: source, action: "get_series", categoryId }) as ReturnType<XtreamClient["getSeriesList"]>;
 }
 
 /** Series categories for the browse grid's category filter — M3U sources have no separate category API, so this is Xtream-only like loadSeriesList. */

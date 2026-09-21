@@ -327,6 +327,7 @@ function PlaylistCard({
   const loadInfo = useCallback(() => loadPlaylistInfo(source), [source]);
   const { data: playlistInfo, isInitialLoading } = useCachedContent(
     `playlist-info:${source.id}:${refreshTick}`,
+    "playlist-info",
     loadInfo,
     EMPTY_PLAYLIST_INFO,
   );

@@ -7,6 +7,15 @@ export interface VideoSurfaceProps {
   onError?: (error: PlayerError) => void;
   /** Fires on every native timeupdate tick — opt-in, used by PlayerScreen to persist VOD/series resume position. LiveTvScreen leaves this unset. */
   onProgress?: (progress: PlaybackProgress) => void;
+  /**
+   * Hands the live engine instance to the caller once it's attached (and
+   * again with null on unmount) — opt-in, used by PlayerScreen to drive
+   * play/pause/seek/volume/track controls from its overlay without
+   * VideoSurface itself needing to know anything about that UI.
+   */
+  onEngineReady?: (engine: PlayerEngine | null) => void;
+  /** Mirrors the underlying <video> element's play/pause/ended state — opt-in, used by PlayerScreen's play/pause icon and next-episode auto-advance. */
+  onPlayStateChange?: (state: { isPlaying: boolean; didEnd: boolean }) => void;
 }
 
 /**
@@ -16,12 +25,23 @@ export interface VideoSurfaceProps {
  * hls.js-backed one, though webOS TV's own Chromium <video> + MSE is
  * expected to be sufficient without a native playback bridge.
  */
-export function VideoSurface({ streamUrl, engineFactory, onError, onProgress }: VideoSurfaceProps): JSX.Element {
+export function VideoSurface({
+  streamUrl,
+  engineFactory,
+  onError,
+  onProgress,
+  onEngineReady,
+  onPlayStateChange,
+}: VideoSurfaceProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
   const engineRef = useRef<PlayerEngine | null>(null);
   const [isBuffering, setIsBuffering] = useState(false);
   const onProgressRef = useRef(onProgress);
   onProgressRef.current = onProgress;
+  const onEngineReadyRef = useRef(onEngineReady);
+  onEngineReadyRef.current = onEngineReady;
+  const onPlayStateChangeRef = useRef(onPlayStateChange);
+  onPlayStateChangeRef.current = onPlayStateChange;
 
   useEffect(() => {
     const engine = (engineFactory ?? (() => new HlsPlayerEngine()))();
@@ -30,10 +50,23 @@ export function VideoSurface({ streamUrl, engineFactory, onError, onProgress }: 
 
     const unsubscribeError = engine.onError((error) => onError?.(error));
     const unsubscribeProgress = engine.onTimeUpdate((progress) => onProgressRef.current?.(progress));
+    onEngineReadyRef.current?.(engine);
+
+    const video = videoRef.current;
+    const handlePlay = () => onPlayStateChangeRef.current?.({ isPlaying: true, didEnd: false });
+    const handlePause = () => onPlayStateChangeRef.current?.({ isPlaying: false, didEnd: false });
+    const handleEnded = () => onPlayStateChangeRef.current?.({ isPlaying: false, didEnd: true });
+    video?.addEventListener("play", handlePlay);
+    video?.addEventListener("pause", handlePause);
+    video?.addEventListener("ended", handleEnded);
 
     return () => {
       unsubscribeError();
       unsubscribeProgress();
+      video?.removeEventListener("play", handlePlay);
+      video?.removeEventListener("pause", handlePause);
+      video?.removeEventListener("ended", handleEnded);
+      onEngineReadyRef.current?.(null);
       engine.destroy();
       engineRef.current = null;
     };

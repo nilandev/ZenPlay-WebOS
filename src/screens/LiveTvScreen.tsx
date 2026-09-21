@@ -18,7 +18,7 @@ const OVERLAY_DISMISS_MS = 30_000;
 
 export function LiveTvScreen({ source, platform, profile, onBack }: LiveTvScreenProps): JSX.Element {
   const load = useCallback(() => loadChannelsByKind(source, "live"), [source]);
-  const { data: channels, isInitialLoading, error: loadError } = useCachedContent(`live:${source.id}`, load, EMPTY_CHANNELS);
+  const { data: channels, isInitialLoading, error: loadError } = useCachedContent(`live:${source.id}`, "catalog", load, EMPTY_CHANNELS);
 
   // Bumped on every favourite toggle to force LiveOverlayGrid's heart badges
   // to re-render (toggleFavorite persists synchronously to localStorage but
@@ -78,7 +78,10 @@ export function LiveTvScreen({ source, platform, profile, onBack }: LiveTvScreen
     setIsOverlayVisible(false);
   }
 
-  if (loadError) {
+  // Only a hard error with nothing to show at all should block the screen —
+  // a failed background refresh with a good (possibly stale) channel list
+  // already cached should keep playing/browsing rather than discarding it.
+  if (loadError && isInitialLoading) {
     return <div role="alert">Failed to load channels: {loadError}</div>;
   }
 

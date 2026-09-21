@@ -4,6 +4,12 @@ export interface AudioTrackInfo {
   language?: string;
 }
 
+export interface SubtitleTrackInfo {
+  id: number;
+  label: string;
+  language?: string;
+}
+
 export interface PlayerStats {
   bitrateBps: number | null;
   droppedFrames: number;
@@ -40,6 +46,15 @@ export interface PlayerEngine {
 
   getAudioTracks(): AudioTrackInfo[];
   setAudioTrack(id: number): void;
+
+  /** Empty when the current stream carries no text tracks, or on a direct-play file whose container the browser doesn't expose sidecar tracks for. */
+  getSubtitleTracks(): SubtitleTrackInfo[];
+  /** null disables subtitles entirely. */
+  setSubtitleTrack(id: number | null): void;
+
+  /** 0–1. Independent of setMuted — a provider-remembered volume level survives an unmute. */
+  setVolume(volume: number): void;
+  setMuted(muted: boolean): void;
 
   getStats(): PlayerStats;
 

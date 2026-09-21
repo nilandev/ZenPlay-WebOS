@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PlaylistSource, Profile } from "@core";
+import type { Channel, PlaylistSource, Profile, SeriesEpisode } from "@core";
 import {
   addPlaylistSource,
   getActivePlaylistSourceId,
@@ -45,6 +45,19 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
+/**
+ * The episode that should play after `current`, in season/episode order —
+ * not necessarily adjacent in `allEpisodes` (SeriesScreen passes its raw,
+ * unsorted episode list). Returns null at the end of the series, which
+ * PlayerScreen treats as "no Next Episode control".
+ */
+function findNextEpisode(current: SeriesEpisode, allEpisodes: SeriesEpisode[]): SeriesEpisode | null {
+  const sorted = [...allEpisodes].sort((a, b) => a.season - b.season || a.episode - b.episode);
+  const index = sorted.findIndex((ep) => ep.id === current.id);
+  if (index === -1) return null;
+  return sorted[index + 1] ?? null;
+}
+
 export function App(): JSX.Element {
   const platform = useMemo(() => detectPlatform(), []);
   const [sources, setSources] = useState<PlaylistSource[]>(() => loadPlaylistSources());
@@ -57,6 +70,17 @@ export function App(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabId>("home");
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const [playbackIdentity, setPlaybackIdentity] = useState<PlaybackIdentity | undefined>(undefined);
+  const [playbackTitle, setPlaybackTitle] = useState<string | undefined>(undefined);
+  const [playbackSubtitle, setPlaybackSubtitle] = useState<string | undefined>(undefined);
+  // The episode after the one currently playing, computed when a series
+  // episode starts (see playEpisode) — null when there isn't one (last
+  // episode of the last season, or a movie), which is what tells
+  // PlayerScreen to hide the Next Episode control entirely.
+  const [nextEpisode, setNextEpisode] = useState<SeriesEpisode | null>(null);
+  // Kept alongside nextEpisode purely so onNextEpisode (below) can compute
+  // *its* next episode in turn without SeriesScreen re-supplying the list —
+  // playing through a series advances this same array each time.
+  const [seriesEpisodes, setSeriesEpisodes] = useState<SeriesEpisode[]>([]);
   // Set when navigating to Series from a favourited series (My Favourite),
   // so SeriesScreen opens straight into that series' episode list instead
   // of its shelf browser. Cleared once SeriesScreen mounts with it.
@@ -159,26 +183,46 @@ export function App(): JSX.Element {
   // so they can close over activeProfile once it's narrowed non-null by the
   // guard above; live TV/catch-up playback skips identity entirely since
   // Continue Watching doesn't apply to it.
-  const playMovie = (movie: { id: string; streamUrl: string }): void => {
+  const playMovie = (movie: Channel): void => {
     setPlaybackIdentity({ profileId: activeProfile.id, contentId: movie.id, contentKind: "movie" });
+    setPlaybackTitle(movie.name);
+    setPlaybackSubtitle(undefined);
+    setNextEpisode(null);
     setPlaybackUrl(movie.streamUrl);
   };
-  const playEpisode = (episode: { id: string; seriesId: string; streamUrl: string }): void => {
+  // allEpisodes is every episode of the series across all seasons (see
+  // SeriesScreen's onPlayEpisode) — used to find the episode immediately
+  // after this one for the player's Next Episode control, without this
+  // component needing its own copy of season/episode-ordering logic.
+  const playEpisode = (episode: SeriesEpisode, allEpisodes: SeriesEpisode[]): void => {
     setPlaybackIdentity({
       profileId: activeProfile.id,
       contentId: episode.seriesId,
       contentKind: "series-episode",
       episodeId: episode.id,
     });
+    setPlaybackTitle(episode.title);
+    setPlaybackSubtitle(`S${episode.season} E${episode.episode}`);
+    setNextEpisode(findNextEpisode(episode, allEpisodes));
+    setSeriesEpisodes(allEpisodes);
     setPlaybackUrl(episode.streamUrl);
   };
   const playWithoutIdentity = (streamUrl: string): void => {
     setPlaybackIdentity(undefined);
+    setPlaybackTitle(undefined);
+    setPlaybackSubtitle(undefined);
+    setNextEpisode(null);
     setPlaybackUrl(streamUrl);
+  };
+  const playNextEpisode = (): void => {
+    if (nextEpisode) playEpisode(nextEpisode, seriesEpisodes);
   };
   const closePlayback = (): void => {
     setPlaybackUrl(null);
     setPlaybackIdentity(undefined);
+    setPlaybackTitle(undefined);
+    setPlaybackSubtitle(undefined);
+    setNextEpisode(null);
     // Only bump when identity was set, i.e. this was resumable VOD/series
     // playback that may have just written a new Continue Watching entry —
     // no need to force a re-read after closing live TV/catch-up.
@@ -199,7 +243,15 @@ export function App(): JSX.Element {
           onOpenProfiles={() => setActiveProfile(null)}
         />
         {playbackUrl && (
-          <PlayerScreen streamUrl={playbackUrl} platform={platform} identity={playbackIdentity} onClose={closePlayback} />
+          <PlayerScreen
+            streamUrl={playbackUrl}
+            platform={platform}
+            identity={playbackIdentity}
+            onClose={closePlayback}
+            title={playbackTitle}
+            subtitle={playbackSubtitle}
+            onNextEpisode={nextEpisode ? playNextEpisode : undefined}
+          />
         )}
       </div>
     );
@@ -262,7 +314,15 @@ export function App(): JSX.Element {
       )}
 
       {playbackUrl && (
-        <PlayerScreen streamUrl={playbackUrl} platform={platform} identity={playbackIdentity} onClose={closePlayback} />
+        <PlayerScreen
+            streamUrl={playbackUrl}
+            platform={platform}
+            identity={playbackIdentity}
+            onClose={closePlayback}
+            title={playbackTitle}
+            subtitle={playbackSubtitle}
+            onNextEpisode={nextEpisode ? playNextEpisode : undefined}
+          />
       )}
     </div>
   );
