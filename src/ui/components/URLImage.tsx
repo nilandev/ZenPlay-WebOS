@@ -9,6 +9,14 @@ export interface URLImageProps {
   loading?: "lazy" | "eager";
   style?: React.CSSProperties;
   className?: string;
+  /**
+   * "cover" (default) fills the box and crops — right for poster/cover art
+   * where the aspect ratio is expected to vary and filling the tile matters
+   * more than showing every pixel. "contain" fits the whole image without
+   * cropping — use for channel logos, where clipping a broadcaster's mark
+   * (often off-center or non-square) reads as broken art.
+   */
+  objectFit?: "cover" | "contain";
 }
 
 /**
@@ -61,7 +69,7 @@ function pickVariant(seed: string): (typeof PLACEHOLDER_VARIANTS)[number] {
  * clearly per-card instead of looking like an instant swap when a fast or
  * cached response resolves within a frame or two of the others.
  */
-export function URLImage({ src, alt = "", seed, loading = "lazy", style, className }: URLImageProps): JSX.Element {
+export function URLImage({ src, alt = "", seed, loading = "lazy", style, className, objectFit = "cover" }: URLImageProps): JSX.Element {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(src ? "loading" : "error");
 
   useEffect(() => {
@@ -104,7 +112,7 @@ export function URLImage({ src, alt = "", seed, loading = "lazy", style, classNa
             inset: 0,
             width: "100%",
             height: "100%",
-            objectFit: "cover",
+            objectFit,
             display: "block",
             opacity: isLoaded ? 1 : 0,
             transform: isLoaded ? "scale(1)" : "scale(1.03)",

@@ -1,7 +1,9 @@
+import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { Focusable } from "../focus/Focusable.js";
 import { buildListFocusGraph } from "../focus/build-grid-graph.js";
 import { useFocusStore } from "../focus/focus-store.js";
+import { MarqueeText } from "./MarqueeText.js";
 
 export interface CategorySidebarItem {
   id: string;
@@ -16,6 +18,8 @@ export interface CategorySidebarProps {
   width?: number;
   /** Focus id to jump to when the user presses right from any sidebar item — typically the content area's first focusable node. */
   contentEntryId?: string;
+  /** Optional non-focusable header rendered above the category list, e.g. a screen's branding/logo (see LiveTvScreen). */
+  header?: ReactNode;
 }
 
 const SCOPE = "chrome:category-sidebar";
@@ -26,7 +30,7 @@ const SCOPE = "chrome:category-sidebar";
  * next to whatever the main content area (channel/programme grid) puts in
  * the "content" scope — see focus-store.ts for how scopes compose.
  */
-export function CategorySidebar({ items, activeId, onSelect, width = 200, contentEntryId }: CategorySidebarProps): JSX.Element {
+export function CategorySidebar({ items, activeId, onSelect, width = 280, contentEntryId, header }: CategorySidebarProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focusedId = useFocusStore((state) => state.focusedId);
@@ -54,11 +58,12 @@ export function CategorySidebar({ items, activeId, onSelect, width = 200, conten
         padding: "12px 8px",
       }}
     >
+      {header && <div style={{ padding: "8px 8px 16px" }}>{header}</div>}
       {items.map((item) => {
         const isFocused = focusedId === item.id;
         const isActive = activeId === item.id;
         return (
-          <Focusable key={item.id} id={item.id}>
+          <Focusable key={item.id} id={item.id} style={{ height: "auto" }}>
             <button
               type="button"
               onClick={() => onSelect(item.id)}
@@ -68,21 +73,21 @@ export function CategorySidebar({ items, activeId, onSelect, width = 200, conten
                 alignItems: "center",
                 width: "100%",
                 textAlign: "left",
-                padding: "10px 12px",
-                marginBottom: 4,
+                padding: "14px 16px",
+                marginBottom: 6,
                 borderRadius: 8,
                 border: "none",
                 background: isFocused ? "var(--accent, #38bdf8)" : isActive ? "var(--surface-raised, #24242c)" : "transparent",
                 color: isFocused ? "#062028" : isActive ? "var(--text, #f4f4f6)" : "var(--text-dim, #9a9aa4)",
                 fontWeight: isActive || isFocused ? 700 : 500,
-                fontSize: 14,
+                fontSize: 18,
                 transform: isFocused ? "scale(1.03)" : "scale(1)",
                 transition: "transform 120ms ease-out, background 120ms ease-out",
               }}
             >
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
+              <MarqueeText text={item.label} active={isFocused} style={{ minWidth: 0, flex: 1 }} />
               {item.count !== undefined && (
-                <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 8 }}>{item.count}</span>
+                <span style={{ fontSize: 14, opacity: 0.7, marginLeft: 8, flexShrink: 0 }}>{item.count}</span>
               )}
             </button>
           </Focusable>

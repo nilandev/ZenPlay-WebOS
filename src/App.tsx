@@ -77,6 +77,9 @@ export function App(): JSX.Element {
   // episode of the last season, or a movie), which is what tells
   // PlayerScreen to hide the Next Episode control entirely.
   const [nextEpisode, setNextEpisode] = useState<SeriesEpisode | null>(null);
+  // Live TV/catch-up-at-live-edge playback shows a "LIVE" badge and hides
+  // the seek bar in PlayerScreen — see PlaybackControls' isLive prop.
+  const [isPlaybackLive, setIsPlaybackLive] = useState(false);
   // Kept alongside nextEpisode purely so onNextEpisode (below) can compute
   // *its* next episode in turn without SeriesScreen re-supplying the list —
   // playing through a series advances this same array each time.
@@ -188,6 +191,7 @@ export function App(): JSX.Element {
     setPlaybackTitle(movie.name);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
+    setIsPlaybackLive(false);
     setPlaybackUrl(movie.streamUrl);
   };
   // allEpisodes is every episode of the series across all seasons (see
@@ -205,6 +209,7 @@ export function App(): JSX.Element {
     setPlaybackSubtitle(`S${episode.season} E${episode.episode}`);
     setNextEpisode(findNextEpisode(episode, allEpisodes));
     setSeriesEpisodes(allEpisodes);
+    setIsPlaybackLive(false);
     setPlaybackUrl(episode.streamUrl);
   };
   const playWithoutIdentity = (streamUrl: string): void => {
@@ -212,7 +217,16 @@ export function App(): JSX.Element {
     setPlaybackTitle(undefined);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
+    setIsPlaybackLive(false);
     setPlaybackUrl(streamUrl);
+  };
+  const playLive = (channel: Channel): void => {
+    setPlaybackIdentity(undefined);
+    setPlaybackTitle(channel.name);
+    setPlaybackSubtitle(undefined);
+    setNextEpisode(null);
+    setIsPlaybackLive(true);
+    setPlaybackUrl(channel.streamUrl);
   };
   const playNextEpisode = (): void => {
     if (nextEpisode) playEpisode(nextEpisode, seriesEpisodes);
@@ -223,6 +237,7 @@ export function App(): JSX.Element {
     setPlaybackTitle(undefined);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
+    setIsPlaybackLive(false);
     // Only bump when identity was set, i.e. this was resumable VOD/series
     // playback that may have just written a new Continue Watching entry —
     // no need to force a re-read after closing live TV/catch-up.
@@ -251,6 +266,7 @@ export function App(): JSX.Element {
             title={playbackTitle}
             subtitle={playbackSubtitle}
             onNextEpisode={nextEpisode ? playNextEpisode : undefined}
+            isLive={isPlaybackLive}
           />
         )}
       </div>
@@ -264,7 +280,9 @@ export function App(): JSX.Element {
 
   return (
     <div style={{ minHeight: "100vh" }}>
-      {activeTab === "live" && <LiveTvScreen source={activeSource} platform={platform} profile={activeProfile} onBack={goHome} />}
+      {activeTab === "live" && (
+        <LiveTvScreen source={activeSource} platform={platform} profile={activeProfile} onBack={goHome} onPlay={playLive} />
+      )}
       {activeTab === "guide" && (
         <GuideScreen source={activeSource} platform={platform} onPlay={playWithoutIdentity} onBack={goHome} />
       )}
@@ -289,7 +307,7 @@ export function App(): JSX.Element {
           profileId={activeProfile.id}
           platform={platform}
           onBack={goHome}
-          onPlayChannel={(channel) => playWithoutIdentity(channel.streamUrl)}
+          onPlayChannel={playLive}
           onPlayMovie={playMovie}
           onOpenSeries={(seriesId) => {
             setPendingSeriesId(seriesId);
@@ -322,6 +340,7 @@ export function App(): JSX.Element {
             title={playbackTitle}
             subtitle={playbackSubtitle}
             onNextEpisode={nextEpisode ? playNextEpisode : undefined}
+            isLive={isPlaybackLive}
           />
       )}
     </div>

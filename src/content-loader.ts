@@ -96,6 +96,14 @@ export async function loadVodCategories(source: PlaylistSource): Promise<Categor
   return client.getVodCategories();
 }
 
+/** Live categories for the Live TV screen's category sidebar — M3U sources have no separate category API, so callers group client-side by Channel.groupTitle instead (see GuideScreen's groupChannelsByCategory). */
+export async function loadLiveCategories(source: PlaylistSource): Promise<Category[]> {
+  if (source.kind !== "xtream") return [];
+  const client = new XtreamClient(source, proxyFetch);
+  await client.authenticate();
+  return client.getLiveCategories();
+}
+
 export interface SeriesDetailsResult {
   details: SeriesDetails;
   episodes: SeriesEpisode[];

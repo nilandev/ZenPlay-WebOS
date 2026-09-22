@@ -101,10 +101,22 @@ export function VideoSurface({
   }, [streamUrl, onError]);
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", background: "#000" }}>
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <video ref={videoRef} style={{ width: "100%", height: "100%" }} playsInline autoPlay />
       {isBuffering && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(0,0,0,0.35)",
+            color: "rgba(255,255,255,0.85)",
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+        >
           Buffering…
         </div>
       )}

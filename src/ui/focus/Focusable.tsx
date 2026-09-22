@@ -6,6 +6,14 @@ export interface FocusableProps {
   children: ReactNode;
   className?: string;
   focusedClassName?: string;
+  /**
+   * Overrides the default `width: 100%; height: 100%` sizing — pass `{ height: "auto" }`
+   * (or similar) for a plain vertical list row whose height should come from its own
+   * content/padding instead of stretching to fill a definite-height scroll container
+   * (e.g. CategorySidebar/ChannelSidebar). Leave unset for grid/shelf cells that rely on
+   * the 100%-height default to fill a pre-sized cell — see the class doc comment below.
+   */
+  style?: React.CSSProperties;
 }
 
 /**
@@ -14,7 +22,7 @@ export interface FocusableProps {
  * it becomes focused so keyboard/remote navigation through long lists works
  * without relying on browser auto-scroll behavior (unreliable on older webOS TV WebKit).
  */
-export function Focusable({ id, children, className, focusedClassName }: FocusableProps): JSX.Element {
+export function Focusable({ id, children, className, focusedClassName, style }: FocusableProps): JSX.Element {
   const isFocused = useFocusStore((state) => state.focusedId === id);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -38,7 +46,7 @@ export function Focusable({ id, children, className, focusedClassName }: Focusab
       // resolve against this div's default auto height. Not display:
       // contents, since that has historically been unreliable for
       // scrollIntoView/focus on older webOS TV WebKit.
-      style={{ width: "100%", height: "100%" }}
+      style={{ width: "100%", height: "100%", ...style }}
     >
       {children}
     </div>

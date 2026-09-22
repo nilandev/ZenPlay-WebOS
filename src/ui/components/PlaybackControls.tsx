@@ -42,6 +42,8 @@ export interface PlaybackControlsProps {
   /** null means "off". */
   activeSubtitleTrackId: number | null;
   hasNextEpisode: boolean;
+  /** Live TV/catch-up-at-live-edge: hides the scrubbable seek bar/time and left/right seeking, showing a "LIVE" badge next to Play/Pause instead. */
+  isLive?: boolean;
   onBack: () => void;
   onTogglePlayPause: () => void;
   onSeekBy: (deltaSeconds: number) => void;
@@ -90,6 +92,7 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
     subtitleTracks,
     activeSubtitleTrackId,
     hasNextEpisode,
+    isLive = false,
     onBack,
     onTogglePlayPause,
     onSeekBy,
@@ -125,7 +128,8 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
   }, [isNextEpisodeDue]);
 
   useEffect(() => {
-    const nodes = buildShelfFocusGraph([[BACK_ID], [SEEK_ROW_ID], buttonRow]);
+    const rows = isLive ? [[BACK_ID], buttonRow] : [[BACK_ID], [SEEK_ROW_ID], buttonRow];
+    const nodes = buildShelfFocusGraph(rows);
     const withSelect = nodes.map((node) => ({
       ...node,
       onSelect: () => {
@@ -154,7 +158,7 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
     // each render from PlayerScreen's own state; re-registering the graph
     // every render is cheap (a handful of nodes) and keeps handlers current.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buttonRow, setGraph, clearGraph]);
+  }, [buttonRow, isLive, setGraph, clearGraph]);
 
   // Left/right always nudges playback position by SEEK_STEP_SECONDS,
   // regardless of which control has focus — this is what makes rewind/
@@ -165,7 +169,7 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
   // and while Next Episode is focused (so left/right there behaves like
   // any other single-item row instead of double-booking the same keys).
   useEffect(() => {
-    if (isMenuOpen || focusedId === NEXT_EPISODE_ID) return;
+    if (isLive || isMenuOpen || focusedId === NEXT_EPISODE_ID) return;
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key === "ArrowLeft") {
         event.preventDefault();
@@ -179,7 +183,7 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
     }
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [isMenuOpen, focusedId, onSeekBy, onActivity]);
+  }, [isLive, isMenuOpen, focusedId, onSeekBy, onActivity]);
 
   const progressRatio = durationSeconds > 0 ? Math.min(1, Math.max(0, positionSeconds / durationSeconds)) : 0;
 
@@ -202,24 +206,33 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
             {isPlaying ? <Pause size={26} fill="currentColor" /> : <Play size={26} fill="currentColor" />}
           </IconButton>
 
-          <span style={{ fontSize: 15, color: "var(--text-dim)", minWidth: 44, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-            {formatTime(positionSeconds)}
-          </span>
+          {isLive ? (
+            <>
+              <LiveBadge />
+              <div style={{ flex: 1 }} />
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: 15, color: "var(--text-dim)", minWidth: 44, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {formatTime(positionSeconds)}
+              </span>
 
-          <div style={{ flex: 1 }}>
-            <SeekBar
-              isFocused={focusedId === SEEK_ROW_ID}
-              progressRatio={progressRatio}
-              onScrub={(ratio) => {
-                onActivity();
-                onSeekTo(ratio * durationSeconds);
-              }}
-            />
-          </div>
+              <div style={{ flex: 1 }}>
+                <SeekBar
+                  isFocused={focusedId === SEEK_ROW_ID}
+                  progressRatio={progressRatio}
+                  onScrub={(ratio) => {
+                    onActivity();
+                    onSeekTo(ratio * durationSeconds);
+                  }}
+                />
+              </div>
 
-          <span style={{ fontSize: 15, color: "var(--text-dim)", minWidth: 44, fontVariantNumeric: "tabular-nums" }}>
-            {Number.isFinite(remainingSeconds) ? `-${formatTime(Math.max(0, remainingSeconds))}` : formatTime(durationSeconds)}
-          </span>
+              <span style={{ fontSize: 15, color: "var(--text-dim)", minWidth: 44, fontVariantNumeric: "tabular-nums" }}>
+                {Number.isFinite(remainingSeconds) ? `-${formatTime(Math.max(0, remainingSeconds))}` : formatTime(durationSeconds)}
+              </span>
+            </>
+          )}
 
           <IconButton
             id={AUDIO_SUBTITLES_ID}
@@ -425,6 +438,41 @@ function SeekBar({
           transition: "width 120ms ease-out, height 120ms ease-out",
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * Tag-style "LIVE" indicator shown next to Play/Pause in place of the seek
+ * bar for live streams — a red badge with a glowing dot, distinct from
+ * FavoriteHeart's icon-only pill (this one carries text, since "LIVE" itself
+ * is the signal, not an icon standing in for it).
+ */
+function LiveBadge(): JSX.Element {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 16px",
+        borderRadius: 999,
+        background: "rgba(220,38,38,0.18)",
+        border: "1px solid rgba(248,113,113,0.5)",
+        flexShrink: 0,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: "#f87171",
+          boxShadow: "0 0 8px 2px rgba(248,113,113,0.8)",
+        }}
+      />
+      <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.06em", color: "#f87171" }}>LIVE</span>
     </div>
   );
 }

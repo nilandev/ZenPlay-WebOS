@@ -25,6 +25,8 @@ export interface PlayerScreenProps {
   subtitle?: string;
   /** Present only for series playback with another episode after this one — renders the Next Episode control and drives auto-advance on end-of-stream. */
   onNextEpisode?: () => void;
+  /** Live TV playback: hides the scrubbable seek bar and shows a "LIVE" badge instead — see PlaybackControls' isLive prop. */
+  isLive?: boolean;
 }
 
 /** How often a timeupdate tick is allowed to write to localStorage — timeupdate fires several times a second, far more often than resume position needs to be durable. */
@@ -42,7 +44,7 @@ const AUTO_HIDE_MS = 5000;
  * device's own hardware volume, not an app-level one (see
  * PlaybackControls.tsx's doc comment).
  */
-export function PlayerScreen({ streamUrl, platform, onClose, identity, title, subtitle, onNextEpisode }: PlayerScreenProps): JSX.Element {
+export function PlayerScreen({ streamUrl, platform, onClose, identity, title, subtitle, onNextEpisode, isLive }: PlayerScreenProps): JSX.Element {
   const lastWriteRef = useRef(0);
   const engineRef = useRef<PlayerEngine | null>(null);
 
@@ -189,6 +191,7 @@ export function PlayerScreen({ streamUrl, platform, onClose, identity, title, su
         <PlaybackControls
           title={title ?? ""}
           subtitle={subtitle}
+          isLive={isLive}
           isPlaying={isPlaying}
           positionSeconds={positionSeconds}
           durationSeconds={Number.isFinite(durationSeconds) ? durationSeconds : 0}
