@@ -1,7 +1,7 @@
 import type { PlaylistSource } from "@core";
 import { bumpCacheVersion } from "./cache-invalidation-store.js";
 import { type CacheKind, isCacheStale, setCachedContent } from "./content-cache.js";
-import { loadChannelsByKind, loadPlaylistInfo, loadSeriesCategories, loadSeriesList, loadVodCategories, loadEpg } from "./content-loader.js";
+import { loadChannelsByKind, loadPlaylistInfo, loadSeriesCategories, loadVodCategories, loadEpg } from "./content-loader.js";
 
 export interface RevalidationTarget {
   key: string;
@@ -16,12 +16,21 @@ export interface RevalidationTarget {
  * startBackgroundRevalidation, HomeScreen's handleRefresh, and
  * idle-prefetch.ts) so all three agree on exactly what "this source's
  * content" means instead of drifting into three separate lists.
+ *
+ * Deliberately excludes the full VOD/series catalogs (`vod:${source.id}` /
+ * `series-list:${source.id}`) — those are now kept fresh by
+ * catalog-sync.ts's own once-a-day background sync into the local
+ * IndexedDB table (see HomeScreen's startCatalogBackgroundSync effect),
+ * which VodScreen/SeriesScreen read from directly once synced, rather than
+ * this hours-scale blob-cache revalidator re-fetching the entire (possibly
+ * 100k+ record) catalog on every tick. A source that hasn't completed its
+ * first catalog sync yet still gets its full catalog via
+ * content-loader.ts's direct fetch path — see those screens' fallback
+ * logic — so nothing here is needed to keep that path populated either.
  */
 export function buildRevalidationTargets(source: PlaylistSource): RevalidationTarget[] {
   return [
     { key: `live:${source.id}`, kind: "catalog", load: () => loadChannelsByKind(source, "live") },
-    { key: `vod:${source.id}`, kind: "catalog", load: () => loadChannelsByKind(source, "movie") },
-    { key: `series-list:${source.id}`, kind: "catalog", load: () => loadSeriesList(source) },
     { key: `vod-categories:${source.id}`, kind: "category", load: () => loadVodCategories(source) },
     { key: `series-categories:${source.id}`, kind: "category", load: () => loadSeriesCategories(source) },
     { key: `guide-epg:${source.id}`, kind: "epg", load: () => loadEpg(source) },

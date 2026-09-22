@@ -15,6 +15,8 @@ import type { Channel, PlatformId, PlaylistSource, Profile, SeriesInfo } from "@
 import { Clock, Focusable, MeshBackground, ProfileSwitcher, PROFILE_SWITCHER_FOCUS_ID, useFocusStore, useRemoteInput } from "@ui";
 import type { FocusNode } from "@ui";
 import { buildRevalidationTargets, revalidateStaleTargets, startBackgroundRevalidation } from "../cache-revalidator.js";
+import { startCatalogBackgroundSync } from "../catalog-sync.js";
+import { getCatalogPage } from "../catalog-store.js";
 import { getCachedContent } from "../content-cache.js";
 import { loadPlaylistInfo } from "../content-loader.js";
 import { schedulePrefetch } from "../idle-prefetch.js";
@@ -173,6 +175,16 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
     return schedulePrefetch(buildRevalidationTargets(source));
   }, [source]);
 
+  // Keeps the local VOD/series catalog tables (see catalog-sync.ts) synced
+  // once/day in the background — same source-keyed restart-on-tab-switch
+  // behavior as startBackgroundRevalidation above, just on catalog-sync.ts's
+  // own once-a-day cadence rather than content-cache.ts's hours-scale one.
+  // This is what lets VodScreen/SeriesScreen serve a paginated local table
+  // instead of ever re-fetching the full catalog on screen mount.
+  useEffect(() => {
+    return startCatalogBackgroundSync(() => source);
+  }, [source]);
+
   useRemoteInput(platform, {
     onSelect: (focusedId) => {
       if (!focusedId || focusedId === PROFILE_SWITCHER_FOCUS_ID) return;
@@ -187,39 +199,62 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
   const loadInfo = useCallback(() => loadPlaylistInfo(source), [source]);
   const { data: playlistInfo } = useCachedContent(`playlist-info:${source.id}`, "playlist-info", loadInfo, EMPTY_PLAYLIST_INFO);
 
-  // Tile collages are read passively from whatever LiveTvScreen/VodScreen/
-  // SeriesScreen have already cached (see content-cache.ts) — Home never
-  // triggers its own live/movies/series fetch for this. It used to, via
-  // useCachedContent, purely to get 6 thumbnail URLs per tile; VOD catalogs
-  // in particular can be tens of thousands of entries, so fetching the
-  // entire thing just for a handful of collage images made Home's mount
-  // (and by extension every subsequent tab it's cached-shared with, since
-  // they raced the same request) noticeably slower for no visible benefit
-  // — HeroTileCard's own doc comment already treats the collage as optional
-  // texture, not something the card depends on. A plain, one-time
-  // getCachedContent read is enough here: Home fully unmounts/remounts on
-  // every tab switch (see App.tsx), so a fresh mount always re-reads
-  // whatever's cached by then rather than needing to react to a fetch that
-  // finishes while already mounted.
+  // Tile collages are read passively from whatever LiveTvScreen has already
+  // cached (see content-cache.ts) for live, and from the local catalog
+  // table (see catalog-store.ts) for movies/series — Home never triggers
+  // its own live/movies/series fetch for this. Movies/series used to read
+  // content-cache.ts's own full-array blob the same way live still does,
+  // but that key is no longer kept warm by cache-revalidator.ts once a
+  // source has a synced local table (see buildRevalidationTargets' doc
+  // comment) — reading a small page from the local table instead is both
+  // cheaper and the only source of truth once synced. A brand-new,
+  // not-yet-synced source falls back to whatever content-cache.ts still
+  // holds from VodScreen/SeriesScreen's own legacy fetch, same as before.
   const collageByTile = useMemo(() => {
     const liveChannels = getCachedContent<Channel[]>(`live:${source.id}`) ?? EMPTY_CHANNELS;
-    const movies = getCachedContent<Channel[]>(`vod:${source.id}`) ?? EMPTY_CHANNELS;
-    const series = getCachedContent<SeriesInfo[]>(`series-list:${source.id}`) ?? EMPTY_SERIES;
+    const legacyMovies = getCachedContent<Channel[]>(`vod:${source.id}`) ?? EMPTY_CHANNELS;
+    const legacySeries = getCachedContent<SeriesInfo[]>(`series-list:${source.id}`) ?? EMPTY_SERIES;
     return {
       live: liveChannels
         .map((c) => c.logoUrl)
         .filter((url): url is string => Boolean(url))
         .slice(0, 6),
-      movies: movies
+      movies: legacyMovies
         .map((c) => c.logoUrl)
         .filter((url): url is string => Boolean(url))
         .slice(0, 6),
-      series: series
+      series: legacySeries
         .map((s) => s.posterUrl)
         .filter((url): url is string => Boolean(url))
         .slice(0, 6),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source.id]);
+
+  // Fills in the movies/series collage from the local catalog table once a
+  // source has synced (see catalog-sync.ts) — an async IndexedDB read, so
+  // this can't be the synchronous useMemo above, and only overrides the
+  // legacy blob-cache collage when it actually found something (never
+  // clobbers a perfectly good collage with an empty one while this is still
+  // in flight, or for a source that just hasn't synced yet).
+  const [localCollage, setLocalCollage] = useState<{ movies: string[]; series: string[] }>({ movies: [], series: [] });
+  useEffect(() => {
+    let cancelled = false;
+    setLocalCollage({ movies: [], series: [] });
+    Promise.all([getCatalogPage(source.id, "vod", { offset: 0, limit: 6 }), getCatalogPage(source.id, "series", { offset: 0, limit: 6 })])
+      .then(([movies, series]) => {
+        if (cancelled) return;
+        setLocalCollage({
+          movies: movies.map((c) => c.logoUrl).filter((url): url is string => Boolean(url)),
+          series: series.map((s) => s.posterUrl).filter((url): url is string => Boolean(url)),
+        });
+      })
+      .catch(() => {
+        // IndexedDB unavailable, or nothing synced yet — the legacy blob-cache collage above is enough.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [source.id]);
 
   return (
@@ -304,7 +339,11 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
                   key={tile.id}
                   tile={tile}
                   collageImages={
-                    collageByTile[tile.id as keyof typeof collageByTile]
+                    (tile.id === "movies" && localCollage.movies.length > 0
+                      ? localCollage.movies
+                      : tile.id === "series" && localCollage.series.length > 0
+                        ? localCollage.series
+                        : undefined) ?? collageByTile[tile.id as keyof typeof collageByTile]
                   }
                   onSelect={() => onSelectTile(tile.id)}
                 />

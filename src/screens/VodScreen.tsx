@@ -18,6 +18,10 @@ import {
 import { loadChannelsByKind, loadVodCategories } from "../content-loader.js";
 import { toggleFavorite, isFavorite as checkIsFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
+import { useVodCatalogPage } from "../use-catalog-page.js";
+import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
+import { useCatalogShelves } from "../use-catalog-shelves.js";
+import { getCatalogPage } from "../catalog-store.js";
 
 export interface VodScreenProps {
   source: PlaylistSource;
@@ -83,6 +87,21 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const isAllCategories = activeCategoryId === ALL_CATEGORIES_ID;
 
+  // Once catalog-sync.ts has completed at least one background sync for this
+  // source, every read below comes from the local paginated table
+  // (use-catalog-page.ts/use-catalog-shelves.ts) instead of a live
+  // player_api.php fetch — see those hooks' doc comments. A brand-new source
+  // that's never synced yet ("not-synced") falls back to the pre-existing
+  // full-catalog fetch path (the useCachedContent calls further down) so it
+  // isn't blocked on a first sync it hasn't had time to run. While the
+  // check itself is still in flight ("checking"), *neither* path fetches —
+  // see use-local-catalog-ready.ts's doc comment for why a plain
+  // defaults-to-false boolean would wrongly fire the legacy fetch on every
+  // mount, even for a source that turns out to already be synced.
+  const localCatalogStatus = useLocalCatalogReady(source.id, "vod");
+  const isLocalCatalogReady = localCatalogStatus === "ready";
+  const isCheckingLocalCatalog = localCatalogStatus === "checking";
+
   // The "All Categories" shelf browser and search both need the whole
   // catalog (building N shelves, or searching across everything, both need
   // every movie in hand) — but a single selected category doesn't, so this
@@ -90,34 +109,47 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   // in progress, which is exactly when the category-scoped fetch below runs
   // instead. This is what makes browsing straight into one category, on a
   // catalog nobody has ever fully loaded this session, avoid a full-catalog
-  // fetch entirely.
-  const needsFullCatalog = isAllCategories || trimmedQuery.length > 0;
+  // fetch entirely. Only relevant to the legacy fallback path — the local
+  // table never needs to hold the full catalog in memory at all.
+  const needsFullCatalog = localCatalogStatus === "not-synced" && (isAllCategories || trimmedQuery.length > 0);
   const load = useCallback(() => loadChannelsByKind(source, "movie"), [source]);
   const {
-    data: movies,
-    isInitialLoading: isMoviesLoading,
+    data: legacyMovies,
+    isInitialLoading: isLegacyMoviesLoading,
     error,
     isStale,
   } = useCachedContent(`vod:${source.id}`, "catalog", load, EMPTY_MOVIES, { enabled: needsFullCatalog });
 
-  // Powers the single-category grid: fetched straight from the provider's
-  // server-side category filter (see content-loader.ts's categoryId
-  // passthrough) rather than derived by filtering the full catalog, so
-  // selecting one category never depends on the full catalog having been
-  // fetched at all.
+  // Powers the single-category grid on the legacy fallback path: fetched
+  // straight from the provider's server-side category filter (see
+  // content-loader.ts's categoryId passthrough) rather than derived by
+  // filtering the full catalog, so selecting one category never depends on
+  // the full catalog having been fetched at all.
   const loadCategoryMovies = useCallback(
     () => loadChannelsByKind(source, "movie", isAllCategories ? undefined : activeCategoryId),
     [source, isAllCategories, activeCategoryId],
   );
-  const { data: categoryMovies, isInitialLoading: isCategoryLoading } = useCachedContent(
+  const { data: legacyCategoryMovies, isInitialLoading: isLegacyCategoryLoading } = useCachedContent(
     isAllCategories ? "vod:none" : `vod:${source.id}:cat:${activeCategoryId}`,
     "catalog",
     loadCategoryMovies,
     EMPTY_MOVIES,
-    { enabled: !isAllCategories },
+    { enabled: localCatalogStatus === "not-synced" && !isAllCategories },
   );
 
-  const isInitialLoading = isAllCategories ? isMoviesLoading : isCategoryLoading;
+  // Local-table path: paginated grid/search reads, grown on demand (see
+  // use-catalog-page.ts) — this is what lets the grid render 100k+ catalogs
+  // without ever holding them all in memory.
+  const {
+    items: localGridMovies,
+    isInitialLoading: isLocalGridLoading,
+    hasMore: localGridHasMore,
+    loadMore: loadMoreLocalGrid,
+  } = useVodCatalogPage(source.id, {
+    categoryId: isAllCategories ? undefined : activeCategoryId,
+    namePrefix: trimmedQuery || undefined,
+    enabled: isLocalCatalogReady && (!isAllCategories || trimmedQuery.length > 0),
+  });
 
   const gridColumns = useMemo(() => computeGridColumns(), []);
 
@@ -131,18 +163,38 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   const [favoritesVersion, setFavoritesVersion] = useState(0);
 
   const categoryNameById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
-  // Shelves only ever need the full catalog (there's no per-shelf lazy
-  // fetch — see needsFullCatalog above), so this naturally reads [] while a
-  // single category is selected, which is fine since shelves aren't
-  // rendered in that mode anyway (see gridMovies/the render branch below).
-  const shelves = useMemo(() => groupByCategory(movies, categoryNameById), [movies, categoryNameById]);
 
+  // "All Categories" shelf browser, local-table path: one bounded query per
+  // category (see use-catalog-shelves.ts) instead of loading the whole
+  // catalog and grouping it client-side.
+  const mapShelfPage = useCallback((categoryId: string, limit: number) => getCatalogPage(source.id, "vod", { categoryId, offset: 0, limit }), [source.id]);
+  const { shelves: localShelves, isLoading: isLocalShelvesLoading } = useCatalogShelves(
+    source.id,
+    "vod",
+    categories,
+    mapShelfPage,
+    isLocalCatalogReady && isAllCategories && !trimmedQuery,
+  );
+
+  // Legacy fallback path's shelves — only ever needs the full catalog (there's
+  // no per-shelf lazy fetch), so this naturally reads [] while a single
+  // category is selected, which is fine since shelves aren't rendered in
+  // that mode anyway (see gridMovies/the render branch below).
+  const legacyShelves = useMemo(() => groupByCategory(legacyMovies, categoryNameById), [legacyMovies, categoryNameById]);
+  const shelves = isLocalCatalogReady ? localShelves : legacyShelves;
+
+  // "All Categories" row's count is only meaningful on the legacy fallback
+  // path (the full array is in hand there); the local-table path shows no
+  // count for it rather than paying for a full-table count query just for
+  // this label — categories' own per-category counts were never shown
+  // either (count: undefined below), so this isn't a regression in what's
+  // actually rendered (see CategoryDropdown's item type).
   const categoryItems = useMemo(
     () => [
-      { id: ALL_CATEGORIES_ID, label: "All Categories", count: movies.length },
+      { id: ALL_CATEGORIES_ID, label: "All Categories", count: isLocalCatalogReady ? undefined : legacyMovies.length },
       ...categories.map((c) => ({ id: c.id, label: c.name, count: undefined as number | undefined })),
     ],
-    [movies.length, categories],
+    [isLocalCatalogReady, legacyMovies.length, categories],
   );
   const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "All Categories";
 
@@ -150,12 +202,43 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   // replaces the shelf browser with a single flat, vertically-scrolling
   // grid — same behavior as SeriesScreen's browse page. Search takes
   // priority over the category filter when both are active, searching
-  // within the selected category rather than across all movies.
-  const gridMovies = useMemo(() => {
-    const withinCategory = isAllCategories ? movies : categoryMovies;
+  // within the selected category rather than across all movies. On the
+  // legacy fallback path this filters an already-fetched array in memory;
+  // on the local-table path (localGridMovies) the filtering already
+  // happened inside useVodCatalogPage's IndexedDB query, so this is just
+  // picking which source to read.
+  const legacyGridMovies = useMemo(() => {
+    const withinCategory = isAllCategories ? legacyMovies : legacyCategoryMovies;
     if (trimmedQuery) return withinCategory.filter((item) => item.name.toLowerCase().includes(trimmedQuery));
     return isAllCategories ? null : withinCategory;
-  }, [isAllCategories, categoryMovies, movies, trimmedQuery]);
+  }, [isAllCategories, legacyCategoryMovies, legacyMovies, trimmedQuery]);
+  const gridMovies = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridMovies) : legacyGridMovies;
+
+  const isInitialLoading = isCheckingLocalCatalog
+    ? true
+    : isLocalCatalogReady
+      ? isAllCategories && !trimmedQuery
+        ? isLocalShelvesLoading
+        : isLocalGridLoading
+      : isAllCategories
+        ? isLegacyMoviesLoading
+        : isLegacyCategoryLoading;
+
+  // isInitialLoading briefly flips true again on the local-table path every
+  // time the query changes (each keystroke while searching, or picking a
+  // new category) — useVodCatalogPage's own isInitialLoading resets for
+  // each new filter, unlike the legacy path where search/category
+  // switching only ever re-filters an already-fetched in-memory array.
+  // Gating the *entire* screen (including the search input the user is
+  // mid-keystroke in, and the category dropdown) on that would unmount and
+  // reset them on every character typed — hasEverShownContent latches once
+  // the shell has rendered at least once, so only the true first paint
+  // (nothing to show at all yet) blocks on the full-screen skeleton; a
+  // requery after that renders the existing shell with an in-place grid
+  // loading state instead (see the grid's own isInitialLoading check below).
+  const hasEverShownContentRef = useRef(false);
+  if (!isInitialLoading) hasEverShownContentRef.current = true;
+  const showFullScreenSkeleton = isInitialLoading && !hasEverShownContentRef.current;
 
   // Search input's proxy focus node — see VodSearchInput's doc comment for
   // why a native <input> needs a Focusable stand-in rather than being a
@@ -202,11 +285,25 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   // once — resolve back to the raw movie id here before lookups.
   const resolveMovieIdFromFocusId = useCallback((id: string) => (id.startsWith("vod-grid:") ? id.slice("vod-grid:".length) : id), []);
 
+  // Grows the local-table grid as focus approaches its current end, rather
+  // than requiring an explicit "Load more" button — the last full row (or
+  // fewer, on a short final page) is treated as the trigger zone. This is
+  // what keeps a paginated grid compatible with spatial navigation's need
+  // for a concrete, finite id list (see use-catalog-page.ts's doc comment):
+  // the graph only ever holds what's actually loaded, and grows a page at a
+  // time just ahead of where the user is browsing.
+  useEffect(() => {
+    if (!gridMovies || !localGridHasMore || !focusedId) return;
+    const index = gridMovies.findIndex((item) => gridItemId(item.id) === focusedId);
+    if (index === -1) return;
+    if (index >= gridMovies.length - gridColumns) loadMoreLocalGrid();
+  }, [focusedId, gridMovies, localGridHasMore, gridColumns, loadMoreLocalGrid]);
+
   // Lookups (play/favourite/backdrop) need to search whichever list is
-  // actually on screen — the full catalog in "All Categories"/search mode,
-  // or the category-scoped fetch when one category is selected (which
-  // `movies` deliberately doesn't hold, see needsFullCatalog above).
-  const visibleMovies = isAllCategories ? movies : categoryMovies;
+  // actually on screen — the local-table grid/shelves when synced, or the
+  // legacy fallback's full catalog/category-scoped fetch otherwise (see
+  // needsFullCatalog above).
+  const visibleMovies = gridMovies ?? shelves.flatMap((shelf) => shelf.items);
 
   useRemoteInput(platform, {
     onSelect: (id) => {
@@ -239,7 +336,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   if (error && isInitialLoading) return <div role="alert">Failed to load movies: {error}</div>;
   void isStale;
 
-  if (isInitialLoading) return <ShelfRowSkeleton />;
+  if (showFullScreenSkeleton) return <ShelfRowSkeleton />;
 
   const firstContentId = gridMovies ? (gridMovies[0] ? gridItemId(gridMovies[0].id) : undefined) : shelves[0]?.items[0]?.id;
 

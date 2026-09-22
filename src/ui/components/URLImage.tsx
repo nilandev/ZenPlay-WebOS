@@ -55,7 +55,11 @@ function pickVariant(seed: string): (typeof PLACEHOLDER_VARIANTS)[number] {
  * reads as a flash/flicker once dozens of provider images finish loading
  * independently across a shelf. Both layers stay stacked via `position:
  * absolute` throughout (nothing moves from absolute to static on load), so
- * only opacity animates.
+ * only opacity animates. Each `<img>` still downloads fully in parallel
+ * (the browser's own request scheduling, nothing queued/throttled here) —
+ * only the reveal is slowed down, to ~550ms, so the crossfade itself reads
+ * clearly per-card instead of looking like an instant swap when a fast or
+ * cached response resolves within a frame or two of the others.
  */
 export function URLImage({ src, alt = "", seed, loading = "lazy", style, className }: URLImageProps): JSX.Element {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(src ? "loading" : "error");
@@ -83,7 +87,7 @@ export function URLImage({ src, alt = "", seed, loading = "lazy", style, classNa
           // unmounting outright — an instant unmount is exactly the kind of
           // hard cut this crossfade is meant to avoid.
           opacity: isLoaded ? 0 : 1,
-          transition: "opacity 320ms ease-out",
+          transition: "opacity 550ms ease-out",
         }}
       >
         <Icon size="34%" strokeWidth={1.25} color="rgba(255,255,255,0.28)" style={{ filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.4))" }} />
@@ -104,7 +108,7 @@ export function URLImage({ src, alt = "", seed, loading = "lazy", style, classNa
             display: "block",
             opacity: isLoaded ? 1 : 0,
             transform: isLoaded ? "scale(1)" : "scale(1.03)",
-            transition: "opacity 320ms ease-out, transform 320ms ease-out",
+            transition: "opacity 550ms ease-out, transform 550ms ease-out",
           }}
         />
       )}

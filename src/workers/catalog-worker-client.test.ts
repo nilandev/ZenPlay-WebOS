@@ -170,4 +170,58 @@ describe("createCatalogWorkerClient", () => {
     expect(MockWorker.instances).toHaveLength(2);
     expect(MockWorker.instances[0].terminated).toBe(true);
   });
+
+  describe("syncCatalog", () => {
+    it("invokes onBatch for each progress message and resolves with the total once done", async () => {
+      const client = createCatalogWorkerClient();
+      const onBatch = vi.fn();
+      const promise = client.syncCatalog({ credentials: { baseUrl: "http://x", username: "u", password: "p" }, action: "get_vod_streams" }, onBatch);
+
+      const worker = MockWorker.instances[0];
+      const requestId = worker.posted[0].id;
+      worker.respond({ id: requestId, type: "progress", batch: ["a", "b"] });
+      worker.respond({ id: requestId, type: "progress", batch: ["c"] });
+      worker.respond({ id: requestId, type: "done", total: 3 });
+
+      await expect(promise).resolves.toEqual({ total: 3 });
+      expect(onBatch).toHaveBeenNthCalledWith(1, ["a", "b"]);
+      expect(onBatch).toHaveBeenNthCalledWith(2, ["c"]);
+    });
+
+    it("rejects when the worker responds with ok:false for a streaming request", async () => {
+      const client = createCatalogWorkerClient();
+      const promise = client.syncCatalog({ credentials: { baseUrl: "http://x", username: "u", password: "p" }, action: "get_series" }, vi.fn());
+
+      const worker = MockWorker.instances[0];
+      worker.respond({ id: worker.posted[0].id, ok: false, error: "sync failed" });
+
+      await expect(promise).rejects.toThrow("sync failed");
+    });
+
+    it("passes a streamBatchSize through to the worker request", () => {
+      const client = createCatalogWorkerClient();
+      void client.syncCatalog({ credentials: { baseUrl: "http://x", username: "u", password: "p" }, action: "get_vod_streams" }, vi.fn());
+
+      expect(MockWorker.instances[0].posted[0].streamBatchSize).toBeGreaterThan(0);
+    });
+
+    it("rejects an in-flight syncCatalog when the worker itself errors", async () => {
+      const client = createCatalogWorkerClient();
+      const promise = client.syncCatalog({ credentials: { baseUrl: "http://x", username: "u", password: "p" }, action: "get_vod_streams" }, vi.fn());
+
+      MockWorker.instances[0].fail("module load failed");
+
+      await expect(promise).rejects.toThrow("module load failed");
+    });
+
+    it("does not dedupe against fetchCatalog — syncCatalog always posts its own request", () => {
+      const client = createCatalogWorkerClient();
+      const credentials = { baseUrl: "http://x", username: "u", password: "p" };
+
+      void client.fetchCatalog({ credentials, action: "get_vod_streams" });
+      void client.syncCatalog({ credentials, action: "get_vod_streams" }, vi.fn());
+
+      expect(MockWorker.instances[0].posted).toHaveLength(2);
+    });
+  });
 });

@@ -21,6 +21,10 @@ import {
 import { loadSeriesCategories, loadSeriesDetails, loadSeriesList } from "../content-loader.js";
 import { toggleFavorite, isFavorite as checkIsFavorite, loadContinueWatching } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
+import { useSeriesCatalogPage } from "../use-catalog-page.js";
+import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
+import { useCatalogShelves } from "../use-catalog-shelves.js";
+import { getCatalogPage } from "../catalog-store.js";
 
 export interface SeriesScreenProps {
   source: PlaylistSource;
@@ -116,14 +120,25 @@ export function SeriesScreen({
   const trimmedQuery = searchQuery.trim().toLowerCase();
   const isAllCategories = activeCategoryId === ALL_CATEGORIES_ID;
 
+  // Once catalog-sync.ts has completed at least one background sync for this
+  // source, every read below comes from the local paginated table instead
+  // of a live player_api.php fetch — see VodScreen's identical comment and
+  // use-local-catalog-ready.ts's doc comment for the three-state
+  // checking/ready/not-synced shape.
+  const localCatalogStatus = useLocalCatalogReady(source.id, "series");
+  const isLocalCatalogReady = localCatalogStatus === "ready";
+  const isCheckingLocalCatalog = localCatalogStatus === "checking";
+
   // Same category-lazy split as VodScreen (see its identical comment): the
   // "All Categories" shelf browser and search both need the full list, but
   // a single selected category is fetched straight from the provider's
   // server-side category filter instead, so picking one category never
-  // depends on the full series catalog having been fetched at all.
-  const needsFullCatalog = isAllCategories || trimmedQuery.length > 0;
+  // depends on the full series catalog having been fetched at all. Only
+  // relevant to the legacy fallback path — the local table never needs to
+  // hold the full catalog in memory at all.
+  const needsFullCatalog = localCatalogStatus === "not-synced" && (isAllCategories || trimmedQuery.length > 0);
   const loadList = useCallback(() => loadSeriesList(source), [source]);
-  const { data: seriesList, isInitialLoading: isListLoading } = useCachedContent(
+  const { data: legacySeriesList, isInitialLoading: isLegacyListLoading } = useCachedContent(
     `series-list:${source.id}`,
     "catalog",
     loadList,
@@ -135,18 +150,47 @@ export function SeriesScreen({
     () => loadSeriesList(source, isAllCategories ? undefined : activeCategoryId),
     [source, isAllCategories, activeCategoryId],
   );
-  const { data: categorySeries, isInitialLoading: isCategoryListLoading } = useCachedContent(
+  const { data: legacyCategorySeries, isInitialLoading: isLegacyCategoryListLoading } = useCachedContent(
     isAllCategories ? "series-list:none" : `series-list:${source.id}:cat:${activeCategoryId}`,
     "catalog",
     loadCategorySeries,
     EMPTY_SERIES,
-    { enabled: !isAllCategories },
+    { enabled: localCatalogStatus === "not-synced" && !isAllCategories },
   );
+
+  // Local-table path: paginated grid/search reads, grown on demand (see
+  // use-catalog-page.ts) — this is what lets the grid render a very large
+  // catalog without ever holding it all in memory.
+  const {
+    items: localGridSeries,
+    isInitialLoading: isLocalGridLoading,
+    hasMore: localGridHasMore,
+    loadMore: loadMoreLocalGrid,
+  } = useSeriesCatalogPage(source.id, {
+    categoryId: isAllCategories ? undefined : activeCategoryId,
+    namePrefix: trimmedQuery || undefined,
+    enabled: isLocalCatalogReady && (!isAllCategories || trimmedQuery.length > 0),
+  });
 
   const gridColumns = useMemo(() => computeGridColumns(), []);
 
   const loadCategories = useCallback(() => loadSeriesCategories(source), [source]);
   const { data: categories } = useCachedContent(`series-categories:${source.id}`, "category", loadCategories, EMPTY_CATEGORIES);
+
+  // "All Categories" shelf browser, local-table path: one bounded query per
+  // category (see use-catalog-shelves.ts) instead of loading the whole
+  // catalog and grouping it client-side.
+  const mapShelfPage = useCallback(
+    (categoryId: string, limit: number) => getCatalogPage(source.id, "series", { categoryId, offset: 0, limit }),
+    [source.id],
+  );
+  const { shelves: localShelves, isLoading: isLocalShelvesLoading } = useCatalogShelves(
+    source.id,
+    "series",
+    categories,
+    mapShelfPage,
+    isLocalCatalogReady && isAllCategories && !trimmedQuery,
+  );
 
   const setSelected = useCallback(
     (seriesId: string | null) => {
@@ -176,17 +220,21 @@ export function SeriesScreen({
   const { details, episodes } = seriesData;
 
   const categoryNameById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
-  // Shelves only ever need the full catalog (no per-shelf lazy fetch), so
-  // this naturally reads [] while a single category is selected — fine
-  // since shelves aren't rendered in that mode anyway (see gridSeries below).
-  const shelves = useMemo(() => groupByCategory(seriesList, categoryNameById), [seriesList, categoryNameById]);
+  // Legacy fallback path's shelves — only ever needs the full catalog (no
+  // per-shelf lazy fetch), so this naturally reads [] while a single
+  // category is selected — fine since shelves aren't rendered in that mode
+  // anyway (see gridSeries below).
+  const legacyShelves = useMemo(() => groupByCategory(legacySeriesList, categoryNameById), [legacySeriesList, categoryNameById]);
+  const shelves = isLocalCatalogReady ? localShelves : legacyShelves;
 
+  // "All Categories" row's count is only meaningful on the legacy fallback
+  // path — see VodScreen's identical comment.
   const categoryItems = useMemo(
     () => [
-      { id: ALL_CATEGORIES_ID, label: "All Categories", count: seriesList.length },
+      { id: ALL_CATEGORIES_ID, label: "All Categories", count: isLocalCatalogReady ? undefined : legacySeriesList.length },
       ...categories.map((c) => ({ id: c.id, label: c.name, count: undefined as number | undefined })),
     ],
-    [seriesList.length, categories],
+    [isLocalCatalogReady, legacySeriesList.length, categories],
   );
   const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "All Categories";
 
@@ -197,11 +245,34 @@ export function SeriesScreen({
   // once there's only one category (or an arbitrary text match) to show.
   // Search takes priority over the category filter when both are active,
   // searching within the selected category rather than across all series.
-  const gridSeries = useMemo(() => {
-    const withinCategory = isAllCategories ? seriesList : categorySeries;
+  // On the legacy fallback path this filters an already-fetched array in
+  // memory; on the local-table path (localGridSeries) the filtering already
+  // happened inside useSeriesCatalogPage's IndexedDB query.
+  const legacyGridSeries = useMemo(() => {
+    const withinCategory = isAllCategories ? legacySeriesList : legacyCategorySeries;
     if (trimmedQuery) return withinCategory.filter((item) => item.name.toLowerCase().includes(trimmedQuery));
     return isAllCategories ? null : withinCategory;
-  }, [isAllCategories, categorySeries, seriesList, trimmedQuery]);
+  }, [isAllCategories, legacyCategorySeries, legacySeriesList, trimmedQuery]);
+  const gridSeries = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridSeries) : legacyGridSeries;
+
+  const isBrowseLoading = isCheckingLocalCatalog
+    ? true
+    : isLocalCatalogReady
+      ? isAllCategories && !trimmedQuery
+        ? isLocalShelvesLoading
+        : isLocalGridLoading
+      : isAllCategories
+        ? isLegacyListLoading
+        : isLegacyCategoryListLoading;
+
+  // isBrowseLoading briefly flips true again on the local-table path on
+  // every query change (each keystroke while searching, or a new category)
+  // — see VodScreen's identical hasEverShownContentRef comment for why
+  // gating the whole screen (search input included) on that would reset
+  // mid-keystroke instead of showing an in-place update.
+  const hasEverShownBrowseRef = useRef(false);
+  if (!isBrowseLoading) hasEverShownBrowseRef.current = true;
+  const showFullScreenBrowseSkeleton = isBrowseLoading && !hasEverShownBrowseRef.current;
 
   const seasons = useMemo(() => Array.from(new Set(episodes.map((ep) => ep.season))).sort((a, b) => a - b), [episodes]);
   const currentSeason = activeSeason ?? seasons[0] ?? null;
@@ -211,11 +282,10 @@ export function SeriesScreen({
   );
 
   // Lookups (open detail/favourite/backdrop) need to search whichever list
-  // is actually on screen — the full catalog in "All Categories"/search
-  // mode, or the category-scoped fetch when one category is selected
-  // (which `seriesList` deliberately doesn't hold, see needsFullCatalog
-  // above).
-  const visibleSeries = isAllCategories ? seriesList : categorySeries;
+  // is actually on screen — the local-table grid/shelves when synced, or
+  // the legacy fallback's full catalog/category-scoped fetch otherwise (see
+  // needsFullCatalog above).
+  const visibleSeries = gridSeries ?? shelves.flatMap((shelf) => shelf.items);
 
   const series = visibleSeries.find((s) => s.id === selected);
   const continueEntry = useMemo(
@@ -316,6 +386,17 @@ export function SeriesScreen({
     [],
   );
 
+  // Grows the local-table grid as focus approaches its current end — see
+  // VodScreen's identical effect for the full rationale (spatial navigation
+  // needs a concrete, finite id list, so this is what keeps a paginated
+  // grid compatible with it).
+  useEffect(() => {
+    if (!gridSeries || !localGridHasMore || !focusedId) return;
+    const index = gridSeries.findIndex((item) => gridItemId(item.id) === focusedId);
+    if (index === -1) return;
+    if (index >= gridSeries.length - gridColumns) loadMoreLocalGrid();
+  }, [focusedId, gridSeries, localGridHasMore, gridColumns, loadMoreLocalGrid]);
+
   useRemoteInput(platform, {
     onSelect: (id) => {
       if (!id) return;
@@ -396,8 +477,7 @@ export function SeriesScreen({
     );
   }
 
-  const isBrowseLoading = isAllCategories ? isListLoading : isCategoryListLoading;
-  if (isBrowseLoading) return <ShelfRowSkeleton />;
+  if (showFullScreenBrowseSkeleton) return <ShelfRowSkeleton />;
 
   const focusedSeriesId = focusedId ? resolveSeriesIdFromFocusId(focusedId) : undefined;
   const focusedSeries = visibleSeries.find((s) => s.id === focusedSeriesId);

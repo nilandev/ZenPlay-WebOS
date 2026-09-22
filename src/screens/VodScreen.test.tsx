@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource, Profile } from "@core";
 import { clearAllCachedContent, getCachedContent } from "../content-cache.js";
+import { __clearCatalogDbForTests, __resetCatalogDbForTests, openCatalogDb, putRecordsBatch, putSyncMeta } from "../core/storage/catalog-db.js";
 import { useFocusStore } from "../ui/focus/focus-store.js";
 import { VodScreen } from "./VodScreen.js";
 
@@ -36,8 +37,10 @@ async function flush(): Promise<void> {
 }
 
 describe("VodScreen category-lazy fetching", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     clearAllCachedContent();
+    __resetCatalogDbForTests();
+    await __clearCatalogDbForTests();
     useFocusStore.getState().clearGraph("content");
     useFocusStore.getState().clearGraph("chrome:vod-search");
     useFocusStore.getState().clearGraph("chrome:category-dropdown-trigger");
@@ -50,7 +53,7 @@ describe("VodScreen category-lazy fetching", () => {
     (loadChannelsByKind as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
-    await flush();
+    await vi.waitFor(() => expect(loadChannelsByKind).toHaveBeenCalled());
 
     expect(loadVodCategories).toHaveBeenCalledTimes(1);
     expect(loadChannelsByKind).toHaveBeenCalledWith(source, "movie");
@@ -66,7 +69,7 @@ describe("VodScreen category-lazy fetching", () => {
     );
 
     render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
-    await flush();
+    await vi.waitFor(() => expect(loadChannelsByKind).toHaveBeenCalledWith(source, "movie"));
 
     (loadChannelsByKind as ReturnType<typeof vi.fn>).mockClear();
 
@@ -81,5 +84,52 @@ describe("VodScreen category-lazy fetching", () => {
       { id: "m1", name: "Action Movie", streamUrl: "x", kind: "movie", groupTitle: "cat-1" },
     ]);
     expect(await screen.findByText("Action Movie")).not.toBeNull();
+  });
+});
+
+describe("VodScreen with a synced local catalog", () => {
+  beforeEach(async () => {
+    clearAllCachedContent();
+    __resetCatalogDbForTests();
+    await __clearCatalogDbForTests();
+    useFocusStore.getState().clearGraph("content");
+    useFocusStore.getState().clearGraph("chrome:vod-search");
+    useFocusStore.getState().clearGraph("chrome:category-dropdown-trigger");
+    useFocusStore.getState().clearGraph("chrome:category-dropdown-panel");
+    vi.clearAllMocks();
+  });
+
+  it("renders shelves from the local table and never calls the live full-catalog fetch", async () => {
+    const catalogDb = await openCatalogDb();
+    await putRecordsBatch(catalogDb, "vod", [
+      { id: `${source.id}:1`, sourceId: source.id, streamId: "1", name: "Action Movie", nameLower: "action movie", groupTitle: "cat-1", streamUrl: "x", generation: 1 },
+    ]);
+    await putSyncMeta(catalogDb, { key: `vod:${source.id}`, lastSyncedAt: Date.now(), recordCount: 1, generation: 1 });
+
+    const { loadChannelsByKind } = await import("../content-loader.js");
+
+    render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
+    await flush();
+
+    expect(await screen.findByText("Action Movie")).not.toBeNull();
+    expect(loadChannelsByKind).not.toHaveBeenCalled();
+  });
+
+  it("search reads a prefix match from the local table", async () => {
+    const catalogDb = await openCatalogDb();
+    await putRecordsBatch(catalogDb, "vod", [
+      { id: `${source.id}:1`, sourceId: source.id, streamId: "1", name: "Matrix Reloaded", nameLower: "matrix reloaded", generation: 1 },
+      { id: `${source.id}:2`, sourceId: source.id, streamId: "2", name: "Inception", nameLower: "inception", generation: 1 },
+    ]);
+    await putSyncMeta(catalogDb, { key: `vod:${source.id}`, lastSyncedAt: Date.now(), recordCount: 2, generation: 1 });
+
+    render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
+    const searchInput = await screen.findByPlaceholderText("Search movies");
+
+    fireEvent.change(searchInput, { target: { value: "matrix" } });
+    await flush();
+
+    expect(await screen.findByText("Matrix Reloaded")).not.toBeNull();
+    expect(screen.queryByText("Inception")).toBeNull();
   });
 });
