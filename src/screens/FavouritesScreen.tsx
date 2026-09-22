@@ -33,6 +33,8 @@ export interface FavouritesScreenProps {
   onPlayChannel: (channel: Channel) => void;
   onPlayMovie: (movie: Channel) => void;
   onOpenSeries: (seriesId: string) => void;
+  /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away. */
+  isPlaybackOpen?: boolean;
 }
 
 /**
@@ -43,7 +45,16 @@ export interface FavouritesScreenProps {
  * an id + kind — there's no "get content by id" lookup, so the full lists
  * are loaded and filtered down to favourited ids client-side.
  */
-export function FavouritesScreen({ source, profileId, platform, onBack, onPlayChannel, onPlayMovie, onOpenSeries }: FavouritesScreenProps): JSX.Element {
+export function FavouritesScreen({
+  source,
+  profileId,
+  platform,
+  onBack,
+  onPlayChannel,
+  onPlayMovie,
+  onOpenSeries,
+  isPlaybackOpen = false,
+}: FavouritesScreenProps): JSX.Element {
   const [filter, setFilter] = useState<FavoriteKind | "all">("all");
 
   // Bumped whenever a favourite is removed from this screen so the list
@@ -126,15 +137,19 @@ export function FavouritesScreen({ source, profileId, platform, onBack, onPlayCh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items.length, filter, setGraph, clearGraph, onPlayChannel, onPlayMovie, onOpenSeries]);
 
-  useRemoteInput(platform, {
-    onLongSelect: (focusedId) => {
-      const entry = items.find((item) => itemId(item.entry) === focusedId)?.entry;
-      if (!entry) return;
-      toggleFavorite(profileId, entry.sourceId, entry.contentKind, entry.contentId);
-      setFavoritesVersion((v) => v + 1);
+  useRemoteInput(
+    platform,
+    {
+      onLongSelect: (focusedId) => {
+        const entry = items.find((item) => itemId(item.entry) === focusedId)?.entry;
+        if (!entry) return;
+        toggleFavorite(profileId, entry.sourceId, entry.contentKind, entry.contentId);
+        setFavoritesVersion((v) => v + 1);
+      },
+      onBack,
     },
-    onBack,
-  });
+    !isPlaybackOpen,
+  );
 
   return (
     <MeshBackground>

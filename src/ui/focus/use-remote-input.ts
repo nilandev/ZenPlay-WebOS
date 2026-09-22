@@ -30,7 +30,7 @@ export interface RemoteInputHandlers {
  * repeat has event.repeat === true), so the timer is only armed on the
  * initial, non-repeat keydown.
  */
-export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandlers = {}): void {
+export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandlers = {}, enabled = true): void {
   const move = useFocusStore((state) => state.move);
   const select = useFocusStore((state) => state.select);
   const focusedId = useFocusStore((state) => state.focusedId);
@@ -38,6 +38,15 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
   const longPressFiredRef = useRef(false);
 
   useEffect(() => {
+    // A screen underneath a fullscreen overlay (PlayerScreen) stays mounted
+    // the whole time playback is open — without this, both the overlay's
+    // and this screen's own document-level keydown listener would fire on
+    // the same Back press, so e.g. closing the player would *also*
+    // immediately navigate the screen underneath away. Callers pass
+    // `enabled={!isPlaybackOpen}` so only the overlay's own useRemoteInput
+    // call is live while it's covering the screen.
+    if (!enabled) return;
+
     function clearLongPressTimer(): void {
       if (longPressTimerRef.current !== null) {
         clearTimeout(longPressTimerRef.current);
@@ -119,5 +128,5 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
       document.removeEventListener("keyup", onKeyUp);
       clearLongPressTimer();
     };
-  }, [platform, move, select, focusedId, handlers]);
+  }, [platform, move, select, focusedId, handlers, enabled]);
 }

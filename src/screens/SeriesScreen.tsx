@@ -39,6 +39,8 @@ export interface SeriesScreenProps {
   onSelectionChange?: (seriesId: string | null) => void;
   /** Bumped by App.tsx every time the player overlay closes after resumable playback — triggers re-reading Continue Watching, which upsertContinueWatching wrote to localStorage during playback without this screen (which stayed mounted underneath the overlay) otherwise finding out. */
   continueWatchingVersion?: number;
+  /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away. */
+  isPlaybackOpen?: boolean;
 }
 
 type SeriesSummary = Awaited<ReturnType<typeof loadSeriesList>>[number];
@@ -106,6 +108,7 @@ export function SeriesScreen({
   initialSelectedId,
   onSelectionChange,
   continueWatchingVersion,
+  isPlaybackOpen = false,
 }: SeriesScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
@@ -397,32 +400,36 @@ export function SeriesScreen({
     if (index >= gridSeries.length - gridColumns) loadMoreLocalGrid();
   }, [focusedId, gridSeries, localGridHasMore, gridColumns, loadMoreLocalGrid]);
 
-  useRemoteInput(platform, {
-    onSelect: (id) => {
-      if (!id) return;
-      if (selected) {
-        const episode = seasonEpisodes.find((ep) => ep.id === id);
-        if (episode) onPlayEpisode(episode, episodes);
-        return;
-      }
-      const s = visibleSeries.find((item) => item.id === resolveSeriesIdFromFocusId(id));
-      if (s) setSelected(s.id);
+  useRemoteInput(
+    platform,
+    {
+      onSelect: (id) => {
+        if (!id) return;
+        if (selected) {
+          const episode = seasonEpisodes.find((ep) => ep.id === id);
+          if (episode) onPlayEpisode(episode, episodes);
+          return;
+        }
+        const s = visibleSeries.find((item) => item.id === resolveSeriesIdFromFocusId(id));
+        if (s) setSelected(s.id);
+      },
+      onLongSelect: (id) => {
+        // Favouriting applies to the series as a whole, not individual
+        // episodes — only act while browsing the series list.
+        if (!id || selected) return;
+        const s = visibleSeries.find((item) => item.id === resolveSeriesIdFromFocusId(id));
+        if (!s) return;
+        toggleFavorite(profile.id, source.id, "series", s.id);
+        setFavoritesVersion((v) => v + 1);
+      },
+      onBack: () => {
+        if (isCategoryDropdownOpen) setIsCategoryDropdownOpen(false);
+        else if (selected) setSelected(null);
+        else onBack();
+      },
     },
-    onLongSelect: (id) => {
-      // Favouriting applies to the series as a whole, not individual
-      // episodes — only act while browsing the series list.
-      if (!id || selected) return;
-      const s = visibleSeries.find((item) => item.id === resolveSeriesIdFromFocusId(id));
-      if (!s) return;
-      toggleFavorite(profile.id, source.id, "series", s.id);
-      setFavoritesVersion((v) => v + 1);
-    },
-    onBack: () => {
-      if (isCategoryDropdownOpen) setIsCategoryDropdownOpen(false);
-      else if (selected) setSelected(null);
-      else onBack();
-    },
-  });
+    !isPlaybackOpen,
+  );
 
   if (selected) {
     const isFavorited = (() => {

@@ -140,6 +140,42 @@ describe("XtreamClient", () => {
     });
   });
 
+  it("fetches and maps per-stream EPG listings via get_epg", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        epg_listings: [
+          {
+            channel_id: "ch1",
+            start_timestamp: 1790015400,
+            stop_timestamp: 1790017200,
+            title: "T25lLURheSBJbnRlcm5hdGlvbmFsIENyaWNrZXQ=",
+          },
+        ],
+      }),
+    );
+    const client = new XtreamClient(credentials);
+    const programmes = await client.getShortEpg("18335");
+
+    const calledUrl = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(calledUrl.searchParams.get("action")).toBe("get_epg");
+    expect(calledUrl.searchParams.get("stream_id")).toBe("18335");
+    expect(programmes).toEqual([
+      {
+        channelId: "ch1",
+        title: "One-Day International Cricket",
+        description: undefined,
+        start: new Date(1790015400 * 1000),
+        stop: new Date(1790017200 * 1000),
+      },
+    ]);
+  });
+
+  it("returns an empty list when the provider omits epg_listings", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({}));
+    const client = new XtreamClient(credentials);
+    await expect(client.getShortEpg("1")).resolves.toEqual([]);
+  });
+
   it("builds a catch-up URL with start/duration params", () => {
     const client = new XtreamClient(credentials);
     const url = client.buildCatchupUrl("101", 1700000000, 60);

@@ -29,6 +29,8 @@ export interface VodScreenProps {
   profile: Profile;
   onPlay: (movie: Channel) => void;
   onBack: () => void;
+  /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away. */
+  isPlaybackOpen?: boolean;
 }
 
 const EMPTY_MOVIES: Channel[] = [];
@@ -75,7 +77,7 @@ function groupByCategory(movies: Channel[], categoryNameById: Map<string, string
   return Array.from(byGroup.entries()).map(([id, items]) => ({ id, title: categoryNameById.get(id) ?? id, items }));
 }
 
-export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScreenProps): JSX.Element {
+export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybackOpen = false }: VodScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focusedId = useFocusStore((state) => state.focusedId);
@@ -305,24 +307,28 @@ export function VodScreen({ source, platform, profile, onPlay, onBack }: VodScre
   // needsFullCatalog above).
   const visibleMovies = gridMovies ?? shelves.flatMap((shelf) => shelf.items);
 
-  useRemoteInput(platform, {
-    onSelect: (id) => {
-      if (!id) return;
-      const movie = visibleMovies.find((m) => m.id === resolveMovieIdFromFocusId(id));
-      if (movie) onPlay(movie);
+  useRemoteInput(
+    platform,
+    {
+      onSelect: (id) => {
+        if (!id) return;
+        const movie = visibleMovies.find((m) => m.id === resolveMovieIdFromFocusId(id));
+        if (movie) onPlay(movie);
+      },
+      onLongSelect: (id) => {
+        if (!id) return;
+        const movie = visibleMovies.find((m) => m.id === resolveMovieIdFromFocusId(id));
+        if (!movie) return;
+        toggleFavorite(profile.id, source.id, "movie", movie.id);
+        setFavoritesVersion((v) => v + 1);
+      },
+      onBack: () => {
+        if (isCategoryDropdownOpen) setIsCategoryDropdownOpen(false);
+        else onBack();
+      },
     },
-    onLongSelect: (id) => {
-      if (!id) return;
-      const movie = visibleMovies.find((m) => m.id === resolveMovieIdFromFocusId(id));
-      if (!movie) return;
-      toggleFavorite(profile.id, source.id, "movie", movie.id);
-      setFavoritesVersion((v) => v + 1);
-    },
-    onBack: () => {
-      if (isCategoryDropdownOpen) setIsCategoryDropdownOpen(false);
-      else onBack();
-    },
-  });
+    !isPlaybackOpen,
+  );
 
   const focusedMovieId = focusedId ? resolveMovieIdFromFocusId(focusedId) : undefined;
   const focusedMovie = visibleMovies.find((m) => m.id === focusedMovieId);

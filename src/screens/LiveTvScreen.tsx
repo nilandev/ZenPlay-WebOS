@@ -8,6 +8,7 @@ import {
   FavouriteChannelsRow,
   LiveChannelPreview,
   LiveTvLogo,
+  MeshBackground,
   useFocusStore,
   useRemoteInput,
 } from "@ui";
@@ -22,6 +23,8 @@ export interface LiveTvScreenProps {
   onBack: () => void;
   /** Enters full-screen playback for the given channel — see App.tsx's playLive. */
   onPlay: (channel: Channel) => void;
+  /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away (see use-remote-input.ts's `enabled` doc comment). */
+  isPlaybackOpen?: boolean;
 }
 
 const EMPTY_CHANNELS: Channel[] = [];
@@ -44,7 +47,7 @@ function groupByCategory(channels: Channel[]): Category[] {
   return Array.from(seen.values());
 }
 
-export function LiveTvScreen({ source, platform, profile, onBack, onPlay }: LiveTvScreenProps): JSX.Element {
+export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlaybackOpen = false }: LiveTvScreenProps): JSX.Element {
   const loadChannels = useCallback(() => loadChannelsByKind(source, "live"), [source]);
   const { data: channels, isInitialLoading: isChannelsLoading, error: loadError } = useCachedContent(
     `live:${source.id}`,
@@ -133,82 +136,96 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay }: Live
     previewDebounceRef.current = setTimeout(() => setPreviewChannel(channel), PREVIEW_DEBOUNCE_MS);
   }, []);
 
-  useRemoteInput(platform, {
-    onBack,
-    onLongSelect: (focusedId) => {
-      const channel = channels.find((c) => c.id === focusedId);
-      if (!channel) return;
-      toggleFavorite(profile.id, source.id, "live", channel.id);
-      setFavoritesVersion((v) => v + 1);
+  useRemoteInput(
+    platform,
+    {
+      onBack,
+      onLongSelect: (focusedId) => {
+        const channel = channels.find((c) => c.id === focusedId);
+        if (!channel) return;
+        toggleFavorite(profile.id, source.id, "live", channel.id);
+        setFavoritesVersion((v) => v + 1);
+      },
     },
-  });
+    !isPlaybackOpen,
+  );
 
   const previewStreamUrl = previewChannel?.streamUrl ?? null;
 
   const isInitialLoading = isChannelsLoading || isCategoriesLoading;
 
   if (loadError && isInitialLoading) {
-    return <div role="alert">Failed to load channels: {loadError}</div>;
+    return (
+      <MeshBackground>
+        <div role="alert" style={{ padding: 40, color: "var(--text, #f4f4f6)" }}>
+          Failed to load channels: {loadError}
+        </div>
+      </MeshBackground>
+    );
   }
 
   if (isInitialLoading) {
     return (
-      <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <ChannelGridSkeleton columns={5} rows={2} />
-      </div>
+      <MeshBackground>
+        <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <ChannelGridSkeleton columns={5} rows={2} />
+        </div>
+      </MeshBackground>
     );
   }
 
   return (
-    <div style={{ height: "100vh", display: "flex", overflow: "hidden" }}>
-      <CategorySidebar
-        items={categoryItems}
-        activeId={activeCategoryId}
-        onSelect={setActiveCategoryId}
-        contentEntryId={visibleChannels.length > 0 ? visibleChannels[0].id : undefined}
-        header={<LiveTvLogo />}
-      />
-
-      <ChannelSidebar
-        channels={visibleChannels}
-        activeChannelId={selectedChannel?.id}
-        onHighlight={handleHighlight}
-        onSelect={(channel) => {
-          // OK on a channel row commits it as the preview's channel and
-          // hands focus to column 3 — actually entering full-screen is
-          // reserved for selecting the preview itself (AC4).
-          setSelectedChannel(channel);
-          setPreviewChannel(channel);
-          focus(PREVIEW_FOCUS_ID);
-        }}
-        leftEntryId={activeCategoryId}
-        rightEntryId={PREVIEW_FOCUS_ID}
-      />
-
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
-        <LiveChannelPreview
-          channel={previewChannel}
-          streamUrl={previewStreamUrl}
-          focusId={PREVIEW_FOCUS_ID}
-          onEnterFullScreen={() => {
-            if (previewChannel) onPlay(previewChannel);
-          }}
-          isFavorite={isPreviewFavorite}
-          onToggleFavorite={handleToggleFavorite}
-          favoriteButtonFocusId={FAVORITE_BUTTON_FOCUS_ID}
-          belowFocusId={favoriteChannels.length > 0 ? favoriteRowItemId(favoriteChannels[0].id) : undefined}
+    <MeshBackground>
+      <div style={{ height: "100vh", display: "flex", overflow: "hidden" }}>
+        <CategorySidebar
+          items={categoryItems}
+          activeId={activeCategoryId}
+          onSelect={setActiveCategoryId}
+          contentEntryId={visibleChannels.length > 0 ? visibleChannels[0].id : undefined}
+          header={<LiveTvLogo />}
         />
 
-        <FavouriteChannelsRow
-          channels={favoriteChannels}
+        <ChannelSidebar
+          channels={visibleChannels}
+          activeChannelId={selectedChannel?.id}
+          onHighlight={handleHighlight}
           onSelect={(channel) => {
+            // OK on a channel row commits it as the preview's channel and
+            // hands focus to column 3 — actually entering full-screen is
+            // reserved for selecting the preview itself (AC4).
             setSelectedChannel(channel);
             setPreviewChannel(channel);
-            focus(FAVORITE_BUTTON_FOCUS_ID);
+            focus(PREVIEW_FOCUS_ID);
           }}
-          aboveFocusId={FAVORITE_BUTTON_FOCUS_ID}
+          leftEntryId={activeCategoryId}
+          rightEntryId={PREVIEW_FOCUS_ID}
         />
+
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
+          <LiveChannelPreview
+            channel={previewChannel}
+            streamUrl={previewStreamUrl}
+            focusId={PREVIEW_FOCUS_ID}
+            onEnterFullScreen={() => {
+              if (previewChannel) onPlay(previewChannel);
+            }}
+            isFavorite={isPreviewFavorite}
+            onToggleFavorite={handleToggleFavorite}
+            favoriteButtonFocusId={FAVORITE_BUTTON_FOCUS_ID}
+            belowFocusId={favoriteChannels.length > 0 ? favoriteRowItemId(favoriteChannels[0].id) : undefined}
+          />
+
+          <FavouriteChannelsRow
+            channels={favoriteChannels}
+            onSelect={(channel) => {
+              setSelectedChannel(channel);
+              setPreviewChannel(channel);
+              focus(FAVORITE_BUTTON_FOCUS_ID);
+            }}
+            aboveFocusId={FAVORITE_BUTTON_FOCUS_ID}
+          />
+        </div>
       </div>
-    </div>
+    </MeshBackground>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildXtreamStreamUrl, mapLiveStream, mapSeriesEntry, mapVodStream } from "./xtream-mappers.js";
+import { buildXtreamStreamUrl, mapEpgListing, mapLiveStream, mapSeriesEntry, mapVodStream } from "./xtream-mappers.js";
 
 const credentials = { baseUrl: "http://example.com", username: "user", password: "pass" };
 
@@ -73,5 +73,41 @@ describe("mapSeriesEntry", () => {
   it("maps the browse-grid summary shape", () => {
     const mapped = mapSeriesEntry({ series_id: 9, name: "A Show", cover: "http://cover.png", category_id: "cat-3" });
     expect(mapped).toEqual({ id: "9", name: "A Show", posterUrl: "http://cover.png", groupTitle: "cat-3" });
+  });
+});
+
+describe("mapEpgListing", () => {
+  it("decodes base64 title/description and converts unix-second timestamps to Dates", () => {
+    const mapped = mapEpgListing({
+      channel_id: "Star.Sports.2.Hindi.HD.in",
+      start_timestamp: 1790015400,
+      stop_timestamp: 1790017200,
+      title: "T25lLURheSBJbnRlcm5hdGlvbmFsIENyaWNrZXQ=",
+      description:
+        "QW4gZXh0ZW5zaXZlIGFuZCB0aG9yb3VnaCBjb3ZlcmFnZSBvZiBvbmUtZGF5IGNyaWNrZXQgbWF0Y2hlcyBjb250ZXN0ZWQgYnkgdmFyaW91cyBpbnRlcm5hdGlvbmFsIHRlYW1zIGZyb20gYWNyb3NzIHRoZSBnbG9iZS4=",
+    });
+
+    expect(mapped.channelId).toBe("Star.Sports.2.Hindi.HD.in");
+    expect(mapped.title).toBe("One-Day International Cricket");
+    expect(mapped.description).toBe(
+      "An extensive and thorough coverage of one-day cricket matches contested by various international teams from across the globe.",
+    );
+    expect(mapped.start).toEqual(new Date(1790015400 * 1000));
+    expect(mapped.stop).toEqual(new Date(1790017200 * 1000));
+  });
+
+  it("falls back to the raw string when a field isn't valid base64, instead of throwing", () => {
+    const mapped = mapEpgListing({
+      channel_id: "ch1",
+      start_timestamp: 0,
+      stop_timestamp: 60,
+      title: "not valid base64 !!!",
+    });
+    expect(mapped.title).toBe("not valid base64 !!!");
+  });
+
+  it("leaves description undefined when the provider omits it", () => {
+    const mapped = mapEpgListing({ channel_id: "ch1", start_timestamp: 0, stop_timestamp: 60, title: "VGl0bGU=" });
+    expect(mapped.description).toBeUndefined();
   });
 });

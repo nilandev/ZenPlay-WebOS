@@ -1,10 +1,13 @@
 import type { Category, Channel, SeriesDetails, SeriesEpisode, SeriesInfo } from "../models/channel.js";
+import type { EpgProgramme } from "../models/epg.js";
 import type { XtreamCredentials } from "../models/playlist-source.js";
 import {
   buildXtreamStreamUrl,
+  mapEpgListing,
   mapLiveStream,
   mapSeriesEntry,
   mapVodStream,
+  type XtreamEpgListingRaw,
   type XtreamLiveStreamRaw,
   type XtreamSeriesRaw,
   type XtreamVodStreamRaw,
@@ -306,6 +309,23 @@ export class XtreamClient {
   async getSeriesInfo(seriesId: string): Promise<SeriesEpisode[]> {
     const { episodes } = await this.getSeriesDetails(seriesId);
     return episodes;
+  }
+
+  /**
+   * Per-stream EPG listings (typically the current day, provider-dependent
+   * how far ahead/behind it covers) — distinct from xmltv.php's bulk export
+   * (see content-loader.ts's loadEpg), which some panels either omit
+   * entirely or keep out of sync with what get_epg itself returns for a
+   * given stream_id. Returns [] rather than throwing on a provider that
+   * doesn't support the action, since an empty guide for one channel
+   * shouldn't be a hard error for the whole screen.
+   */
+  async getShortEpg(streamId: string): Promise<EpgProgramme[]> {
+    const raw = await this.fetchJson<{ epg_listings?: XtreamEpgListingRaw[] }>({
+      action: "get_epg",
+      stream_id: streamId,
+    });
+    return (raw.epg_listings ?? []).map(mapEpgListing);
   }
 
   /** Archive/catch-up playback URL for a given epoch-second start time and duration in minutes. */

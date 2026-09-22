@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Tv } from "lucide-react";
 import { HlsPlayerEngine, type PlaybackProgress, type PlayerEngine, type PlayerError } from "@player";
 
 export interface VideoSurfaceProps {
@@ -112,14 +113,40 @@ export function VideoSurface({
             alignItems: "center",
             justifyContent: "center",
             background: "rgba(0,0,0,0.35)",
-            color: "rgba(255,255,255,0.85)",
-            fontSize: 14,
-            fontWeight: 600,
           }}
         >
-          Buffering…
+          <BufferingIcon />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * A TV glyph that fills from bottom to top on a loop, like a liquid level
+ * rising — replaces a plain "Buffering…" label with something that reads
+ * clearly from 10-foot TV viewing distance without needing legible text.
+ * Two stacked copies of the same lucide icon: a dim static outline for
+ * scale/shape, and a bright copy whose visible portion is driven by an
+ * animated inset() clip-path (top inset shrinking 100%→0%, so the reveal
+ * rises upward) — GPU-composited (clip-path + opacity only, no layout
+ * properties) to stay smooth on weak TV CPUs.
+ */
+function BufferingIcon(): JSX.Element {
+  return (
+    <div style={{ position: "relative", width: 64, height: 64 }}>
+      <Tv size={64} strokeWidth={1.25} color="rgba(255,255,255,0.18)" style={{ position: "absolute", inset: 0 }} />
+      <div style={{ position: "absolute", inset: 0, animation: "video-surface-fill 1.8s ease-in-out infinite" }}>
+        <Tv size={64} strokeWidth={1.5} color="rgba(255,255,255,0.95)" />
+      </div>
+      <style>{`
+        @keyframes video-surface-fill {
+          0% { clip-path: inset(100% 0 0 0); }
+          45% { clip-path: inset(0 0 0 0); }
+          55% { clip-path: inset(0 0 0 0); }
+          100% { clip-path: inset(100% 0 0 0); }
+        }
+      `}</style>
     </div>
   );
 }

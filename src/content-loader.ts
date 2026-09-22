@@ -137,3 +137,20 @@ export async function loadEpg(source: PlaylistSource): Promise<EpgProgramme[]> {
   const xml = await (await proxyFetch(epgUrl)).text();
   return parseXmltvToArray(xml);
 }
+
+/**
+ * Per-channel EPG for the redesigned Guide screen's column 3 — Xtream's
+ * get_epg&stream_id=X, one call per highlighted channel rather than the
+ * bulk xmltv.php export loadEpg fetches (see XtreamClient.getShortEpg's
+ * doc comment for why the two can disagree). M3U sources have no
+ * per-stream EPG action, so this always returns [] there — callers should
+ * fall back to loadEpg's bulk XMLTV result (keyed by
+ * channel.epgChannelId) for M3U, same as GuideScreen already did before
+ * this screen existed.
+ */
+export async function loadStreamEpg(source: PlaylistSource, streamId: string): Promise<EpgProgramme[]> {
+  if (source.kind !== "xtream") return [];
+  const client = new XtreamClient(source, proxyFetch);
+  await client.authenticate();
+  return client.getShortEpg(streamId);
+}

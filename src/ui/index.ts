@@ -17,6 +17,7 @@ export * from "./components/LiveChannelPreview.js";
 export * from "./components/LiveTvLogo.js";
 export * from "./components/FavouriteChannelsRow.js";
 export * from "./components/ProgrammePreview.js";
+export * from "./components/EpgProgrammeList.js";
 export * from "./components/Shimmer.js";
 export * from "./components/skeletons/ChannelGridSkeleton.js";
 export * from "./components/skeletons/ShelfRowSkeleton.js";

@@ -1,4 +1,5 @@
 import type { Channel, SeriesInfo } from "../models/channel.js";
+import type { EpgProgramme } from "../models/epg.js";
 import type { XtreamCredentials } from "../models/playlist-source.js";
 
 /**
@@ -35,6 +36,17 @@ export interface XtreamSeriesRaw {
   name: string;
   cover?: string;
   category_id?: string;
+}
+
+export interface XtreamEpgListingRaw {
+  channel_id: string;
+  /** Unix seconds — used over the string `start`/`end` fields since those are the provider's local time with no offset, ambiguous to parse portably. */
+  start_timestamp: number;
+  stop_timestamp: number;
+  /** Base64-encoded (Xtream Codes convention for get_epg/get_short_epg — see XtreamClient.getShortEpg's doc comment). */
+  title: string;
+  /** Base64-encoded, same as title. */
+  description?: string;
 }
 
 function stripTrailingSlash(url: string): string {
@@ -92,5 +104,32 @@ export function mapSeriesEntry(s: XtreamSeriesRaw): Pick<SeriesInfo, "id" | "nam
     name: s.name,
     posterUrl: s.cover,
     groupTitle: s.category_id,
+  };
+}
+
+/**
+ * Xtream's get_epg/get_short_epg base64-encodes title/description — atob
+ * handles the ASCII-range payloads these listings actually contain; a
+ * malformed/non-base64 value (seen on a few misbehaving panels) falls back
+ * to the raw string rather than throwing, so one bad listing doesn't blank
+ * out an entire channel's guide.
+ */
+function decodeEpgText(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    return atob(value);
+  } catch {
+    return value;
+  }
+}
+
+/** Maps one get_epg/get_short_epg listing into the app's shared EpgProgramme shape — the same type parse-xmltv.ts produces, so callers (EpgGrid, the Guide screen) don't need to know which source an EpgProgramme came from. */
+export function mapEpgListing(raw: XtreamEpgListingRaw): EpgProgramme {
+  return {
+    channelId: raw.channel_id,
+    title: decodeEpgText(raw.title) ?? "",
+    description: decodeEpgText(raw.description),
+    start: new Date(raw.start_timestamp * 1000),
+    stop: new Date(raw.stop_timestamp * 1000),
   };
 }

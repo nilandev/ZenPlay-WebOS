@@ -281,13 +281,33 @@ export function App(): JSX.Element {
   return (
     <div style={{ minHeight: "100vh" }}>
       {activeTab === "live" && (
-        <LiveTvScreen source={activeSource} platform={platform} profile={activeProfile} onBack={goHome} onPlay={playLive} />
+        <LiveTvScreen
+          source={activeSource}
+          platform={platform}
+          profile={activeProfile}
+          onBack={goHome}
+          onPlay={playLive}
+          isPlaybackOpen={Boolean(playbackUrl)}
+        />
       )}
       {activeTab === "guide" && (
-        <GuideScreen source={activeSource} platform={platform} onPlay={playWithoutIdentity} onBack={goHome} />
+        <GuideScreen
+          source={activeSource}
+          platform={platform}
+          onPlay={playWithoutIdentity}
+          onBack={goHome}
+          isPlaybackOpen={Boolean(playbackUrl)}
+        />
       )}
       {activeTab === "movies" && (
-        <VodScreen source={activeSource} platform={platform} profile={activeProfile} onPlay={playMovie} onBack={goHome} />
+        <VodScreen
+          source={activeSource}
+          platform={platform}
+          profile={activeProfile}
+          onPlay={playMovie}
+          onBack={goHome}
+          isPlaybackOpen={Boolean(playbackUrl)}
+        />
       )}
       {activeTab === "series" && (
         <SeriesScreen
@@ -299,6 +319,7 @@ export function App(): JSX.Element {
           initialSelectedId={pendingSeriesId ?? seriesSelectionId ?? undefined}
           onSelectionChange={setSeriesSelectionId}
           continueWatchingVersion={playbackCloseVersion}
+          isPlaybackOpen={Boolean(playbackUrl)}
         />
       )}
       {activeTab === "favourites" && (
@@ -313,6 +334,7 @@ export function App(): JSX.Element {
             setPendingSeriesId(seriesId);
             setActiveTab("series");
           }}
+          isPlaybackOpen={Boolean(playbackUrl)}
         />
       )}
       {activeTab === "history" && <PlaceholderScreen title="History" icon="🕘" platform={platform} onBack={goHome} />}
