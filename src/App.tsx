@@ -16,6 +16,7 @@ import {
   setActiveProfileId,
   updateProfile,
 } from "./profile-store.js";
+import { buildRevalidationTargets, revalidateStaleTargets } from "./cache-revalidator.js";
 import { AddSourceScreen } from "./screens/AddSourceScreen.js";
 import { HomeScreen } from "./screens/HomeScreen.js";
 import { LiveTvScreen } from "./screens/LiveTvScreen.js";
@@ -108,6 +109,26 @@ export function App(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Kicks off HomeScreen's usual content fetches (live channels, VOD/series
+  // categories, EPG, playlist info — see buildRevalidationTargets) as soon
+  // as a profile is selected/restored, rather than waiting for HomeScreen to
+  // mount and start them itself. This is what actually delivers spec
+  // Scenario A's "data ready the millisecond Home renders": previously,
+  // Home's own skeletons covered the wait, but the wait only started once
+  // Home was already on screen. Firing it here means the fetches are
+  // in-flight during the login/profile-select transition instead, so by the
+  // time HomeScreen mounts (its own startBackgroundRevalidation call below
+  // is idempotent — same cache keys, deduped by xtream-client.ts's
+  // requestCache — so this doesn't double the work) there's a head start.
+  // A brand-new source's local VOD/series catalog tables aren't included
+  // here (see buildRevalidationTargets' doc comment on why they're excluded
+  // from this revalidator entirely) — those still start warming only once
+  // HomeScreen's startCatalogBackgroundSync effect runs.
+  useEffect(() => {
+    if (!activeSource || !activeProfile) return;
+    void revalidateStaleTargets(buildRevalidationTargets(activeSource));
+  }, [activeSource, activeProfile]);
+
   function handleSourceAdded(source: PlaylistSource): void {
     const updated = addPlaylistSource(source);
     setSources(updated);
@@ -156,7 +177,7 @@ export function App(): JSX.Element {
   }
 
   if (!activeSource) {
-    return <AddSourceScreen onSourceAdded={handleSourceAdded} />;
+    return <AddSourceScreen onSourceAdded={handleSourceAdded} platform={platform} />;
   }
 
   if (!activeProfile) {
@@ -256,6 +277,13 @@ export function App(): JSX.Element {
             setActiveTab(tileId as TabId);
           }}
           onOpenProfiles={() => setActiveProfile(null)}
+          onPlayMovie={playMovie}
+          onPlayChannel={playLive}
+          onOpenSeries={(seriesId) => {
+            setPendingSeriesId(seriesId);
+            setActiveTab("series");
+          }}
+          continueWatchingVersion={playbackCloseVersion}
         />
         {playbackUrl && (
           <PlayerScreen

@@ -201,6 +201,23 @@ export function queryPage(catalogDb: CatalogDb, kind: CatalogKind, options: Quer
   });
 }
 
+/**
+ * Looks up records by primary key (`${sourceId}:${streamId}`), preserving
+ * `ids`' order and silently dropping any id with no matching record (the
+ * stream was removed from the provider since it was favourited/watched) —
+ * callers (catalog-store.ts's getRecordsByIds) never see a hole in the
+ * array. Used to resolve Continue Watching/Favorites entries, which only
+ * store bare ids, back into full displayable records without loading a
+ * source's whole catalog.
+ */
+export async function getRecordsByIds(catalogDb: CatalogDb, kind: CatalogKind, ids: string[]): Promise<CatalogRecord[]> {
+  if (ids.length === 0) return [];
+  const tx = catalogDb.db.transaction(storeName(kind), "readonly");
+  const store = tx.objectStore(storeName(kind));
+  const results = await Promise.all(ids.map((id) => runRequest(store.get(id))));
+  return results.filter((r): r is CatalogRecord => r !== undefined);
+}
+
 /** Total matching record count for the same filter shape queryPage uses, via IDBObjectStore/IDBIndex.count() rather than reading every row — backs "N results" affordances and hasMore checks. */
 export function countRecords(catalogDb: CatalogDb, kind: CatalogKind, options: Omit<QueryPageOptions, "offset" | "limit">): Promise<number> {
   const { sourceId, categoryId, namePrefixLower } = options;

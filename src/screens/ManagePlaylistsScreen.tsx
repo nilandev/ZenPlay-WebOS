@@ -77,6 +77,7 @@ export function ManagePlaylistsScreen({
           setIsAdding(false);
         }}
         onCancel={() => setIsAdding(false)}
+        platform={platform}
       />
     );
   }

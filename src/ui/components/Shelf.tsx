@@ -41,12 +41,13 @@ export function Shelf<T>({ title, items, getId, renderItem }: ShelfProps<T>): JS
           // overflow-x: auto forces overflow-y to clip too (the two axes
           // can't be independently visible/auto per spec), so top padding
           // has to be generous enough to contain FocusCard's focused-state
-          // scale(1.08) + translateY(-4px) growth — otherwise the focused
-          // card's top edge gets cut off by this track instead of just
-          // rendering outside its unpadded box. 32px covers that headroom
-          // for FocusCard's default 220x330 size with margin to spare.
+          // scale(1.05) growth — otherwise the focused card's top edge gets
+          // cut off by this track instead of just rendering outside its
+          // unpadded box. 32px covers that headroom for FocusCard's default
+          // 220x330 size with margin to spare.
           padding: "32px 40px 24px",
           scrollbarWidth: "none",
+          scrollBehavior: "smooth",
         }}
       >
         {items.map((item) => (

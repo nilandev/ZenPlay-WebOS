@@ -23,6 +23,25 @@
         box-sizing: border-box;
       }
 
+      html {
+        /*
+         * Root font-size drives every `rem` value in the app, so this is
+         * what actually makes `rem`-based layouts scale proportionally
+         * across display sizes (720p/1080p/4K) rather than every card/gap/
+         * icon/text staying pinned at a fixed px size regardless of
+         * viewport width. 1rem = 16px at a 1920px-wide viewport, 1rem =
+         * 32px at 3840px/4K, and so on — the min/max bounds only guard
+         * truly pathological window sizes (a sliver-thin browser window,
+         * or a multi-monitor-spanning one), not real TV resolutions.
+         * `vw`-based clamp() is inherently responsive to viewport resize
+         * with no JS needed. (Previously this was set on a div nested
+         * inside HomeScreen instead of here, which had no effect at all —
+         * CSS `rem` resolves against the document root's font-size, not
+         * the nearest styled ancestor's; only `em` does that.)
+         */
+        font-size: clamp(12px, 0.833vw, 40px);
+      }
+
       html, body, #root {
         margin: 0;
         min-height: 100%;

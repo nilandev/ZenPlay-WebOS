@@ -4,6 +4,7 @@ import {
   __resetCatalogDbForTests,
   countRecords,
   deleteStaleGeneration,
+  getRecordsByIds,
   getSyncMeta,
   openCatalogDb,
   putRecordsBatch,
@@ -88,6 +89,24 @@ describe("catalog-db", () => {
 
     const page = await queryPage(catalogDb, "vod", { sourceId: "source-1", offset: 0, limit: 10 });
     expect(page.map((r) => r.name)).toEqual(["Mine"]);
+  });
+
+  it("getRecordsByIds resolves records in the requested order, dropping ids with no match", async () => {
+    const catalogDb = await openCatalogDb();
+    await putRecordsBatch(catalogDb, "vod", [
+      record({ streamId: "1", name: "Alpha" }),
+      record({ streamId: "2", name: "Beta" }),
+      record({ streamId: "3", name: "Gamma" }),
+    ]);
+
+    const results = await getRecordsByIds(catalogDb, "vod", ["source-1:3", "source-1:1", "source-1:missing", "source-1:2"]);
+
+    expect(results.map((r) => r.name)).toEqual(["Gamma", "Alpha", "Beta"]);
+  });
+
+  it("getRecordsByIds returns an empty array for an empty id list without querying", async () => {
+    const catalogDb = await openCatalogDb();
+    await expect(getRecordsByIds(catalogDb, "vod", [])).resolves.toEqual([]);
   });
 
   it("counts matching records without reading them all", async () => {

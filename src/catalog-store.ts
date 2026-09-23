@@ -1,5 +1,12 @@
 import type { Channel, SeriesInfo } from "@core";
-import { countRecords, openCatalogDb, queryPage, type CatalogKind, type CatalogRecord } from "./core/storage/catalog-db.js";
+import {
+  countRecords,
+  getRecordsByIds as getCatalogDbRecordsByIds,
+  openCatalogDb,
+  queryPage,
+  type CatalogKind,
+  type CatalogRecord,
+} from "./core/storage/catalog-db.js";
 import { hasCompletedSync } from "./catalog-sync.js";
 
 /**
@@ -71,6 +78,27 @@ export async function getCatalogCount(sourceId: string, kind: CatalogKind, query
     categoryId: query.categoryId,
     namePrefixLower: query.namePrefix?.toLowerCase(),
   });
+}
+
+export async function getRecordsByIds(sourceId: string, kind: "vod", streamIds: string[]): Promise<Channel[]>;
+export async function getRecordsByIds(
+  sourceId: string,
+  kind: "series",
+  streamIds: string[],
+): Promise<Array<Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle">>>;
+/**
+ * Resolves bare stream ids (as stored in a Continue Watching/Favorites
+ * entry's contentId/episodeId) back into full Channel/SeriesInfo summaries,
+ * in the same order as `streamIds` — missing/removed streams are dropped
+ * rather than left as holes. Only covers vod/series, the two kinds
+ * catalog-db.ts indexes; live channels have no local catalog table and are
+ * resolved separately from content-cache.ts's live:<sourceId> list.
+ */
+export async function getRecordsByIds(sourceId: string, kind: CatalogKind, streamIds: string[]): Promise<unknown[]> {
+  const catalogDb = await openCatalogDb();
+  const ids = streamIds.map((streamId) => `${sourceId}:${streamId}`);
+  const records = await getCatalogDbRecordsByIds(catalogDb, kind, ids);
+  return kind === "vod" ? records.map((r) => recordToChannel(r, "movie")) : records.map(recordToSeriesSummary);
 }
 
 /**

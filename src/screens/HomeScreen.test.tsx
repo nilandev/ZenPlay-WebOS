@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource, Profile } from "@core";
 import { clearAllCachedContent, getCachedContent } from "../content-cache.js";
@@ -34,12 +34,16 @@ describe("HomeScreen", () => {
   beforeEach(() => {
     clearAllCachedContent();
     useFocusStore.getState().clearGraph("home-grid");
+    useFocusStore.getState().clearGraph("home-shelves");
+    useFocusStore.getState().clearGraph("home-sidebar");
     vi.useFakeTimers();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     useFocusStore.getState().clearGraph("home-grid");
+    useFocusStore.getState().clearGraph("home-shelves");
+    useFocusStore.getState().clearGraph("home-sidebar");
   });
 
   it("clicking Refresh revalidates the source's caches without reloading the page", async () => {
@@ -52,7 +56,16 @@ describe("HomeScreen", () => {
     const { loadChannelsByKind } = await import("../content-loader.js");
 
     render(
-      <HomeScreen source={source} platform="web" profile={profile} onSelectTile={() => {}} onOpenProfiles={() => {}} />,
+      <HomeScreen
+        source={source}
+        platform="web"
+        profile={profile}
+        onSelectTile={() => {}}
+        onOpenProfiles={() => {}}
+        onPlayMovie={() => {}}
+        onPlayChannel={() => {}}
+        onOpenSeries={() => {}}
+      />,
     );
 
     const refreshButton = screen.getByRole("button", { name: "Refresh" });
@@ -83,10 +96,89 @@ describe("HomeScreen", () => {
     });
 
     const { unmount } = render(
-      <HomeScreen source={source} platform="web" profile={profile} onSelectTile={() => {}} onOpenProfiles={() => {}} />,
+      <HomeScreen
+        source={source}
+        platform="web"
+        profile={profile}
+        onSelectTile={() => {}}
+        onOpenProfiles={() => {}}
+        onPlayMovie={() => {}}
+        onPlayChannel={() => {}}
+        onOpenSeries={() => {}}
+      />,
     );
     unmount();
 
     expect(reloadSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders the left sidebar with all six destinations", () => {
+    render(
+      <HomeScreen
+        source={source}
+        platform="web"
+        profile={profile}
+        onSelectTile={() => {}}
+        onOpenProfiles={() => {}}
+        onPlayMovie={() => {}}
+        onPlayChannel={() => {}}
+        onOpenSeries={() => {}}
+      />,
+    );
+
+    const sidebar = within(screen.getByRole("navigation"));
+    for (const label of ["Home", "Live TV", "Movies", "Series", "Guide", "Favorites", "History", "Settings"]) {
+      expect(sidebar.getByText(label)).toBeTruthy();
+    }
+  });
+
+  it("pressing Left from the header focuses the sidebar, and Right returns to it", () => {
+    render(
+      <HomeScreen
+        source={source}
+        platform="web"
+        profile={profile}
+        onSelectTile={() => {}}
+        onOpenProfiles={() => {}}
+        onPlayMovie={() => {}}
+        onPlayChannel={() => {}}
+        onOpenSeries={() => {}}
+      />,
+    );
+
+    // No hero and no shelves (no catalog data mocked in), so initial focus
+    // lands on the profile switcher in the header — see buildHomeFocusGraph.
+    expect(useFocusStore.getState().focusedId).toBe("profile-switcher");
+
+    act(() => {
+      useFocusStore.getState().move("left");
+    });
+    expect(useFocusStore.getState().focusedId).toBe("home");
+
+    act(() => {
+      useFocusStore.getState().move("right");
+    });
+    expect(useFocusStore.getState().focusedId).toBe("profile-switcher");
+  });
+
+  it("selecting a non-Home sidebar destination calls onSelectTile with its id", () => {
+    const onSelectTile = vi.fn();
+    render(
+      <HomeScreen
+        source={source}
+        platform="web"
+        profile={profile}
+        onSelectTile={onSelectTile}
+        onOpenProfiles={() => {}}
+        onPlayMovie={() => {}}
+        onPlayChannel={() => {}}
+        onOpenSeries={() => {}}
+      />,
+    );
+
+    const sidebar = within(screen.getByRole("navigation"));
+    fireEvent.click(sidebar.getByText("Movies"));
+
+    expect(onSelectTile).toHaveBeenCalledWith("movies");
   });
 });

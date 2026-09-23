@@ -8,10 +8,24 @@ export interface FocusCardProps {
   title: string;
   subtitle?: string;
   imageUrl?: string;
-  width?: number;
+  /**
+   * Defaults to 220 (px) for backward compatibility with callers whose
+   * layout math depends on this exact pixel value — VodScreen/SeriesScreen
+   * both hardcode a matching GRID_CARD_WIDTH constant that their D-pad grid
+   * focus graph (buildGridFocusGraph) needs to stay in sync with the CSS
+   * grid's real rendered column count, so changing this default would need
+   * to change that column-count math too (out of scope for the Home
+   * redesign this prop was touched for — see AC4's scope note in the
+   * implementation plan). Home's own shelves pass an explicit rem width
+   * instead of relying on this default, so they do scale with the root
+   * font-size even though the default itself doesn't.
+   */
+  width?: number | string;
   aspectRatio?: string;
   onSelect?: () => void;
   badge?: ReactNode;
+  /** 0–1 watch progress (e.g. positionSeconds / durationSeconds) — renders a thin filled bar near the card's bottom edge when set. Callers are expected to clamp/guard against NaN (e.g. a zero-length duration) before passing this in. */
+  progress?: number;
 }
 
 /**
@@ -38,17 +52,17 @@ export function FocusCard({
   aspectRatio = "2 / 3",
   onSelect,
   badge,
+  progress,
 }: FocusCardProps): JSX.Element {
   const isFocused = useFocusStore((state) => state.focusedId === id);
 
   const style: CSSProperties = {
     width,
-    transform: isFocused ? "scale(1.08) translateY(-4px)" : "scale(1)",
-    transition: "transform 160ms ease-out, box-shadow 160ms ease-out",
-    boxShadow: isFocused
-      ? "0 12px 28px rgba(0,0,0,0.55), 0 0 0 3px rgba(255,255,255,0.9)"
-      : "0 4px 10px rgba(0,0,0,0.35)",
-    borderRadius: 12,
+    transform: isFocused ? "scale(1.05)" : "scale(1)",
+    transition: "transform 250ms cubic-bezier(0.25, 1, 0.5, 1), border-color 250ms cubic-bezier(0.25, 1, 0.5, 1), box-shadow 250ms cubic-bezier(0.25, 1, 0.5, 1)",
+    border: isFocused ? "0.1875rem solid rgba(255,255,255,0.9)" : "0.1875rem solid transparent",
+    boxShadow: isFocused ? "0 0.75rem 1.75rem rgba(0,0,0,0.55)" : "0 0.25rem 0.625rem rgba(0,0,0,0.35)",
+    borderRadius: "0.75rem",
     overflow: "hidden",
     cursor: "pointer",
     background: "#1c1c22",
@@ -60,7 +74,7 @@ export function FocusCard({
       <div style={style} onClick={onSelect} role="button" tabIndex={-1}>
         <div style={{ position: "relative", width: "100%", aspectRatio }}>
           <URLImage src={imageUrl} alt="" seed={id} loading="lazy" />
-          {badge && <div style={{ position: "absolute", top: 8, right: 8 }}>{badge}</div>}
+          {badge && <div style={{ position: "absolute", top: "0.5rem", right: "0.5rem" }}>{badge}</div>}
           <div
             style={{
               position: "absolute",
@@ -69,15 +83,36 @@ export function FocusCard({
               flexDirection: "column",
               justifyContent: "flex-end",
               background: "linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(0,0,0,0.55) 80%, rgba(0,0,0,0.85) 100%)",
-              padding: "16px 10px 8px",
+              padding: "1rem 0.625rem 0.5rem",
             }}
           >
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", lineHeight: 1.3, textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
+            <div style={{ fontSize: "1.125rem", fontWeight: 700, color: "#fff", lineHeight: 1.3, textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
               {title}
             </div>
             {subtitle && (
-              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.8)", marginTop: 3, textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
+              <div style={{ fontSize: "0.875rem", color: "rgba(255,255,255,0.8)", marginTop: "0.1875rem", textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
                 {subtitle}
+              </div>
+            )}
+            {progress !== undefined && (
+              <div
+                aria-hidden
+                style={{
+                  marginTop: "0.5rem",
+                  height: "0.1875rem",
+                  borderRadius: 999,
+                  background: "rgba(255,255,255,0.25)",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    width: `${Math.min(1, Math.max(0, progress)) * 100}%`,
+                    height: "100%",
+                    background: "var(--accent, #38bdf8)",
+                    borderRadius: 999,
+                  }}
+                />
               </div>
             )}
           </div>

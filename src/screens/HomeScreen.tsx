@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Clapperboard,
   Heart,
   History as HistoryIcon,
+  Home as HomeIcon,
   ListVideo,
   Power,
   RadioTower,
@@ -11,15 +12,34 @@ import {
   Tv,
   type LucideIcon,
 } from "lucide-react";
-import type { Channel, PlatformId, PlaylistSource, Profile, SeriesInfo } from "@core";
-import { Clock, Focusable, MeshBackground, ProfileSwitcher, PROFILE_SWITCHER_FOCUS_ID, useFocusStore, useRemoteInput } from "@ui";
-import type { FocusNode } from "@ui";
+import type { Channel, ContinueWatchingEntry, EpgProgramme, PlatformId, PlaylistSource, Profile, SeriesInfo } from "@core";
+import { buildChannelGuides } from "@core";
+import {
+  buildShelfFocusGraph,
+  Clock,
+  Focusable,
+  FocusCard,
+  Hero,
+  HERO_PLAY_FOCUS_ID,
+  HeroSkeleton,
+  HomeSidebar,
+  MeshBackground,
+  ProfileSwitcher,
+  PROFILE_SWITCHER_FOCUS_ID,
+  Shelf,
+  ShelfRowSkeleton,
+  useFocusStore,
+  useRemoteInput,
+} from "@ui";
+import type { FocusNode, HeroContent, SidebarDestination } from "@ui";
 import { buildRevalidationTargets, revalidateStaleTargets, startBackgroundRevalidation } from "../cache-revalidator.js";
 import { startCatalogBackgroundSync } from "../catalog-sync.js";
-import { getCatalogPage } from "../catalog-store.js";
+import { getCatalogPage, getRecordsByIds } from "../catalog-store.js";
 import { getCachedContent } from "../content-cache.js";
 import { loadPlaylistInfo } from "../content-loader.js";
+import { pickHeroRotation, type HeroCandidate } from "../home-curation.js";
 import { schedulePrefetch } from "../idle-prefetch.js";
+import { loadContinueWatching } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 
 export interface HomeTile {
@@ -28,47 +48,69 @@ export interface HomeTile {
   icon: LucideIcon;
 }
 
-/** Hero row: primary content destinations, the reason someone opens the app. */
-const PRIMARY_TILES: HomeTile[] = [
+/** Header icon cluster: system-level actions, not content — kept out of the sidebar's content destinations. */
+const SYSTEM_TILES: HomeTile[] = [
+  { id: "refresh", label: "Refresh", icon: RefreshCw },
+  { id: "exit", label: "Exit", icon: Power },
+];
+
+/**
+ * Left sidebar's app destinations — the sole navigation surface for
+ * HomeScreen's content, replacing the previous two-row tile grid (Live
+ * TV/Movies/Series/Guide/My Favourite/History) entirely; see
+ * docs/Home Page Redesign.md §3 for the sidebar's originally-specified
+ * Home/Live TV/Movies/Series/Favorites/Settings set, extended here with
+ * Guide and History so every destination the old tile grid offered is
+ * still reachable, just from one place instead of two. "home" selects
+ * nothing (this screen already is Home) — its onSelect is a no-op, same as
+ * clicking a browser's current-page nav item.
+ */
+const SIDEBAR_DESTINATIONS: SidebarDestination[] = [
+  { id: "home", label: "Home", icon: HomeIcon },
   { id: "live", label: "Live TV", icon: RadioTower },
   { id: "movies", label: "Movies", icon: Clapperboard },
   { id: "series", label: "Series", icon: Tv },
-];
-
-/** Slim rail under the hero row: secondary content destinations. */
-const SECONDARY_TILES: HomeTile[] = [
   { id: "guide", label: "Guide", icon: ListVideo },
-  { id: "favourites", label: "My Favourite", icon: Heart },
+  { id: "favourites", label: "Favorites", icon: Heart },
   { id: "history", label: "History", icon: HistoryIcon },
-];
-
-/** Header icon cluster: system-level actions, not content — kept out of the content grid entirely. */
-const SYSTEM_TILES: HomeTile[] = [
   { id: "settings", label: "Settings", icon: SettingsIcon },
-  { id: "refresh", label: "Refresh", icon: RefreshCw },
-  { id: "exit", label: "Exit", icon: Power },
 ];
 
 const EMPTY_PLAYLIST_INFO = { name: "", expiresAt: null as Date | null };
 
 const SCOPE = "home-grid";
+const SHELVES_SCOPE = "home-shelves";
+/** HomeScreen's own sidebar destination — its content columns' leftmost nodes always return here, since this screen only ever shows "Home" as active in the sidebar. */
+const SIDEBAR_ACTIVE_ID = "home";
+
+/** Continue Watching shelf items are prefixed so a movie id can never collide with the same movie's id if it also happened to appear elsewhere in this screen's focus graph. */
+const continueWatchingItemId = (contentId: string) => `home-cw:${contentId}`;
+const recentlyAddedItemId = (id: string) => `home-recent:${id}`;
+
+interface ContinueWatchingCard {
+  entry: ContinueWatchingEntry;
+  title: string;
+  imageUrl?: string;
+}
 
 /**
- * Home hub shown after profile selection. Symmetric grid: Live TV/Movies/
- * Series form one row of equal-width cards, and Guide/My Favourite/History
- * sit directly beneath in a second row of equal width spanning the same
- * total width. A header icon cluster for system-level actions (Settings/
- * Refresh/Exit) sits above the grid, deliberately kept out of the content
- * grid itself.
+ * Home hub shown after profile selection. Header row (profile switcher +
+ * Refresh/Exit) sits above the Hero, which sits above the Continue
+ * Watching/Recently Added shelves — content destinations (Live TV, Movies,
+ * Series, Guide, Favorites, History, Settings) live entirely in the left
+ * sidebar now, not in a tile grid here.
  */
-function buildHomeFocusGraph(onOpenProfiles: () => void, onSystemAction: (id: string) => void): FocusNode[] {
-  const primaryIds = PRIMARY_TILES.map((t) => t.id);
-  const secondaryIds = SECONDARY_TILES.map((t) => t.id);
+function buildHomeFocusGraph(
+  onOpenProfiles: () => void,
+  onSystemAction: (id: string) => void,
+  belowHeaderId: string | undefined,
+  sidebarActiveId?: string,
+): FocusNode[] {
   const systemIds = SYSTEM_TILES.map((t) => t.id);
 
   const profileNode: FocusNode = {
     id: PROFILE_SWITCHER_FOCUS_ID,
-    neighbors: { right: systemIds[0], down: primaryIds[0] },
+    neighbors: { left: sidebarActiveId, right: systemIds[0], down: belowHeaderId },
     onSelect: onOpenProfiles,
   };
 
@@ -77,35 +119,26 @@ function buildHomeFocusGraph(onOpenProfiles: () => void, onSystemAction: (id: st
     neighbors: {
       left: index > 0 ? systemIds[index - 1] : PROFILE_SWITCHER_FOCUS_ID,
       right: index < systemIds.length - 1 ? systemIds[index + 1] : undefined,
-      down: primaryIds[Math.min(index, primaryIds.length - 1)],
+      down: belowHeaderId,
     },
     onSelect: () => onSystemAction(id),
   }));
 
-  const primaryNodes: FocusNode[] = primaryIds.map((id, index) => ({
-    id,
-    neighbors: {
-      left: index > 0 ? primaryIds[index - 1] : undefined,
-      right: index < primaryIds.length - 1 ? primaryIds[index + 1] : undefined,
-      up: index === 0 ? PROFILE_SWITCHER_FOCUS_ID : systemIds[Math.min(index, systemIds.length - 1)],
-      down: secondaryIds[index],
-    },
-  }));
-
-  const secondaryNodes: FocusNode[] = secondaryIds.map((id, index) => ({
-    id,
-    neighbors: {
-      left: index > 0 ? secondaryIds[index - 1] : undefined,
-      right: index < secondaryIds.length - 1 ? secondaryIds[index + 1] : undefined,
-      up: primaryIds[index],
-    },
-  }));
-
-  return [profileNode, ...systemNodes, ...primaryNodes, ...secondaryNodes];
+  return [profileNode, ...systemNodes];
 }
 
 const EMPTY_CHANNELS: Channel[] = [];
 const EMPTY_SERIES: SeriesInfo[] = [];
+const EMPTY_PROGRAMMES: EpgProgramme[] = [];
+
+function heroCandidateToContent(candidate: HeroCandidate): HeroContent {
+  return {
+    title: candidate.title,
+    backdropUrl: candidate.backdropUrl,
+    subtitle: candidate.kind === "live-now" ? candidate.nowPlayingTitle : undefined,
+    isLive: candidate.kind === "live-now",
+  };
+}
 
 export interface HomeScreenProps {
   source: PlaylistSource;
@@ -113,9 +146,27 @@ export interface HomeScreenProps {
   profile: Profile;
   onSelectTile: (tileId: string) => void;
   onOpenProfiles: () => void;
+  /** Resumes a Continue Watching movie directly, or plays a hero-curated movie — same callback shape as VodScreen/FavouritesScreen's onPlay. */
+  onPlayMovie: (movie: Channel) => void;
+  /** Plays a hero-curated live channel directly — same callback shape as FavouritesScreen's onPlayChannel. */
+  onPlayChannel: (channel: Channel) => void;
+  /** Resumes a Continue Watching series, or opens a hero-curated series, by navigating to the Series tab with this series pre-selected — same pattern as FavouritesScreen's onOpenSeries, since resuming/browsing needs SeriesScreen's own episode-list UI. */
+  onOpenSeries: (seriesId: string) => void;
+  /** Bumped whenever playback with a Continue Watching identity closes (see App.tsx) — depended on, not read, purely to re-trigger the Continue Watching shelf's load after a fresh watch updates localStorage. Same pattern as SeriesScreen's own continueWatchingVersion prop. */
+  continueWatchingVersion?: number;
 }
 
-export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProfiles }: HomeScreenProps): JSX.Element {
+export function HomeScreen({
+  source,
+  platform,
+  profile,
+  onSelectTile,
+  onOpenProfiles,
+  onPlayMovie,
+  onPlayChannel,
+  onOpenSeries,
+  continueWatchingVersion,
+}: HomeScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
 
@@ -149,11 +200,6 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
     [handleRefresh, handleExit, onSelectTile],
   );
 
-  useEffect(() => {
-    setGraph(SCOPE, buildHomeFocusGraph(onOpenProfiles, handleSystemAction), PRIMARY_TILES[0].id);
-    return () => clearGraph(SCOPE);
-  }, [setGraph, clearGraph, onOpenProfiles, handleSystemAction]);
-
   // Keeps this source's catalogs/EPG/account info from going stale while the
   // user lingers on Home or elsewhere in the app, so navigating into a tab
   // rarely has to wait on a real fetch — see cache-revalidator.ts. Home is
@@ -185,108 +231,298 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
     return startCatalogBackgroundSync(() => source);
   }, [source]);
 
-  useRemoteInput(platform, {
-    onSelect: (focusedId) => {
-      if (!focusedId || focusedId === PROFILE_SWITCHER_FOCUS_ID) return;
-      // System-tile nodes carry their own onSelect (see buildHomeFocusGraph)
-      // and are invoked by useFocusStore's select(); only content tiles are
-      // routed through the caller-supplied onSelectTile here.
-      const isSystemTile = SYSTEM_TILES.some((t) => t.id === focusedId);
-      if (!isSystemTile) onSelectTile(focusedId);
-    },
-  });
-
   const loadInfo = useCallback(() => loadPlaylistInfo(source), [source]);
   const { data: playlistInfo } = useCachedContent(`playlist-info:${source.id}`, "playlist-info", loadInfo, EMPTY_PLAYLIST_INFO);
 
-  // Tile collages are read passively from whatever LiveTvScreen has already
-  // cached (see content-cache.ts) for live, and from the local catalog
-  // table (see catalog-store.ts) for movies/series — Home never triggers
-  // its own live/movies/series fetch for this. Movies/series used to read
-  // content-cache.ts's own full-array blob the same way live still does,
-  // but that key is no longer kept warm by cache-revalidator.ts once a
-  // source has a synced local table (see buildRevalidationTargets' doc
-  // comment) — reading a small page from the local table instead is both
-  // cheaper and the only source of truth once synced. A brand-new,
-  // not-yet-synced source falls back to whatever content-cache.ts still
-  // holds from VodScreen/SeriesScreen's own legacy fetch, same as before.
-  const collageByTile = useMemo(() => {
-    const liveChannels = getCachedContent<Channel[]>(`live:${source.id}`) ?? EMPTY_CHANNELS;
-    const legacyMovies = getCachedContent<Channel[]>(`vod:${source.id}`) ?? EMPTY_CHANNELS;
-    const legacySeries = getCachedContent<SeriesInfo[]>(`series-list:${source.id}`) ?? EMPTY_SERIES;
-    return {
-      live: liveChannels
-        .map((c) => c.logoUrl)
-        .filter((url): url is string => Boolean(url))
-        .slice(0, 6),
-      movies: legacyMovies
-        .map((c) => c.logoUrl)
-        .filter((url): url is string => Boolean(url))
-        .slice(0, 6),
-      series: legacySeries
-        .map((s) => s.posterUrl)
-        .filter((url): url is string => Boolean(url))
-        .slice(0, 6),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source.id]);
-
-  // Fills in the movies/series collage from the local catalog table once a
-  // source has synced (see catalog-sync.ts) — an async IndexedDB read, so
-  // this can't be the synchronous useMemo above, and only overrides the
-  // legacy blob-cache collage when it actually found something (never
-  // clobbers a perfectly good collage with an empty one while this is still
-  // in flight, or for a source that just hasn't synced yet).
-  const [localCollage, setLocalCollage] = useState<{ movies: string[]; series: string[] }>({ movies: [], series: [] });
+  // Continue Watching shelf: entries only store profileId/contentId/kind
+  // (see profile-store.ts), so each one is resolved back into a
+  // displayable title/image via the local catalog table's id-lookup
+  // (getRecordsByIds — see catalog-store.ts) rather than loading a whole
+  // source's catalog just to filter it, the way FavouritesScreen currently
+  // has to for lack of that lookup. Entries whose stream was removed from
+  // the provider resolve to nothing and are silently dropped, so a stale
+  // entry never renders as a broken card.
+  const [continueWatchingCards, setContinueWatchingCards] = useState<ContinueWatchingCard[]>([]);
+  // Tracks this resolution's own in-flight state directly, rather than
+  // inferring "done" from continueWatchingCards.length > 0 — entries that
+  // all fail to resolve (every referenced stream removed from the
+  // provider) would otherwise leave that inference permanently stuck at
+  // "still loading", holding the hero skeleton up forever.
+  const [isContinueWatchingLoading, setIsContinueWatchingLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
-    setLocalCollage({ movies: [], series: [] });
-    Promise.all([getCatalogPage(source.id, "vod", { offset: 0, limit: 6 }), getCatalogPage(source.id, "series", { offset: 0, limit: 6 })])
+    setIsContinueWatchingLoading(true);
+    const entries = loadContinueWatching(profile.id);
+    if (entries.length === 0) {
+      setContinueWatchingCards([]);
+      setIsContinueWatchingLoading(false);
+      return;
+    }
+
+    const movieIds = entries.filter((e) => e.contentKind === "movie").map((e) => e.contentId);
+    const seriesIds = entries.filter((e) => e.contentKind === "series-episode").map((e) => e.contentId);
+
+    Promise.all([
+      movieIds.length > 0 ? getRecordsByIds(source.id, "vod", movieIds) : Promise.resolve([]),
+      seriesIds.length > 0 ? getRecordsByIds(source.id, "series", seriesIds) : Promise.resolve([]),
+    ])
       .then(([movies, series]) => {
         if (cancelled) return;
-        setLocalCollage({
-          movies: movies.map((c) => c.logoUrl).filter((url): url is string => Boolean(url)),
-          series: series.map((s) => s.posterUrl).filter((url): url is string => Boolean(url)),
-        });
+        const movieById = new Map(movies.map((m) => [m.id, m]));
+        const seriesById = new Map(series.map((s) => [s.id, s]));
+        const cards = entries
+          .map((entry): ContinueWatchingCard | null => {
+            if (entry.contentKind === "movie") {
+              const movie = movieById.get(entry.contentId);
+              return movie ? { entry, title: movie.name, imageUrl: movie.logoUrl } : null;
+            }
+            const series = seriesById.get(entry.contentId);
+            return series ? { entry, title: series.name, imageUrl: series.posterUrl } : null;
+          })
+          .filter((card): card is ContinueWatchingCard => card !== null)
+          .sort((a, b) => new Date(b.entry.updatedAt).getTime() - new Date(a.entry.updatedAt).getTime());
+        setContinueWatchingCards(cards);
+        setIsContinueWatchingLoading(false);
       })
       .catch(() => {
-        // IndexedDB unavailable, or nothing synced yet — the legacy blob-cache collage above is enough.
+        // IndexedDB unavailable, or this source hasn't synced its local catalog yet — an empty shelf (collapsed, see Shelf.tsx) is the right fallback rather than an error.
+        if (cancelled) return;
+        setContinueWatchingCards([]);
+        setIsContinueWatchingLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // continueWatchingVersion isn't read, only depended on — see its prop doc comment.
+  }, [profile.id, source.id, continueWatchingVersion]);
+
+  // Day-1 fallback shelf so Home never shows nothing but the hero before
+  // any watch history exists (spec Scenario C's "smart promotion") — just
+  // the first page of the local VOD catalog, newest-synced-first; see
+  // home-curation.ts's pickRecentlyAdded doc comment for why this is
+  // explicitly not a real "trending" signal.
+  const [recentlyAdded, setRecentlyAdded] = useState<Channel[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getCatalogPage(source.id, "vod", { offset: 0, limit: 12 })
+      .then((page) => {
+        if (!cancelled) setRecentlyAdded(page);
+      })
+      .catch(() => {
+        if (!cancelled) setRecentlyAdded([]);
       });
     return () => {
       cancelled = true;
     };
   }, [source.id]);
 
+  const shelfRows = useMemo(() => {
+    const rows: string[][] = [];
+    if (continueWatchingCards.length > 0) rows.push(continueWatchingCards.map((card) => continueWatchingItemId(card.entry.contentId)));
+    if (recentlyAdded.length > 0) rows.push(recentlyAdded.map((item) => recentlyAddedItemId(item.id)));
+    return rows;
+  }, [continueWatchingCards, recentlyAdded]);
+
+  // Hero curation: ranks candidates from data this screen already has —
+  // Continue Watching (resolved above), live channels + EPG read passively
+  // from whatever LiveTvScreen/GuideScreen have already cached (never a
+  // fresh fetch — Home never triggers its own live/EPG fetch), and the
+  // Recently Added page. isHeroLoading mirrors Continue Watching's own
+  // loading flag — the one genuinely async input; live/EPG/recently-added
+  // are already available synchronously or start empty, so there's no
+  // separate "still loading" state to track for them.
+  const isHeroLoading = isContinueWatchingLoading;
+
+  const heroCandidates = useMemo(() => {
+    const liveChannels = getCachedContent<Channel[]>(`live:${source.id}`) ?? EMPTY_CHANNELS;
+    const epgProgrammes = getCachedContent<EpgProgramme[]>(`guide-epg:${source.id}`) ?? EMPTY_PROGRAMMES;
+    const continueWatchingContent = new Map(
+      continueWatchingCards.map((card) => [card.entry.contentId, { title: card.title, backdropUrl: card.imageUrl }]),
+    );
+    return pickHeroRotation({
+      continueWatching: continueWatchingCards.map((card) => card.entry),
+      continueWatchingContent,
+      liveChannels,
+      epgGuides: buildChannelGuides(epgProgrammes),
+      recentVod: recentlyAdded,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [continueWatchingCards, recentlyAdded, source.id]);
+
+  // Reset to the lead candidate whenever the ranked list's own top pick
+  // changes (e.g. a fresh Continue Watching entry lands and should be shown
+  // immediately, not after the rotation happens to cycle back to it).
+  const [heroIndex, setHeroIndex] = useState(0);
+  useEffect(() => {
+    setHeroIndex(0);
+  }, [heroCandidates.length > 0 ? heroCandidates[0].id : null]);
+  const activeHeroCandidate = heroCandidates[heroIndex] ?? heroCandidates[0];
+
+  // Hero and header nodes are registered in the same scope (SCOPE) — not a
+  // separate one — since setGraph's initialFocusId is only honored against
+  // its own call's node list (see focus-store.ts), so keeping them together
+  // is what lets a single setGraph call reliably place initial focus on the
+  // hero's Play button (or the header, if there's no hero) instead of
+  // racing two scopes' registration order.
+  const hasHero = heroCandidates.length > 0;
+  // First thing below the header: the hero's Play button when present,
+  // otherwise the first shelf row's first item, otherwise nothing (an
+  // entirely empty Day-1 Home with no hero and no shelves yet).
+  const belowHeaderId = hasHero ? HERO_PLAY_FOCUS_ID : shelfRows[0]?.[0];
+  // Guards the one-time initial-focus override below — content should only
+  // ever claim focus back from wherever the user currently is on the very
+  // first mount, never on a later re-registration (e.g. a shelf finishing
+  // its load shouldn't yank focus away mid-navigation).
+  const hasSetInitialFocusRef = useRef(false);
+  useEffect(() => {
+    const headerNodes = buildHomeFocusGraph(onOpenProfiles, handleSystemAction, belowHeaderId, SIDEBAR_ACTIVE_ID);
+    const heroNodes: FocusNode[] = hasHero
+      ? [{ id: HERO_PLAY_FOCUS_ID, neighbors: { left: SIDEBAR_ACTIVE_ID, up: PROFILE_SWITCHER_FOCUS_ID, down: shelfRows[0]?.[0] } }]
+      : [];
+    const initialId = belowHeaderId ?? PROFILE_SWITCHER_FOCUS_ID;
+    setGraph(SCOPE, [...headerNodes, ...heroNodes], initialId);
+    // setGraph's own initialFocusId only wins when focusedId isn't already
+    // valid in some other scope (see focus-store.ts) — HomeSidebar's sibling
+    // effect registers around the same time and can otherwise win this race
+    // non-deterministically depending on effect order. An explicit focus()
+    // call makes content's claim to initial focus unconditional, once.
+    if (!hasSetInitialFocusRef.current) {
+      hasSetInitialFocusRef.current = true;
+      useFocusStore.getState().focus(initialId);
+    }
+    return () => clearGraph(SCOPE);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setGraph, clearGraph, onOpenProfiles, handleSystemAction, belowHeaderId, hasHero, shelfRows[0]?.[0]]);
+
+  useEffect(() => {
+    if (shelfRows.length === 0) return;
+    const nodes = buildShelfFocusGraph(shelfRows).map((node, index) => {
+      const isTopRow = index < shelfRows[0].length;
+      const isLeftmostInRow = shelfRows.some((row) => row[0] === node.id);
+      return {
+        ...node,
+        neighbors: {
+          ...node.neighbors,
+          up: isTopRow ? (hasHero ? HERO_PLAY_FOCUS_ID : PROFILE_SWITCHER_FOCUS_ID) : node.neighbors.up,
+          left: isLeftmostInRow ? SIDEBAR_ACTIVE_ID : node.neighbors.left,
+        },
+      };
+    });
+    setGraph(SHELVES_SCOPE, nodes);
+    return () => clearGraph(SHELVES_SCOPE);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setGraph, clearGraph, shelfRows.map((r) => r.join(",")).join("|"), hasHero]);
+
+  const handlePlayContinueWatching = useCallback(
+    (card: ContinueWatchingCard) => {
+      if (card.entry.contentKind === "movie") {
+        onPlayMovie({ id: card.entry.contentId, name: card.title, logoUrl: card.imageUrl, streamUrl: "", kind: "movie" });
+      } else {
+        onOpenSeries(card.entry.contentId);
+      }
+    },
+    [onPlayMovie, onOpenSeries],
+  );
+
+  // Details has no dedicated detail screen to land on for movies/live (this
+  // app plays directly on select everywhere else too, see VodScreen) — for
+  // a series it's meaningfully different (opens Series' episode list rather
+  // than guessing which episode to resume), so only that case diverges from
+  // Play; movie/live both just play, same as Play.
+  const handleHeroAction = useCallback(
+    (candidate: HeroCandidate | undefined) => {
+      if (!candidate) return;
+      if (candidate.contentKind === "series") {
+        onOpenSeries(candidate.id);
+      } else if (candidate.contentKind === "movie") {
+        onPlayMovie({ id: candidate.id, name: candidate.title, logoUrl: candidate.backdropUrl, streamUrl: "", kind: "movie" });
+      } else {
+        const liveChannels = getCachedContent<Channel[]>(`live:${source.id}`) ?? EMPTY_CHANNELS;
+        const channel = liveChannels.find((c) => c.id === candidate.id);
+        if (channel) onPlayChannel(channel);
+      }
+    },
+    [onPlayMovie, onOpenSeries, onPlayChannel, source.id],
+  );
+
+  useRemoteInput(platform, {
+    onSelect: (focusedId) => {
+      if (!focusedId || focusedId === PROFILE_SWITCHER_FOCUS_ID) return;
+      // System-tile nodes carry their own onSelect (see buildHomeFocusGraph)
+      // and are invoked by useFocusStore's select(); only content tiles and
+      // shelf items are routed through here.
+      const isSystemTile = SYSTEM_TILES.some((t) => t.id === focusedId);
+      if (isSystemTile) return;
+
+      if (focusedId.startsWith("home-cw:")) {
+        const contentId = focusedId.slice("home-cw:".length);
+        const card = continueWatchingCards.find((c) => c.entry.contentId === contentId);
+        if (card) handlePlayContinueWatching(card);
+        return;
+      }
+      if (focusedId.startsWith("home-recent:")) {
+        const id = focusedId.slice("home-recent:".length);
+        const movie = recentlyAdded.find((m) => m.id === id);
+        if (movie) onPlayMovie(movie);
+        return;
+      }
+      if (focusedId === HERO_PLAY_FOCUS_ID) {
+        handleHeroAction(activeHeroCandidate);
+        return;
+      }
+
+      onSelectTile(focusedId);
+    },
+  });
+
   return (
     <MeshBackground>
       {/*
-       * Scoped scaling root: every size below this point is in rem, and this
-       * font-size ties 1rem to viewport width (1rem = 16px at a 1920px-wide
-       * viewport, 1rem = 32px at 3840px/4K, and so on — proportional at any
-       * width, not capped early). The min/max bounds only guard truly
-       * pathological window sizes (a sliver-thin browser window, or a
-       * multi-monitor-spanning one), not real TV resolutions. This makes the
-       * entire layout — cards, gaps, icons, text — scale together as one
-       * unit at any resolution, instead of just the outer margins being
-       * relative while everything inside stayed fixed-px (which looked wrong
-       * at both small and very large viewports — see conversation history).
+       * Every size below this point is in rem, which scales proportionally
+       * with viewport width via the root font-size set globally in
+       * index.html's <style> block (`rem` always resolves against the
+       * document root, not a nested ancestor, so the scaling has to be set
+       * there rather than on this div — see that file's comment for the
+       * detail). This makes the entire layout — cards, gaps, icons, text —
+       * scale together as one unit at any resolution, instead of just the
+       * outer margins being relative while everything inside stayed
+       * fixed-px.
        */}
       <div
         style={{
           height: "100vh",
           overflow: "hidden",
-          fontSize: "clamp(12px, 0.833vw, 40px)",
-          padding: "2rem 4.5rem 1.75rem",
           display: "flex",
           flexDirection: "column",
+          // TV-safe-area inset: most TVs overscan (crop) a percentage of
+          // the rendered frame at each edge, and hardware/firmware differs
+          // in how much — 2.5% is the standard conservative allowance (a
+          // common broadcast/TV-app convention) so the sidebar's leftmost
+          // items, the hero's edges, and the footer's playlist text stay
+          // inside every real display's visible area instead of being
+          // clipped by the panel's own bezel-hiding crop.
+          padding: "2.5vh 2.5vw",
+          boxSizing: "border-box",
         }}
       >
+        {/*
+         * Top bar spans the full width (sidebar + content), not just the
+         * content column — the profile chip sits above the sidebar's own
+         * left edge, the clock is centered on the whole screen, and the
+         * system icons stay top-right. Previously this row lived entirely
+         * inside the content column, which put the profile chip above Home
+         * TILE content instead of above the sidebar it actually switches —
+         * see conversation history/screenshot.
+         */}
         <header
           style={{
             position: "relative",
             display: "flex",
             alignItems: "flex-start",
             justifyContent: "space-between",
+            flexShrink: 0,
+            paddingBottom: "3rem",
           }}
         >
           <Focusable id={PROFILE_SWITCHER_FOCUS_ID}>
@@ -314,59 +550,86 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
           </div>
         </header>
 
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            padding: "0.5rem 2rem",
-            margin: "0 12rem",
-          }}
-        >
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}
-          >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: `repeat(${PRIMARY_TILES.length}, 1fr)`,
-                gap: "1.75rem",
-              }}
-            >
-              {PRIMARY_TILES.map((tile) => (
-                <HeroTileCard
-                  key={tile.id}
-                  tile={tile}
-                  collageImages={
-                    (tile.id === "movies" && localCollage.movies.length > 0
-                      ? localCollage.movies
-                      : tile.id === "series" && localCollage.series.length > 0
-                        ? localCollage.series
-                        : undefined) ?? collageByTile[tile.id as keyof typeof collageByTile]
-                  }
-                  onSelect={() => onSelectTile(tile.id)}
-                />
-              ))}
-            </div>
+        <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+          <HomeSidebar
+            destinations={SIDEBAR_DESTINATIONS}
+            activeId={SIDEBAR_ACTIVE_ID}
+            onSelect={onSelectTile}
+            rightEntryId={belowHeaderId ?? PROFILE_SWITCHER_FOCUS_ID}
+          />
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: `repeat(${SECONDARY_TILES.length}, 1fr)`,
-                gap: "1.75rem",
-              }}
-            >
-              {SECONDARY_TILES.map((tile) => (
-                <SecondaryRailItem
-                  key={tile.id}
-                  tile={tile}
-                  onSelect={() => onSelectTile(tile.id)}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: "100%",
+              overflowY: shelfRows.length > 0 ? "auto" : "hidden",
+              overflowX: "hidden",
+              // Right edge trimmed to roughly match the other three (was
+              // 4.5rem, a pre-existing stand-in for a real safe-area before
+              // this screen's outer 2.5vw/2.5vh inset above existed).
+              padding: "0 1.75rem 0 1rem",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+        {isHeroLoading ? (
+          <HeroSkeleton />
+        ) : (
+          hasHero && (
+            <Hero
+              platform={platform}
+              content={heroCandidates.map(heroCandidateToContent)}
+              isLoading={false}
+              activeIndex={heroIndex}
+              onActiveIndexChange={setHeroIndex}
+              onPlay={() => handleHeroAction(activeHeroCandidate)}
+            />
+          )
+        )}
+
+        {continueWatchingCards.length > 0 && (
+          <Shelf
+            title="Continue Watching"
+            items={continueWatchingCards}
+            getId={(card) => continueWatchingItemId(card.entry.contentId)}
+            renderItem={(card) => (
+              <FocusCard
+                id={continueWatchingItemId(card.entry.contentId)}
+                title={card.title}
+                imageUrl={card.imageUrl}
+                onSelect={() => handlePlayContinueWatching(card)}
+                // Explicit rem width (unlike FocusCard's own 220px default —
+                // see its width prop doc comment on why that default stays
+                // fixed-px) so Home's shelves scale with the root font-size;
+                // Shelf rows are free-flowing flex, not a fixed-column grid,
+                // so there's no column-count math this needs to stay in
+                // sync with the way VodScreen/SeriesScreen's grids do.
+                width="13.75rem"
+                progress={
+                  card.entry.durationSeconds > 0 ? Math.min(1, Math.max(0, card.entry.positionSeconds / card.entry.durationSeconds)) : undefined
+                }
+              />
+            )}
+          />
+        )}
+
+        {recentlyAdded.length > 0 && (
+          <Shelf
+            title="Recently Added"
+            items={recentlyAdded}
+            getId={(item) => recentlyAddedItemId(item.id)}
+            renderItem={(item) => (
+              <FocusCard
+                id={recentlyAddedItemId(item.id)}
+                title={item.name}
+                imageUrl={item.logoUrl}
+                onSelect={() => onPlayMovie(item)}
+                width="13.75rem"
+              />
+            )}
+          />
+        )}
 
         <footer
           style={{
@@ -398,6 +661,8 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
             v{__APP_VERSION__}
           </div>
         </footer>
+          </div>
+        </div>
       </div>
     </MeshBackground>
   );
@@ -409,199 +674,9 @@ function formatExpiry(expiresAt: Date | null): string {
 }
 
 /**
- * Hero card for the primary row (Live TV/Movies/Series). Icon+label are
- * centered rather than bottom-anchored. The content collage (when
- * logos/posters loaded) sits behind them as a faint, blurred texture rather
- * than the card's primary focus — IPTV-provided logo/poster URLs are
- * frequently missing or dead, so the card can't depend on them to look
- * intentional; the centered icon+label is what carries the card regardless
- * of whether any images loaded.
- */
-function HeroTileCard({
-  tile,
-  collageImages,
-  onSelect,
-}: {
-  tile: HomeTile;
-  collageImages?: string[];
-  onSelect: () => void;
-}): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === tile.id);
-  const Icon = tile.icon;
-  const [brokenUrls, setBrokenUrls] = useState<Set<string>>(new Set());
-
-  // IPTV logo/poster URLs are frequently dead — drop broken images from the
-  // collage individually rather than showing a broken-image icon or falling
-  // back to nothing; if every image fails, the card still stands on its own
-  // (flat gradient + icon + label), so there's no error state to render here.
-  const visibleImages = (collageImages ?? []).filter((url) => !brokenUrls.has(url));
-
-  return (
-    <Focusable id={tile.id}>
-      <div style={{ position: "relative", height: "100%" }}>
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            inset: "-1.25rem",
-            borderRadius: "2.5rem",
-            background: "radial-gradient(closest-side, rgba(56,189,248,0.7) 0%, rgba(56,189,248,0.25) 45%, rgba(56,189,248,0) 75%)",
-            filter: "blur(0.75rem)",
-            opacity: isFocused ? 1 : 0,
-            transform: isFocused ? "scale(1)" : "scale(0.85)",
-            transition: "opacity 260ms ease-out, transform 260ms ease-out",
-            pointerEvents: "none",
-          }}
-        />
-        <button
-          type="button"
-          onClick={onSelect}
-          style={{
-            position: "relative",
-            width: "100%",
-            aspectRatio: "0.82 / 1",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "0.875rem",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "1.75rem",
-            background: "linear-gradient(160deg, rgba(40,42,48,0.6) 0%, rgba(14,15,18,0.7) 100%)",
-            boxShadow: isFocused
-              ? "inset 0 1px 0 rgba(255,255,255,0.4), 0 0 1rem 0.125rem rgba(56,189,248,0.6), 0 1.875rem 3.75rem -0.75rem rgba(0,0,0,0.65)"
-              : "inset 0 1px 0 rgba(255,255,255,0.1), 0 0.625rem 1.5rem -0.5rem rgba(0,0,0,0.5)",
-            transform: isFocused ? "scale(1.045) translateY(-0.375rem)" : "scale(1)",
-            transition: "transform 220ms cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 220ms ease-out, border-color 220ms ease-out",
-            cursor: "pointer",
-            overflow: "hidden",
-            padding: 0,
-          }}
-        >
-          {visibleImages.length > 0 && (
-            <div
-              aria-hidden
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gridTemplateRows: "repeat(2, 1fr)",
-                opacity: 0.65,
-                filter: "blur(0.375rem) brightness(0.65) saturate(120%)",
-                transition: "opacity 400ms ease-out",
-              }}
-            >
-              {visibleImages.map((url) => (
-                <img
-                  key={url}
-                  src={url}
-                  alt=""
-                  loading="lazy"
-                  onError={() => setBrokenUrls((prev) => new Set(prev).add(url))}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    objectPosition: "center",
-                  }}
-                />
-              ))}
-            </div>
-          )}
-          <Icon
-            size="3.25rem"
-            strokeWidth={1.25}
-            color={isFocused ? "var(--accent)" : "var(--text)"}
-            style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))", position: "relative" }}
-          />
-          <span
-            style={{
-              fontSize: "1.5rem",
-              fontWeight: 600,
-              color: "var(--text)",
-              letterSpacing: 0.2,
-              position: "relative",
-            }}
-          >
-            {tile.label}
-          </span>
-        </button>
-      </div>
-    </Focusable>
-  );
-}
-
-/**
- * Secondary rail item (Guide/My Favourite/History): a wide rectangular card
- * with icon+label inline side-by-side rather than stacked — reads as a
- * lighter-weight nav row beneath the hero cards rather than a smaller
- * version of them. Deliberately no content collage or color identity; this
- * row is about navigation, not content preview, so it stays visually
- * quieter than the hero row.
- */
-function SecondaryRailItem({ tile, onSelect }: { tile: HomeTile; onSelect: () => void }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === tile.id);
-  const Icon = tile.icon;
-
-  return (
-    <Focusable id={tile.id}>
-      <div style={{ position: "relative", height: "100%" }}>
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            inset: "-0.625rem",
-            borderRadius: "1.5rem",
-            background: "radial-gradient(closest-side, rgba(56,189,248,0.55) 0%, rgba(56,189,248,0.18) 45%, rgba(56,189,248,0) 75%)",
-            filter: "blur(0.5rem)",
-            opacity: isFocused ? 1 : 0,
-            transform: isFocused ? "scale(1)" : "scale(0.9)",
-            transition: "opacity 220ms ease-out, transform 220ms ease-out",
-            pointerEvents: "none",
-          }}
-        />
-        <button
-          type="button"
-          onClick={onSelect}
-          style={{
-            position: "relative",
-            width: "100%",
-            height: "6rem",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "0.875rem",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "1.75rem",
-            background: isFocused
-              ? "linear-gradient(160deg, rgba(52,54,60,0.7) 0%, rgba(20,21,25,0.75) 100%)"
-              : "linear-gradient(160deg, rgba(28,29,34,0.55) 0%, rgba(12,13,16,0.6) 100%)",
-            backdropFilter: "blur(16px) saturate(120%)",
-            WebkitBackdropFilter: "blur(16px) saturate(120%)",
-            boxShadow: isFocused
-              ? "inset 0 1px 0 rgba(255,255,255,0.3), 0 0 0.875rem 0.0625rem rgba(56,189,248,0.55), 0 1rem 2rem -0.625rem rgba(0,0,0,0.55)"
-              : "inset 0 1px 0 rgba(255,255,255,0.08), 0 0.375rem 1rem -0.375rem rgba(0,0,0,0.4)",
-            transform: isFocused ? "scale(1.03)" : "scale(1)",
-            transition: "transform 200ms cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 200ms ease-out, border-color 200ms ease-out, background 200ms ease-out",
-            cursor: "pointer",
-          }}
-        >
-          <Icon size="1.5rem" strokeWidth={1.6} color={isFocused ? "var(--accent)" : "var(--text-dim)"} />
-          <span style={{ fontSize: "1rem", fontWeight: 600, color: isFocused ? "var(--text)" : "var(--text-dim)", whiteSpace: "nowrap" }}>
-            {tile.label}
-          </span>
-        </button>
-      </div>
-    </Focusable>
-  );
-}
-
-/**
- * Header icon cluster (Settings/Refresh/Exit): system-level actions kept
- * out of the content grid entirely so the grid stays purely about content
- * destinations — see buildHomeFocusGraph's doc comment. Small circular
- * icon-only buttons, matching the header's own scale rather than the grid's.
+ * Header icon cluster (Refresh/Exit): system-level actions, distinct from
+ * the left sidebar's content destinations (which now include Settings —
+ * see SIDEBAR_DESTINATIONS). Small circular icon-only buttons.
  */
 function SystemIconButton({ tile, isSpinning, onSelect }: { tile: HomeTile; isSpinning?: boolean; onSelect: () => void }): JSX.Element {
   const isFocused = useFocusStore((state) => state.focusedId === tile.id);
