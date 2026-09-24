@@ -68,8 +68,10 @@ function resolveStandardKey(event: KeyboardEvent): RemoteAction {
     case "MediaFastForward":
       return "fast-forward";
     case "ChannelUp":
+    case "PageUp": // LG remotes report CH+ as PageUp (keyCode 33)
       return "channel-up";
     case "ChannelDown":
+    case "PageDown": // …and CH− as PageDown (keyCode 34)
       return "channel-down";
     default:
       return "unknown";
@@ -107,6 +109,8 @@ function resolveWebOsBackKey(event: KeyboardEvent): RemoteAction {
  * https://webostv.developer.lge.com/develop/guides/magic-remote
  */
 const WEBOS_MEDIA_KEYCODES: Record<number, RemoteAction> = {
+  33: "channel-up",
+  34: "channel-down",
   415: "play",
   19: "pause",
   413: "stop",
@@ -119,4 +123,12 @@ function resolveWebOsKey(event: KeyboardEvent): RemoteAction {
   const standard = resolveStandardKey(event);
   if (standard !== "unknown") return standard;
   return WEBOS_MEDIA_KEYCODES[event.keyCode] ?? "unknown";
+}
+
+/** The number a digit key stands for (top-row or keypad digits, by key or keyCode), or null for any other key — for tuning channels by number. */
+export function resolveDigitKey(event: KeyboardEvent): number | null {
+  if (/^[0-9]$/.test(event.key)) return Number(event.key);
+  if (event.keyCode >= 48 && event.keyCode <= 57) return event.keyCode - 48;
+  if (event.keyCode >= 96 && event.keyCode <= 105) return event.keyCode - 96;
+  return null;
 }

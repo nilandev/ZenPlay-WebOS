@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Check, FastForward, ListVideo, Pause, Play, Rewind, SkipForward, Subtitles } from "lucide-react";
+import type { NowNext } from "@core";
 import type { AudioTrackInfo, SubtitleTrackInfo } from "@player";
 import { buildShelfFocusGraph } from "../focus/build-shelf-graph.js";
 import { Focusable, FocusScrollManagedContext } from "../focus/Focusable.js";
 import { useFocusStore, useIsFocused, type FocusNode } from "../focus/focus-store.js";
 import { BROWSE_SIDE_PADDING, TV_TEXT } from "../tv-metrics.js";
+import { ChannelChip, NextProgrammeLine, OnNowTimeline } from "./LiveGuideInfo.js";
 import { TvButton } from "./TvButton.js";
 
 const SCOPE = "player-controls";
@@ -39,8 +41,16 @@ export interface PlaybackControlsProps {
   /** null means "off". */
   activeSubtitleTrackId: number | null;
   hasNextEpisode: boolean;
-  /** Live TV: no seek bar or scrubbing; a LIVE badge next to the title instead. */
+  /**
+   * Live TV: no seek bar or scrubbing. Shown with the channel number and
+   * what's on now from the guide — deliberately never "LIVE", since most
+   * of what a channel airs is recorded.
+   */
   isLive?: boolean;
+  /** Live TV: the channel's number, for the channel chip. */
+  channelNumber?: number;
+  /** Live TV: what's on now and next, when the channel has guide data. */
+  nowNext?: NowNext | null;
   /** Renders the Audio & Subtitles panel. */
   isMenuOpen: boolean;
   /** Any panel over the controls (Audio & Subtitles, Episodes) — the controls' own focus nodes are withdrawn meanwhile. */
@@ -145,6 +155,11 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
 
   useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
+  // Live TV with guide data: the programme is the heading and the channel
+  // moves into the chip ("CH 101 · BBC One HD"); without it, the channel name.
+  const onNow = isLive ? props.nowNext?.now : undefined;
+  const heading = onNow ? onNow.title : title;
+
   const shownPosition = pendingSeekSeconds ?? positionSeconds;
   const progressRatio = durationSeconds > 0 ? Math.min(1, Math.max(0, shownPosition / durationSeconds)) : 0;
   const shownRemaining = Math.max(0, durationSeconds - shownPosition);
@@ -168,7 +183,11 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
       >
         <div style={{ display: "flex", alignItems: "flex-end", gap: "2rem", marginBottom: "1.75rem" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            {isLive && <LiveBadge />}
+            {isLive && (
+              <div style={{ marginBottom: "0.75rem" }}>
+                <ChannelChip number={props.channelNumber} name={onNow ? title : undefined} />
+              </div>
+            )}
             <div
               style={{
                 fontSize: "2.75rem",
@@ -181,12 +200,19 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
                 textShadow: "0 0.125rem 0.75rem rgba(0,0,0,0.6)",
               }}
             >
-              {title}
+              {heading}
             </div>
             {subtitle && <div style={{ fontSize: TV_TEXT, color: "rgba(255,255,255,0.75)", marginTop: "0.375rem" }}>{subtitle}</div>}
           </div>
           {endsAt && <div style={{ fontSize: TV_TEXT, color: "rgba(255,255,255,0.7)", flexShrink: 0 }}>Ends at {endsAt}</div>}
         </div>
+
+        {isLive && (onNow || props.nowNext?.next) && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "2rem" }}>
+            {onNow && <OnNowTimeline programme={onNow} barWidth="28rem" />}
+            {props.nowNext?.next && <NextProgrammeLine programme={props.nowNext.next} />}
+          </div>
+        )}
 
         {!isLive && (
           <div style={{ display: "flex", alignItems: "center", gap: "1.5rem", marginBottom: "2rem" }}>
@@ -321,29 +347,6 @@ function SeekBadge({ deltaSeconds }: { deltaSeconds: number }): JSX.Element {
       <Icon size="2.5rem" fill="currentColor" />
       {isBack ? "-" : "+"}
       {label}
-    </div>
-  );
-}
-
-function LiveBadge(): JSX.Element {
-  return (
-    <div
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "0.625rem",
-        padding: "0.375rem 1rem",
-        marginBottom: "0.75rem",
-        borderRadius: "0.5rem",
-        background: "#e5332a",
-        color: "#fff",
-        fontSize: "1.125rem",
-        fontWeight: 800,
-        letterSpacing: "0.08em",
-      }}
-    >
-      <span aria-hidden style={{ width: "0.625rem", height: "0.625rem", borderRadius: "50%", background: "#fff" }} />
-      LIVE
     </div>
   );
 }

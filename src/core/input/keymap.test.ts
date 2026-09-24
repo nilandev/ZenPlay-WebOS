@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveRemoteAction } from "./keymap.js";
+import { resolveDigitKey, resolveRemoteAction } from "./keymap.js";
 
 function makeEvent(init: Partial<KeyboardEvent> & { key?: string; code?: string; keyCode?: number }): KeyboardEvent {
   const event = new KeyboardEvent("keydown", { key: init.key ?? "" });
@@ -88,5 +88,21 @@ describe("resolveRemoteAction — media keys", () => {
 
   it("doesn't read LG keyCodes on the web keymap", () => {
     expect(resolveRemoteAction("web", makeEvent({ key: "Unidentified", keyCode: 19 }))).toBe("unknown");
+  });
+});
+
+describe("channel keys", () => {
+  it("maps CH+/CH− (and LG's PageUp/PageDown codes) to channel up/down", () => {
+    expect(resolveRemoteAction("web", makeEvent({ key: "ChannelUp" }))).toBe("channel-up");
+    expect(resolveRemoteAction("web", makeEvent({ key: "PageDown" }))).toBe("channel-down");
+    expect(resolveRemoteAction("webos", makeEvent({ key: "Unidentified", keyCode: 33 }))).toBe("channel-up");
+    expect(resolveRemoteAction("webos", makeEvent({ key: "Unidentified", keyCode: 34 }))).toBe("channel-down");
+  });
+
+  it("reads digit keys by key or keyCode, including the keypad", () => {
+    expect(resolveDigitKey(makeEvent({ key: "7" }))).toBe(7);
+    expect(resolveDigitKey(makeEvent({ key: "Unidentified", keyCode: 50 }))).toBe(2);
+    expect(resolveDigitKey(makeEvent({ key: "Unidentified", keyCode: 105 }))).toBe(9);
+    expect(resolveDigitKey(makeEvent({ key: "a", keyCode: 65 }))).toBeNull();
   });
 });

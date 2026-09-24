@@ -18,14 +18,15 @@ import { loadChannelsByKind, loadLiveCategories } from "../content-loader.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useNowNext } from "../use-now-next.js";
+import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
 
 export interface LiveTvScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
   profile: Profile;
   onBack: () => void;
-  /** Enters full-screen playback for the given channel — see App.tsx's playLive. */
-  onPlay: (channel: Channel) => void;
+  /** Enters full-screen playback for the given channel — see App.tsx's playLive. The lineup lets the player change channel (CH+/CH−, number keys). */
+  onPlay: (channel: Channel, lineup: ChannelLineup) => void;
   /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away (see use-remote-input.ts's `enabled` doc comment). */
   isPlaybackOpen?: boolean;
 }
@@ -185,7 +186,16 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
   // OK on a channel plays it full screen straight away — the preview is
   // already showing it, so a second "focus the preview, press OK" step
   // would just be friction.
-  const handleSelectChannel = useCallback((channel: Channel) => onPlay(channel), [onPlay]);
+  // Numbered like the list shows them, so number keys in the player match.
+  const numberedChannels = useMemo(() => withChannelNumbers(channels), [channels]);
+  const handleSelectChannel = useCallback(
+    (channel: Channel) => {
+      const byId = new Map(numberedChannels.map((c) => [c.id, c]));
+      const lineup = visibleChannels.map((c) => byId.get(c.id) ?? c);
+      onPlay(byId.get(channel.id) ?? channel, { lineup, directory: numberedChannels });
+    },
+    [onPlay, numberedChannels, visibleChannels],
+  );
 
   const activeCategoryIdRef = useRef(activeCategoryId);
   activeCategoryIdRef.current = activeCategoryId;

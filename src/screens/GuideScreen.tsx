@@ -253,7 +253,8 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
 
 /**
  * The focused programme, large: channel line, title, time and length with a
- * LIVE / CATCH-UP / UPCOMING badge, a progress bar while it's on, and the
+ * ON NOW / CATCH-UP / UPCOMING badge ("on now", not "live" — most of what
+ * airs is recorded, and the guide can't tell which), a progress bar while it's on, and the
  * synopsis. Fixed height, so moving focus never shifts the grid below.
  */
 function ProgrammeDetails({ selection, channelNumber, notice }: { selection: GuideSelection | null; channelNumber?: number; notice: string | null }): JSX.Element {
@@ -261,7 +262,7 @@ function ProgrammeDetails({ selection, channelNumber, notice }: { selection: Gui
   const programme = selection?.programme ?? null;
   const isLive = programme ? programme.start.getTime() <= now && now < programme.stop.getTime() : false;
   const isPast = programme ? programme.stop.getTime() <= now : false;
-  const badge = !programme ? null : isLive ? "LIVE" : isPast ? (selection?.channel.hasArchive ? "CATCH-UP" : "ENDED") : "UPCOMING";
+  const badge = !programme ? null : isLive ? "ON NOW" : isPast ? (selection?.channel.hasArchive ? "CATCH-UP" : "ENDED") : "UPCOMING";
   const progress = programme && isLive ? (now - programme.start.getTime()) / (programme.stop.getTime() - programme.start.getTime()) : null;
 
   return (
@@ -292,8 +293,8 @@ function ProgrammeDetails({ selection, channelNumber, notice }: { selection: Gui
                       letterSpacing: "0.06em",
                       padding: "0.25rem 0.75rem",
                       borderRadius: "0.375rem",
-                      background: isLive ? "#e0332f" : "rgba(255,255,255,0.14)",
-                      color: "#fff",
+                      background: isLive ? "var(--accent)" : "rgba(255,255,255,0.14)",
+                      color: isLive ? "#062028" : "#fff",
                     }}
                   >
                     {badge}

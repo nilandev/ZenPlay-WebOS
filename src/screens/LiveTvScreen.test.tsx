@@ -130,13 +130,21 @@ describe("LiveTvScreen", () => {
     press("ArrowDown");
     press("Enter");
 
-    expect(onPlay).toHaveBeenCalledWith(expect.objectContaining({ id: "ch-2" }));
+    expect(onPlay).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ch-2" }),
+      expect.objectContaining({ lineup: expect.any(Array), directory: expect.any(Array) }),
+    );
+    // Numbered as the list shows them, so number keys in the player match.
+    const [played, { directory }] = onPlay.mock.calls[0];
+    expect(played.number).toBeDefined();
+    expect(directory.every((c: { number?: number }) => c.number !== undefined)).toBe(true);
   });
 
-  it("marks the preview LIVE TV", async () => {
+  it("marks the preview On Now (not LIVE — the programme may be recorded)", async () => {
     render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
     await flush();
-    expect(screen.getByText("LIVE TV")).toBeDefined();
+    expect(screen.getByText("On Now")).toBeDefined();
+    expect(screen.queryByText(/LIVE/)).toBeNull();
   });
 
   it("shows what's on now and next for the previewed channel", async () => {

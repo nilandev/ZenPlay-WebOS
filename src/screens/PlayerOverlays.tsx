@@ -1,4 +1,5 @@
-import { BROWSE_SIDE_PADDING, SECTION_ICONS, TV_TEXT, URLImage } from "@ui";
+import type { Channel, EpgProgramme } from "@core";
+import { BROWSE_SIDE_PADDING, OnNowTimeline, SECTION_ICONS, TV_TEXT, URLImage } from "@ui";
 import { Pause, Star } from "lucide-react";
 
 /** What the player knows about the title beyond its name — drives the loading and "You're watching" screens. All optional: providers fill these in unevenly. */
@@ -126,7 +127,7 @@ export function PlayerLoadingScreen({
  * dims and the title's details take over from the controls. Any key brings
  * the controls back (PlayerScreen handles that).
  */
-export function PausedInfoOverlay({ title, subtitle, info, isLive }: { title?: string; subtitle?: string; info?: PlaybackInfo; isLive: boolean }): JSX.Element {
+export function PausedInfoOverlay({ title, subtitle, info }: { title?: string; subtitle?: string; info?: PlaybackInfo }): JSX.Element {
   const meta = [
     info?.year ? String(info.year) : null,
     info?.rating ? (
@@ -135,7 +136,6 @@ export function PausedInfoOverlay({ title, subtitle, info, isLive }: { title?: s
         {info.rating.toFixed(1)}
       </span>
     ) : null,
-    isLive ? "Live" : null,
   ].filter(Boolean);
 
   return (
@@ -202,6 +202,93 @@ export function PausedInfoOverlay({ title, subtitle, info, isLive }: { title?: s
           to { opacity: 1; }
         }
       `}</style>
+    </div>
+  );
+}
+
+/**
+ * Shown for a few seconds after changing channel (CH+/CH−, number keys),
+ * top-left like a TV's own zap banner: logo, number and name, and what's
+ * on now when the guide knows. Neutral styling — no "LIVE" claim.
+ */
+export function ChannelBanner({ channel, programme }: { channel: Channel; programme?: EpgProgramme }): JSX.Element {
+  return (
+    <div
+      role="status"
+      aria-label="Channel"
+      style={{
+        position: "absolute",
+        top: "2.5rem",
+        left: BROWSE_SIDE_PADDING,
+        zIndex: 8,
+        display: "flex",
+        alignItems: "center",
+        gap: "1.5rem",
+        maxWidth: "60rem",
+        padding: "1.25rem 1.75rem 1.25rem 1.25rem",
+        borderRadius: "1.25rem",
+        background: "rgba(10,11,15,0.88)",
+        boxShadow: "0 1.5rem 3rem -1rem rgba(0,0,0,0.7), inset 0 0 0 1px rgba(255,255,255,0.1)",
+        animation: "player-banner-in 240ms cubic-bezier(0.2, 0.8, 0.3, 1)",
+      }}
+    >
+      <div style={{ width: "7rem", height: "4.5rem", flexShrink: 0, padding: "0.5rem", boxSizing: "border-box", borderRadius: "0.75rem", background: "rgba(255,255,255,0.08)" }}>
+        <URLImage src={channel.logoUrl} alt="" seed={channel.id} objectFit="contain" loading="eager" placeholderIcon={SECTION_ICONS.live} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: "1rem", color: "#fff" }}>
+          {channel.number !== undefined && <span style={{ fontSize: "2rem", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{channel.number}</span>}
+          <span style={{ fontSize: "1.625rem", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{channel.name}</span>
+        </div>
+        {programme && (
+          <div style={{ marginTop: "0.5rem" }}>
+            <div style={{ fontSize: TV_TEXT, fontWeight: 600, color: "rgba(255,255,255,0.9)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: "0.5rem" }}>
+              {programme.title}
+            </div>
+            <OnNowTimeline programme={programme} barWidth="12rem" fontSize="1.125rem" />
+          </div>
+        )}
+      </div>
+      <style>{`
+        @keyframes player-banner-in {
+          from { opacity: 0; transform: translateY(-1rem); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/** The digits being typed to tune a channel ("10_"), top-right — or "No channel 105" when nothing has that number. */
+export function ChannelNumberEntry({ digits, notFound }: { digits: string; notFound: boolean }): JSX.Element {
+  return (
+    <div
+      role="status"
+      aria-label="Channel number"
+      style={{
+        position: "absolute",
+        top: "2.5rem",
+        right: BROWSE_SIDE_PADDING,
+        zIndex: 8,
+        padding: "1rem 1.75rem",
+        borderRadius: "1.25rem",
+        background: "rgba(10,11,15,0.88)",
+        boxShadow: "0 1.5rem 3rem -1rem rgba(0,0,0,0.7), inset 0 0 0 1px rgba(255,255,255,0.1)",
+        color: "#fff",
+        textAlign: "right",
+      }}
+    >
+      {notFound ? (
+        <div style={{ fontSize: "1.75rem", fontWeight: 700 }}>No channel {digits}</div>
+      ) : (
+        <>
+          <div style={{ fontSize: "1rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-dim)" }}>Channel</div>
+          <div style={{ fontSize: "3.5rem", fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
+            {digits}
+            <span style={{ opacity: 0.4 }}>_</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }

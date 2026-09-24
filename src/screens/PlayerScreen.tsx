@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { resolveRemoteAction, type PlatformId, type SeriesEpisode } from "@core";
+import { resolveDigitKey, resolveRemoteAction, type Channel, type PlatformId, type PlaylistSource, type SeriesEpisode } from "@core";
 import type { AudioTrackInfo, PlaybackProgress, PlayerEngine, PlayerError, SubtitleTrackInfo } from "@player";
 import {
   BROWSE_SIDE_PADDING,
@@ -16,8 +16,10 @@ import {
 } from "@ui";
 import { ArrowLeft, Play, RotateCcw, TriangleAlert } from "lucide-react";
 import { upsertContinueWatching, type ResumePoint } from "../profile-store.js";
+import type { ChannelLineup } from "../channel-lineup.js";
+import { useNowNext } from "../use-now-next.js";
 import { PlayerEpisodesPanel } from "./PlayerEpisodesPanel.js";
-import { PausedInfoOverlay, PlayerLoadingScreen, type PlaybackInfo } from "./PlayerOverlays.js";
+import { ChannelBanner, ChannelNumberEntry, PausedInfoOverlay, PlayerLoadingScreen, type PlaybackInfo } from "./PlayerOverlays.js";
 
 /** Identifies what's playing for Continue Watching persistence — omitted entirely for content that shouldn't be resumed (live TV, catch-up). */
 export interface PlaybackIdentity {
@@ -40,8 +42,15 @@ export interface PlayerScreenProps {
   subtitle?: string;
   /** Present only for series playback with another episode after this one — renders the Next Episode control and drives auto-advance on end-of-stream. */
   onNextEpisode?: () => void;
-  /** Live TV playback: no seek bar or scrubbing, and a LIVE badge — see PlaybackControls' isLive prop. */
+  /** Live TV playback: no seek bar or scrubbing; the channel number and what's on now instead — see PlaybackControls' isLive prop. */
   isLive?: boolean;
+  /** Live TV: the channel playing, and the source to read its guide from, for "On Now". */
+  liveChannel?: Channel;
+  guideSource?: PlaylistSource | null;
+  /** Live TV: the channels CH+/CH− and number keys can move to. */
+  channelLineup?: ChannelLineup | null;
+  /** Live TV: switch the player to another channel. */
+  onTuneChannel?: (channel: Channel) => void;
   /** Where this profile stopped last time — offers "Resume from …" / "Start Over" before the stream loads. */
   resumeFrom?: ResumePoint | null;
   /** The viewer already chose Resume (e.g. the series page's Resume button) — start at resumeFrom without asking. */
@@ -67,6 +76,15 @@ const SEEK_COMMIT_MS = 800;
 
 /** Buffering this long without recovering (a dead link, or a stream that stopped) is shown as an error. */
 const STALL_TIMEOUT_MS = 30_000;
+
+/** How long the channel banner stays up after changing channel. */
+const CHANNEL_BANNER_MS = 5000;
+
+/** Typed channel digits are tuned this long after the last one (or at once on OK / the 4th digit). */
+const CHANNEL_ENTRY_MS = 1500;
+
+/** "No channel 105" stays up this long. */
+const CHANNEL_NOT_FOUND_MS = 2000;
 
 /** Paused this long, the picture dims and "You're watching" takes over (Netflix's timing is similar). */
 const PAUSED_INFO_DELAY_MS = 10_000;
@@ -115,6 +133,9 @@ function describeFailure(failure: PlaybackFailure, isLive: boolean): string {
  * - Rewind / Fast-forward always scrub; Play, Pause and Stop do what they say.
  * - Back closes an open panel (Audio & Subtitles, Episodes) first, then the player.
  * - Series: Up from the seek bar (or the Episodes button) opens the Episodes panel.
+ * - Live TV: CH+/CH− step through the lineup the viewer came from; number
+ *   keys tune by channel number. Either shows a channel banner (instead of
+ *   the full loading screen, which is only for the first channel).
  *
  * Until the stream starts, a loading screen (artwork, title) covers the
  * black video. After PAUSED_INFO_DELAY_MS paused, "You're watching" dims
@@ -135,6 +156,10 @@ export function PlayerScreen({
   subtitle,
   onNextEpisode,
   isLive = false,
+  liveChannel,
+  guideSource,
+  channelLineup,
+  onTuneChannel,
   resumeFrom,
   autoResume = false,
   info,
@@ -171,6 +196,38 @@ export function PlayerScreen({
   const [isPausedInfoShown, setIsPausedInfoShown] = useState(false);
   const [pausedInfoCycle, setPausedInfoCycle] = useState(0);
   const sawBufferingRef = useRef(false);
+
+  const { nowNext } = useNowNext(guideSource ?? null, isLive ? (liveChannel ?? null) : null);
+  // Live TV's "You're watching" describes the programme on now, from the guide.
+  const pausedSubtitle = isLive && nowNext?.now ? `On Now: ${nowNext.now.title}` : subtitle;
+  const pausedInfo = isLive && nowNext?.now ? { ...info, plot: nowNext.now.description ?? info?.plot } : info;
+
+  // Channel changes after the first one show a banner, not the full loading screen.
+  const [hasEverStarted, setHasEverStarted] = useState(false);
+  useEffect(() => {
+    if (hasStarted) setHasEverStarted(true);
+  }, [hasStarted]);
+  const isChangingChannel = isLive && hasEverStarted;
+
+  const [isBannerShown, setIsBannerShown] = useState(false);
+  const previousChannelIdRef = useRef(liveChannel?.id);
+  useEffect(() => {
+    const id = liveChannel?.id;
+    if (id === previousChannelIdRef.current) return;
+    previousChannelIdRef.current = id;
+    if (!id) return;
+    setIsBannerShown(true);
+    const timer = setTimeout(() => setIsBannerShown(false), CHANNEL_BANNER_MS);
+    return () => clearTimeout(timer);
+  }, [liveChannel?.id]);
+
+  const [typedDigits, setTypedDigits] = useState("");
+  const [isNumberNotFound, setIsNumberNotFound] = useState(false);
+  const typedDigitsRef = useRef("");
+  const numberEntryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The key handler is registered once; it reads the latest channel props through this.
+  const liveRef = useRef({ liveChannel, channelLineup, onTuneChannel });
+  liveRef.current = { liveChannel, channelLineup, onTuneChannel };
 
   const isMenuOpen = panel === "menu";
   const isShowingVideo = !isChoosingResume && failure === null;
@@ -322,6 +379,61 @@ export function PlayerScreen({
     showControls();
   }
 
+  /** CH+ / CH−: the next or previous channel in the lineup, wrapping around. */
+  function changeChannel(step: 1 | -1): void {
+    const { liveChannel: current, channelLineup: channels, onTuneChannel: tune } = liveRef.current;
+    const lineup = channels?.lineup ?? [];
+    if (!isLive || !tune || lineup.length === 0) return;
+    const index = lineup.findIndex((c) => c.id === current?.id);
+    const next = index < 0 ? lineup[step > 0 ? 0 : lineup.length - 1] : lineup[(index + step + lineup.length) % lineup.length];
+    if (next && next.id !== current?.id) tune(next);
+  }
+
+  function clearNumberEntry(): void {
+    if (numberEntryTimerRef.current) clearTimeout(numberEntryTimerRef.current);
+    numberEntryTimerRef.current = null;
+    typedDigitsRef.current = "";
+    setTypedDigits("");
+    setIsNumberNotFound(false);
+  }
+
+  function tuneTypedNumber(): void {
+    const digits = typedDigitsRef.current;
+    if (numberEntryTimerRef.current) clearTimeout(numberEntryTimerRef.current);
+    if (!digits) return;
+    const { liveChannel: current, channelLineup: channels, onTuneChannel: tune } = liveRef.current;
+    const wanted = Number(digits);
+    const match = channels?.directory.find((c) => c.number === wanted) ?? channels?.lineup.find((c) => c.number === wanted);
+    if (!match) {
+      setIsNumberNotFound(true);
+      numberEntryTimerRef.current = setTimeout(clearNumberEntry, CHANNEL_NOT_FOUND_MS);
+      return;
+    }
+    clearNumberEntry();
+    if (match.id !== current?.id) tune?.(match);
+  }
+
+  function typeDigit(digit: number): void {
+    // Starting again after "No channel …" begins a fresh number.
+    const base = isNumberNotFoundRef.current ? "" : typedDigitsRef.current;
+    const digits = (base + String(digit)).replace(/^0+(?=\d)/, "").slice(0, 4);
+    typedDigitsRef.current = digits;
+    setTypedDigits(digits);
+    setIsNumberNotFound(false);
+    if (numberEntryTimerRef.current) clearTimeout(numberEntryTimerRef.current);
+    if (digits.length >= 4) tuneTypedNumber();
+    else numberEntryTimerRef.current = setTimeout(tuneTypedNumber, CHANNEL_ENTRY_MS);
+  }
+  const isNumberNotFoundRef = useRef(isNumberNotFound);
+  isNumberNotFoundRef.current = isNumberNotFound;
+
+  useEffect(
+    () => () => {
+      if (numberEntryTimerRef.current) clearTimeout(numberEntryTimerRef.current);
+    },
+    [],
+  );
+
   function openPanel(next: Exclude<Panel, "none">): void {
     setReturnFocusId(useFocusStore.getState().focusedId);
     setPanel(next);
@@ -384,6 +496,30 @@ export function PlayerScreen({
     function onKeyDownCapture(event: KeyboardEvent): void {
       const action = resolveRemoteAction(platform, event);
       const { isPanelOpen: panelOpen, areControlsVisible: visible, isShowingVideo: showing, isPausedInfoShown: pausedInfo } = stateRef.current;
+
+      // Live TV number keys (checked first: digits aren't a remote "action").
+      if (isLive && showing && !panelOpen) {
+        const digit = resolveDigitKey(event);
+        if (digit !== null) {
+          event.preventDefault();
+          event.stopPropagation();
+          typeDigit(digit);
+          return;
+        }
+        if (typedDigitsRef.current && (action === "select" || action === "back")) {
+          // OK tunes the number now; Back abandons it.
+          event.preventDefault();
+          event.stopPropagation();
+          if (action === "select") {
+            swallowNextKeyUp();
+            tuneTypedNumber();
+          } else clearNumberEntry();
+          return;
+        }
+      }
+      // CH+/CH− are handled below (useRemoteInput) without waking the controls.
+      if (action === "channel-up" || action === "channel-down") return;
+
       if (action === "unknown" || !showing) return;
 
       if (pausedInfo) {
@@ -440,6 +576,8 @@ export function PlayerScreen({
     onPlay: play,
     onPause: pause,
     onStop: onClose,
+    onChannelUp: () => changeChannel(1),
+    onChannelDown: () => changeChannel(-1),
     onRewind: () => scrubFromMediaKey(-1),
     onFastForward: () => scrubFromMediaKey(1),
   });
@@ -484,9 +622,11 @@ export function PlayerScreen({
         />
       )}
       {failure === null && (
-        <PlayerLoadingScreen title={title} subtitle={subtitle} info={info} isLive={isLive} isVisible={!hasStarted} />
+        <PlayerLoadingScreen title={title} subtitle={subtitle} info={info} isLive={isLive} isVisible={!hasStarted && !isChangingChannel} />
       )}
-      {failure === null && isPausedInfoShown && <PausedInfoOverlay title={title} subtitle={subtitle} info={info} isLive={isLive} />}
+      {failure === null && isBannerShown && liveChannel && <ChannelBanner channel={liveChannel} programme={nowNext?.now} />}
+      {typedDigits && <ChannelNumberEntry digits={typedDigits} notFound={isNumberNotFound} />}
+      {failure === null && isPausedInfoShown && <PausedInfoOverlay title={title} subtitle={pausedSubtitle} info={pausedInfo} />}
       {failure === null ? (
         <div
           style={{
@@ -501,6 +641,8 @@ export function PlayerScreen({
             title={title ?? ""}
             subtitle={subtitle}
             isLive={isLive}
+            channelNumber={liveChannel?.number}
+            nowNext={isLive ? nowNext : null}
             isPlaying={isPlaying}
             positionSeconds={positionSeconds}
             durationSeconds={Number.isFinite(durationSeconds) ? durationSeconds : 0}

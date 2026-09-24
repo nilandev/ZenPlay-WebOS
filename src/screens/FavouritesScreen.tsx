@@ -23,6 +23,7 @@ import { loadChannelsByKind, loadSeriesList } from "../content-loader.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
+import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
 
 const SCOPE = "favourites";
 const EDIT_BUTTON_ID = "favourites-edit";
@@ -37,7 +38,8 @@ export interface FavouritesScreenProps {
   profileId: string;
   platform: PlatformId;
   onBack: () => void;
-  onPlayChannel: (channel: Channel) => void;
+  /** The lineup (My List's channels) lets the player change channel with CH+/CH− and number keys. */
+  onPlayChannel: (channel: Channel, lineup: ChannelLineup) => void;
   onPlayMovie: (movie: Channel) => void;
   onOpenSeries: (seriesId: string) => void;
   /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away. */
@@ -163,6 +165,13 @@ export function FavouritesScreen({
     ].filter((row) => row.items.length > 0);
   }, [favorites, liveChannels, movies, series]);
 
+  // For the player's CH+/CH− (My List's channels, in order) and number keys (every channel, numbered as Live TV shows them).
+  const numberedLive = useMemo(() => withChannelNumbers(liveChannels), [liveChannels]);
+  const favoriteChannels = useMemo(
+    () => rows.find((row) => row.key === "live")?.items.flatMap((item) => (item.channel ? [item.channel] : [])) ?? [],
+    [rows],
+  );
+
   const itemCount = rows.reduce((sum, row) => sum + row.items.length, 0);
 
   // Leave edit mode once there's nothing left to remove.
@@ -172,11 +181,15 @@ export function FavouritesScreen({
 
   const open = useCallback(
     (item: ListItem) => {
-      if (item.channel) onPlayChannel(item.channel);
+      if (item.channel) {
+        const byId = new Map(numberedLive.map((c) => [c.id, c]));
+        const lineup = favoriteChannels.map((c) => byId.get(c.id) ?? c);
+        onPlayChannel(byId.get(item.channel.id) ?? item.channel, { lineup, directory: numberedLive });
+      }
       else if (item.movie) onPlayMovie(item.movie);
       else onOpenSeries(item.entry.contentId);
     },
-    [onPlayChannel, onPlayMovie, onOpenSeries],
+    [onPlayChannel, onPlayMovie, onOpenSeries, numberedLive, favoriteChannels],
   );
 
   // Where focus goes after a removal — the removed card's neighbour — applied

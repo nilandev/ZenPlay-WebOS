@@ -38,3 +38,4 @@ export * from "./components/ProgramGuideGrid.js";
 export * from "./components/TvButton.js";
 export * from "./components/TvTextField.js";
 export * from "./components/ProfileAvatarTile.js";
+export * from "./components/LiveGuideInfo.js";

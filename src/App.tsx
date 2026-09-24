@@ -20,6 +20,7 @@ import {
 } from "./profile-store.js";
 import { buildRevalidationTargets, revalidateStaleTargets } from "./cache-revalidator.js";
 import { loadMovieDetails } from "./content-loader.js";
+import type { ChannelLineup } from "./channel-lineup.js";
 import { AddSourceScreen } from "./screens/AddSourceScreen.js";
 import { HomeScreen } from "./screens/HomeScreen.js";
 import { LiveTvScreen } from "./screens/LiveTvScreen.js";
@@ -83,6 +84,9 @@ export function App(): JSX.Element {
   const [playbackAutoResume, setPlaybackAutoResume] = useState(false);
   const [playbackInfo, setPlaybackInfo] = useState<PlaybackInfo | undefined>(undefined);
   const [playbackEpisodeId, setPlaybackEpisodeId] = useState<string | undefined>(undefined);
+  const [playbackChannel, setPlaybackChannel] = useState<Channel | undefined>(undefined);
+  // Where a live channel was started from — what CH+/CH− and number keys can reach in the player.
+  const [channelLineup, setChannelLineup] = useState<ChannelLineup | null>(null);
   // The series around the episode playing — kept so Next Episode and the
   // player's Episodes panel can start another episode with the same context.
   const [seriesContext, setSeriesContext] = useState<EpisodePlayContext>({});
@@ -221,6 +225,7 @@ export function App(): JSX.Element {
   // guard above; live TV/catch-up playback skips identity entirely since
   // Continue Watching doesn't apply to it.
   const playMovie = (movie: Channel): void => {
+    setPlaybackChannel(undefined);
     setPlaybackIdentity({ profileId: activeProfile.id, contentId: movie.id, contentKind: "movie" });
     setPlaybackResume(getResumePoint(activeProfile.id, movie.id));
     setPlaybackAutoResume(false);
@@ -250,6 +255,7 @@ export function App(): JSX.Element {
   // after this one for the player's Next Episode control, without this
   // component needing its own copy of season/episode-ordering logic.
   const playEpisode = (episode: SeriesEpisode, allEpisodes: SeriesEpisode[], context: EpisodePlayContext = seriesContext): void => {
+    setPlaybackChannel(undefined);
     setPlaybackIdentity({
       profileId: activeProfile.id,
       contentId: episode.seriesId,
@@ -276,6 +282,7 @@ export function App(): JSX.Element {
     setPlaybackUrl(episode.streamUrl);
   };
   const playWithoutIdentity = (streamUrl: string): void => {
+    setPlaybackChannel(undefined);
     setPlaybackIdentity(undefined);
     setPlaybackResume(null);
     setPlaybackAutoResume(false);
@@ -287,12 +294,14 @@ export function App(): JSX.Element {
     setIsPlaybackLive(false);
     setPlaybackUrl(streamUrl);
   };
-  const playLive = (channel: Channel): void => {
+  const playLive = (channel: Channel, lineup?: ChannelLineup): void => {
+    if (lineup) setChannelLineup(lineup); // a channel change inside the player keeps the lineup
     setPlaybackIdentity(undefined);
     setPlaybackResume(null);
     setPlaybackAutoResume(false);
     setPlaybackEpisodeId(undefined);
     setPlaybackInfo({ logoUrl: channel.logoUrl });
+    setPlaybackChannel(channel);
     setPlaybackTitle(channel.name);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
@@ -303,6 +312,8 @@ export function App(): JSX.Element {
     if (nextEpisode) playEpisode(nextEpisode, seriesEpisodes);
   };
   const closePlayback = (): void => {
+    setChannelLineup(null);
+    setPlaybackChannel(undefined);
     setPlaybackUrl(null);
     setPlaybackIdentity(undefined);
     setPlaybackResume(null);
@@ -427,6 +438,10 @@ export function App(): JSX.Element {
             subtitle={playbackSubtitle}
             onNextEpisode={nextEpisode ? playNextEpisode : undefined}
             isLive={isPlaybackLive}
+            liveChannel={playbackChannel}
+            guideSource={activeSource}
+            channelLineup={channelLineup}
+            onTuneChannel={(channel) => playLive(channel)}
             resumeFrom={playbackResume}
             autoResume={playbackAutoResume}
             info={playbackInfo}

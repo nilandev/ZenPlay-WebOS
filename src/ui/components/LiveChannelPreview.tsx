@@ -21,11 +21,9 @@ export interface LiveChannelPreviewProps {
   onToggleFavorite: () => void;
 }
 
-const LIVE_RED = "#e0332f";
-
 /**
  * Right-hand column of Live TV: a live 16:9 preview of the channel the list
- * has settled on, the channel line (number, logo, name, favourite, LIVE),
+ * has settled on, the channel line (number, logo, name, favourite, On Now),
  * and a Now & Next panel — what the viewer most wants to know while
  * flicking through channels. The video itself isn't a focus stop (OK on a
  * channel row plays it full screen); the one focusable control is the
@@ -44,7 +42,7 @@ export function LiveChannelPreview({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.75rem", minWidth: 0 }}>
       <div style={{ display: "flex", justifyContent: "flex-end", maxWidth: "70rem", marginBottom: "-0.75rem" }}>
-        <LiveTvBadge />
+        <OnNowBadge />
       </div>
       <div
         style={{
@@ -149,8 +147,14 @@ function FavoriteButton({ id, isFavorite, onToggle }: { id: string; isFavorite: 
   );
 }
 
-/** "● LIVE TV" marker, shown above the preview's top-right corner (not over the picture, where broadcasters put their own logo). */
-function LiveTvBadge(): JSX.Element {
+/**
+ * "On Now" marker above the preview's top-right corner (not over the
+ * picture, where broadcasters put their own logo). Deliberately not "LIVE"
+ * with a red dot: that signals a live event, and most of what a channel
+ * airs is recorded — what's true is that this is what the channel is
+ * showing right now.
+ */
+function OnNowBadge(): JSX.Element {
   return (
     <span
       style={{
@@ -159,12 +163,12 @@ function LiveTvBadge(): JSX.Element {
         gap: "0.5rem",
         padding: "0.375rem 1rem",
         borderRadius: 999,
-        background: "rgba(224,51,47,0.15)",
-        border: `2px solid ${LIVE_RED}`,
+        background: "rgba(255,255,255,0.12)",
+        boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.2)",
       }}
     >
-      <span aria-hidden style={{ width: "0.625rem", height: "0.625rem", borderRadius: "50%", background: LIVE_RED, boxShadow: `0 0 0.5rem ${LIVE_RED}` }} />
-      <span style={{ fontSize: "1.125rem", fontWeight: 800, letterSpacing: "0.06em", color: LIVE_RED }}>LIVE TV</span>
+      <Tv size="1.25rem" strokeWidth={2.25} color="#fff" aria-hidden />
+      <span style={{ fontSize: "1.125rem", fontWeight: 700, color: "#fff" }}>On Now</span>
     </span>
   );
 }

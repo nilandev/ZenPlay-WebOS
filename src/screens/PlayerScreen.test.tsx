@@ -4,6 +4,11 @@ import type { LoadOptions, PlayerEngine, PlayerError } from "@player";
 import { useFocusStore } from "../ui/focus/focus-store.js";
 import { PlayerScreen } from "./PlayerScreen.js";
 
+const guide = vi.hoisted(() => ({ nowNext: null as unknown }));
+vi.mock("../use-now-next.js", () => ({
+  useNowNext: (_source: unknown, channel: unknown) => ({ nowNext: channel ? guide.nowNext : null, isLoading: false }),
+}));
+
 function press(key: string): void {
   act(() => {
     fireEvent.keyDown(document, { key });
@@ -133,7 +138,8 @@ describe("PlayerScreen", () => {
     render(<PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="News" isLive engineFactory={() => engine} />);
     tick(10);
     expect(screen.queryByRole("slider")).toBeNull();
-    expect(screen.getByText("LIVE")).toBeDefined();
+    expect(screen.getByText("TV Channel")).toBeDefined();
+    expect(screen.queryByText(/LIVE/)).toBeNull();
     expect(focusedId()).toBe("play-pause");
     press("ArrowRight");
     expect(focusedId()).toBe("audio-subtitles");
@@ -344,5 +350,132 @@ describe("PlayerScreen", () => {
     await act(async () => {});
     expect(screen.queryByRole("button", { name: /Resume from/ })).toBeNull();
     expect(engine.load).toHaveBeenCalledWith("s", { startPositionSeconds: 900 });
+  });
+
+  it("live TV shows the channel number and what's on now from the guide — never LIVE", async () => {
+    const now = Date.now();
+    guide.nowNext = {
+      now: { channelId: "c", title: "Antiques Roadshow", description: "Treasures from Bath.", start: new Date(now - 20 * 60_000), stop: new Date(now + 40 * 60_000) },
+      next: { channelId: "c", title: "Panorama", start: new Date(now + 40 * 60_000), stop: new Date(now + 70 * 60_000) },
+    };
+    const { engine } = makeEngine(NaN);
+    const { container } = render(
+      <PlayerScreen
+        streamUrl="s"
+        platform="web"
+        onClose={() => {}}
+        title="BBC One HD"
+        isLive
+        liveChannel={{ id: "c", name: "BBC One HD", streamUrl: "s", kind: "live", number: 101 }}
+        guideSource={{ kind: "m3u-url", id: "src", name: "P", url: "u" }}
+        engineFactory={() => engine}
+      />,
+    );
+    await act(async () => {});
+    // The programme is the heading; the channel moves into the chip.
+    expect(screen.getByText("CH 101 · BBC One HD")).toBeDefined();
+    expect(screen.getByText("Antiques Roadshow")).toBeDefined();
+    expect(screen.getByText("40 min left")).toBeDefined();
+    expect(container.textContent).toContain("Panorama");
+    expect(screen.queryByText(/LIVE/)).toBeNull();
+
+    // Paused: "You're watching" describes the programme on now.
+    act(() => {
+      container.querySelector("video")!.dispatchEvent(new Event("pause"));
+    });
+    act(() => vi.advanceTimersByTime(10_000));
+    const paused = screen.getByRole("status", { name: "You're watching" });
+    expect(paused.textContent).toContain("On Now: Antiques Roadshow");
+    expect(paused.textContent).toContain("Treasures from Bath.");
+    guide.nowNext = null;
+  });
+
+  describe("changing channel", () => {
+    const channels = [101, 102, 105].map((n) => ({ id: `c${n}`, name: `Channel ${n}`, streamUrl: `s${n}`, kind: "live" as const, number: n }));
+    const lineup = { lineup: channels, directory: [...channels, { id: "c999", name: "Far away", streamUrl: "s999", kind: "live" as const, number: 999 }] };
+
+    function renderLive(onTuneChannel = vi.fn(), current = channels[0]) {
+      const { engine } = makeEngine(NaN);
+      const view = render(
+        <PlayerScreen
+          streamUrl={current.streamUrl}
+          platform="web"
+          onClose={() => {}}
+          title={current.name}
+          isLive
+          liveChannel={current}
+          channelLineup={lineup}
+          onTuneChannel={onTuneChannel}
+          engineFactory={() => engine}
+        />,
+      );
+      return { view, engine, onTuneChannel };
+    }
+
+    it("CH+/CH− step through the lineup, wrapping at the ends", async () => {
+      const { onTuneChannel } = renderLive();
+      await act(async () => {});
+      press("ChannelUp");
+      expect(onTuneChannel).toHaveBeenLastCalledWith(channels[1]);
+      press("PageDown"); // LG's CH− — from the first channel wraps to the last
+      expect(onTuneChannel).toHaveBeenLastCalledWith(channels[2]);
+    });
+
+    it("number keys collect digits, then tune after a pause (or at once on OK)", async () => {
+      const { onTuneChannel } = renderLive();
+      await act(async () => {});
+      press("1");
+      press("0");
+      expect(screen.getByRole("status", { name: "Channel number" }).textContent).toContain("10");
+      press("5");
+      expect(onTuneChannel).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(1500));
+      expect(onTuneChannel).toHaveBeenCalledWith(channels[2]);
+      expect(screen.queryByRole("status", { name: "Channel number" })).toBeNull();
+
+      press("9");
+      press("9");
+      press("9");
+      press("Enter"); // OK tunes straight away — here, to a channel outside the lineup
+      expect(onTuneChannel).toHaveBeenLastCalledWith(lineup.directory[3]);
+    });
+
+    it("says so when no channel has the number", async () => {
+      const { onTuneChannel } = renderLive();
+      await act(async () => {});
+      press("4");
+      press("4");
+      press("Enter");
+      expect(screen.getByText("No channel 44")).toBeDefined();
+      expect(onTuneChannel).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(2000));
+      expect(screen.queryByText("No channel 44")).toBeNull();
+    });
+
+    it("after a channel change shows a channel banner (not the full loading screen) for a few seconds", async () => {
+      const { view, engine } = renderLive();
+      await act(async () => {});
+      expect(screen.queryByRole("status", { name: "Channel" })).toBeNull();
+
+      view.rerender(
+        <PlayerScreen
+          streamUrl={channels[1].streamUrl}
+          platform="web"
+          onClose={() => {}}
+          title={channels[1].name}
+          isLive
+          liveChannel={channels[1]}
+          channelLineup={lineup}
+          onTuneChannel={() => {}}
+          engineFactory={() => engine}
+        />,
+      );
+      const banner = screen.getByRole("status", { name: "Channel" });
+      expect(banner.textContent).toContain("102");
+      expect(banner.textContent).toContain("Channel 102");
+      expect(screen.getByTestId("player-loading").style.opacity).toBe("0");
+      act(() => vi.advanceTimersByTime(5000));
+      expect(screen.queryByRole("status", { name: "Channel" })).toBeNull();
+    });
   });
 });

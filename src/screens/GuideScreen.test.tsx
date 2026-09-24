@@ -90,7 +90,7 @@ describe("GuideScreen (timeline grid)", () => {
 
     expect(focusedId()).toBe(cellId("ch-1"));
     expect(screen.getByText("The day's top stories.")).toBeDefined();
-    expect(screen.getByText("LIVE")).toBeDefined();
+    expect(screen.getByText("ON NOW")).toBeDefined();
   });
 
   it("OK on a programme that's on now plays the channel live", async () => {

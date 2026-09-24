@@ -25,7 +25,7 @@ export interface NowNextState {
  * Returns null when there's no guide data at all, which callers treat as
  * "show the channel line only".
  */
-export function useNowNext(source: PlaylistSource, channel: Channel | null): NowNextState {
+export function useNowNext(source: PlaylistSource | null, channel: Channel | null): NowNextState {
   const [programmes, setProgrammes] = useState<EpgProgramme[] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -36,7 +36,7 @@ export function useNowNext(source: PlaylistSource, channel: Channel | null): Now
   }, []);
 
   useEffect(() => {
-    if (!channel) {
+    if (!source || !channel) {
       setProgrammes(null);
       setIsLoading(false);
       return;
