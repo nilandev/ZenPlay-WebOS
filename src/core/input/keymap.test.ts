@@ -68,3 +68,25 @@ describe("resolveRemoteAction — standard (web) platform", () => {
     expect(resolveRemoteAction("web", event)).toBe("back");
   });
 });
+
+describe("resolveRemoteAction — media keys", () => {
+  it("maps standard media key values", () => {
+    expect(resolveRemoteAction("web", makeEvent({ key: "MediaPlay" }))).toBe("play");
+    expect(resolveRemoteAction("web", makeEvent({ key: "MediaPause" }))).toBe("pause");
+    expect(resolveRemoteAction("web", makeEvent({ key: "MediaStop" }))).toBe("stop");
+    expect(resolveRemoteAction("web", makeEvent({ key: "MediaRewind" }))).toBe("rewind");
+    expect(resolveRemoteAction("web", makeEvent({ key: "MediaFastForward" }))).toBe("fast-forward");
+  });
+
+  it("maps LG remote keyCodes when webOS doesn't report a key value", () => {
+    expect(resolveRemoteAction("webos", makeEvent({ key: "Unidentified", keyCode: 415 }))).toBe("play");
+    expect(resolveRemoteAction("webos", makeEvent({ key: "Unidentified", keyCode: 19 }))).toBe("pause");
+    expect(resolveRemoteAction("webos", makeEvent({ key: "Unidentified", keyCode: 413 }))).toBe("stop");
+    expect(resolveRemoteAction("webos", makeEvent({ key: "Unidentified", keyCode: 412 }))).toBe("rewind");
+    expect(resolveRemoteAction("webos", makeEvent({ key: "Unidentified", keyCode: 417 }))).toBe("fast-forward");
+  });
+
+  it("doesn't read LG keyCodes on the web keymap", () => {
+    expect(resolveRemoteAction("web", makeEvent({ key: "Unidentified", keyCode: 19 }))).toBe("unknown");
+  });
+});

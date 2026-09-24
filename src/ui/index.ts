@@ -3,6 +3,7 @@ export * from "./focus/build-grid-graph.js";
 export * from "./focus/build-shelf-graph.js";
 export * from "./focus/use-remote-input.js";
 export * from "./focus/Focusable.js";
+export * from "./focus/swallow-key-up.js";
 export * from "./components/ChannelGrid.js";
 export * from "./components/VideoSurface.js";
 export * from "./components/URLImage.js";

@@ -11,6 +11,13 @@ export interface RemoteInputHandlers {
   onLongSelect?: (focusedId: string | null) => void;
   onBack?: () => void;
   onPlayPause?: () => void;
+  /** Dedicated Play / Pause keys — fall back to onPlayPause when a screen only handles the toggle. */
+  onPlay?: () => void;
+  onPause?: () => void;
+  onStop?: () => void;
+  /** Rewind / Fast-forward keys; event.repeat is true while the key is held. */
+  onRewind?: (isRepeat: boolean) => void;
+  onFastForward?: (isRepeat: boolean) => void;
   onChannelUp?: () => void;
   onChannelDown?: () => void;
 }
@@ -138,6 +145,26 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
           break;
         case "play-pause":
           currentHandlers.onPlayPause?.();
+          break;
+        case "play":
+          event.preventDefault();
+          (currentHandlers.onPlay ?? currentHandlers.onPlayPause)?.();
+          break;
+        case "pause":
+          event.preventDefault();
+          (currentHandlers.onPause ?? currentHandlers.onPlayPause)?.();
+          break;
+        case "stop":
+          event.preventDefault();
+          currentHandlers.onStop?.();
+          break;
+        case "rewind":
+          event.preventDefault();
+          currentHandlers.onRewind?.(event.repeat);
+          break;
+        case "fast-forward":
+          event.preventDefault();
+          currentHandlers.onFastForward?.(event.repeat);
           break;
         case "channel-up":
           currentHandlers.onChannelUp?.();

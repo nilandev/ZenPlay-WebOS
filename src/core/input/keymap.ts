@@ -6,6 +6,11 @@ export type RemoteAction =
   | "select"
   | "back"
   | "play-pause"
+  | "play"
+  | "pause"
+  | "stop"
+  | "rewind"
+  | "fast-forward"
   | "channel-up"
   | "channel-down"
   | "unknown";
@@ -52,6 +57,16 @@ function resolveStandardKey(event: KeyboardEvent): RemoteAction {
       return "back";
     case "MediaPlayPause":
       return "play-pause";
+    case "MediaPlay":
+      return "play";
+    case "MediaPause":
+      return "pause";
+    case "MediaStop":
+      return "stop";
+    case "MediaRewind":
+      return "rewind";
+    case "MediaFastForward":
+      return "fast-forward";
     case "ChannelUp":
       return "channel-up";
     case "ChannelDown":
@@ -86,7 +101,22 @@ function resolveWebOsBackKey(event: KeyboardEvent): RemoteAction {
   return "unknown";
 }
 
+/**
+ * LG remote media keys by keyCode — some webOS firmware reports these with
+ * an empty or "Unidentified" event.key, so the code is the reliable signal.
+ * https://webostv.developer.lge.com/develop/guides/magic-remote
+ */
+const WEBOS_MEDIA_KEYCODES: Record<number, RemoteAction> = {
+  415: "play",
+  19: "pause",
+  413: "stop",
+  412: "rewind",
+  417: "fast-forward",
+};
+
 function resolveWebOsKey(event: KeyboardEvent): RemoteAction {
   if (resolveWebOsBackKey(event) === "back") return "back";
-  return resolveStandardKey(event);
+  const standard = resolveStandardKey(event);
+  if (standard !== "unknown") return standard;
+  return WEBOS_MEDIA_KEYCODES[event.keyCode] ?? "unknown";
 }

@@ -1,8 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PlatformId } from "@core";
-import type { AudioTrackInfo, PlaybackProgress, PlayerEngine, SubtitleTrackInfo } from "@player";
-import { PlaybackControls, VideoSurface, useRemoteInput } from "@ui";
-import { upsertContinueWatching } from "../profile-store.js";
+import { resolveRemoteAction, type PlatformId } from "@core";
+import type { AudioTrackInfo, PlaybackProgress, PlayerEngine, PlayerError, SubtitleTrackInfo } from "@player";
+import {
+  BROWSE_SIDE_PADDING,
+  PLAYER_SEEK_ID,
+  PlaybackControls,
+  SEEK_STEP_SECONDS,
+  TV_TEXT,
+  TvButton,
+  VideoSurface,
+  formatPlaybackTime,
+  swallowNextKeyUp,
+  useFocusStore,
+  useRemoteInput,
+} from "@ui";
+import { ArrowLeft, Play, RotateCcw, TriangleAlert } from "lucide-react";
+import { upsertContinueWatching, type ResumePoint } from "../profile-store.js";
 
 /** Identifies what's playing for Continue Watching persistence — omitted entirely for content that shouldn't be resumed (live TV, catch-up). */
 export interface PlaybackIdentity {
@@ -25,51 +38,142 @@ export interface PlayerScreenProps {
   subtitle?: string;
   /** Present only for series playback with another episode after this one — renders the Next Episode control and drives auto-advance on end-of-stream. */
   onNextEpisode?: () => void;
-  /** Live TV playback: hides the scrubbable seek bar and shows a "LIVE" badge instead — see PlaybackControls' isLive prop. */
+  /** Live TV playback: no seek bar or scrubbing, and a LIVE badge — see PlaybackControls' isLive prop. */
   isLive?: boolean;
+  /** Where this profile stopped last time — offers "Resume from …" / "Start Over" before the stream loads. */
+  resumeFrom?: ResumePoint | null;
+  /** Test seam — see VideoSurface. */
+  engineFactory?: () => PlayerEngine;
 }
 
 /** How often a timeupdate tick is allowed to write to localStorage — timeupdate fires several times a second, far more often than resume position needs to be durable. */
 const PROGRESS_WRITE_INTERVAL_MS = 5000;
 
-/** Controls fade out after this long without any D-pad/remote activity — matches Netflix/YouTube TV conventions for an unobtrusive overlay. */
+/** Controls fade out after this long without remote activity while playing (paused keeps them up, like Netflix). */
 const AUTO_HIDE_MS = 5000;
 
+/** A scrub is committed this long after the last Left/Right press, so a run of presses costs the stream one seek, not one per press. */
+const SEEK_COMMIT_MS = 800;
+
+/** Buffering this long without recovering (a dead link, or a stream that stopped) is shown as an error. */
+const STALL_TIMEOUT_MS = 30_000;
+
+const RESUME_SCOPE = "player-resume";
+const RESUME_ID = "player-resume-continue";
+const START_OVER_ID = "player-resume-start-over";
+const ERROR_SCOPE = "player-error";
+const RETRY_ID = "player-error-retry";
+const ERROR_BACK_ID = "player-error-back";
+
+/** Scrub step grows the longer Left/Right is held or tapped in a row: 10s, then 30s, then 60s. */
+function seekStepFor(pressCount: number): number {
+  if (pressCount < 6) return SEEK_STEP_SECONDS;
+  if (pressCount < 14) return 30;
+  return 60;
+}
+
+type PlaybackFailure = Pick<PlayerError, "kind"> & { stalled?: boolean };
+
+function describeFailure(failure: PlaybackFailure, isLive: boolean): string {
+  if (failure.stalled) return `The ${isLive ? "channel" : "stream"} stopped responding. The provider may be busy — try again in a moment.`;
+  switch (failure.kind) {
+    case "network":
+      return "The stream isn't responding. The provider may be down, or your internet connection dropped.";
+    case "media":
+      return "This video's format can't be played on this TV.";
+    case "manifest":
+      return "The provider sent a stream this player can't read.";
+    default:
+      return "Something went wrong while starting playback.";
+  }
+}
+
 /**
- * Fullscreen playback overlay for VOD/series/catch-up streams, dismissed
- * with back. Renders a Netflix-style D-pad-driven control overlay — a top
- * bar (back + title/episode) and a bottom bar (play/pause, scrubbable
- * progress row, audio & subtitles) — on top of the video, auto-hiding after
- * inactivity. No on-screen volume control: TV playback relies on the
- * device's own hardware volume, not an app-level one (see
- * PlaybackControls.tsx's doc comment).
+ * Fullscreen player for VOD, series and live TV. PlaybackControls draws the
+ * overlay; this screen owns the engine and routes the remote:
+ *
+ * - While the controls are hidden, a key press just brings them back
+ *   (it doesn't also act) — except Left/Right, which scrub straight away,
+ *   and the media keys.
+ * - While they're shown, Left/Right scrub only when the seek bar is focused;
+ *   elsewhere they move focus between buttons as usual.
+ * - Rewind / Fast-forward always scrub; Play, Pause and Stop do what they say.
+ * - Back closes the Audio & Subtitles panel first, then the player.
+ *
+ * Before playback it may ask Resume / Start Over; if the stream fails (an
+ * engine error, or buffering for STALL_TIMEOUT_MS) it shows an error with
+ * Try Again, which reloads from where playback got to.
+ *
+ * No on-screen volume control: TV playback uses the TV's own volume.
  */
-export function PlayerScreen({ streamUrl, platform, onClose, identity, title, subtitle, onNextEpisode, isLive }: PlayerScreenProps): JSX.Element {
+export function PlayerScreen({
+  streamUrl,
+  platform,
+  onClose,
+  identity,
+  title,
+  subtitle,
+  onNextEpisode,
+  isLive = false,
+  resumeFrom,
+  engineFactory,
+}: PlayerScreenProps): JSX.Element {
   const lastWriteRef = useRef(0);
   const engineRef = useRef<PlayerEngine | null>(null);
+
+  // Both are keyed by stream URL, so Next Episode (a new URL, same mounted
+  // player) asks again and never inherits the previous episode's start.
+  const [resumeAnsweredFor, setResumeAnsweredFor] = useState<string | null>(null);
+  const [startAt, setStartAt] = useState<{ streamUrl: string; seconds: number } | null>(null);
+  const isChoosingResume = Boolean(resumeFrom) && resumeAnsweredFor !== streamUrl;
+  const startPositionSeconds = startAt?.streamUrl === streamUrl ? startAt.seconds : undefined;
+  const [attempt, setAttempt] = useState(0);
+  const [failure, setFailure] = useState<PlaybackFailure | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [positionSeconds, setPositionSeconds] = useState(0);
   const [durationSeconds, setDurationSeconds] = useState(NaN);
+  const [pendingSeekSeconds, setPendingSeekSeconds] = useState<number | null>(null);
   const [audioTracks, setAudioTracks] = useState<AudioTrackInfo[]>([]);
   const [activeAudioTrackId, setActiveAudioTrackId] = useState<number | null>(null);
   const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrackInfo[]>([]);
   const [activeSubtitleTrackId, setActiveSubtitleTrackId] = useState<number | null>(null);
   const [areControlsVisible, setAreControlsVisible] = useState(true);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  const isShowingVideo = !isChoosingResume && failure === null;
+
+  // Mirrors of state for the key handler and timers, which live outside React's render cycle.
+  const stateRef = useRef({ isPlaying, isMenuOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo });
+  stateRef.current = { isPlaying, isMenuOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo };
+
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seekPressCountRef = useRef(0);
 
   const showControls = useCallback(() => {
     setAreControlsVisible(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(() => setAreControlsVisible(false), AUTO_HIDE_MS);
+    hideTimerRef.current = setTimeout(() => {
+      const { isPlaying: playing, isMenuOpen: menuOpen, pendingSeekSeconds: pending } = stateRef.current;
+      if (playing && !menuOpen && pending === null) setAreControlsVisible(false);
+    }, AUTO_HIDE_MS);
+  }, []);
+
+  const clearStallTimer = useCallback(() => {
+    if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+    stallTimerRef.current = null;
   }, []);
 
   useEffect(() => {
     showControls();
     return () => {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+      clearStallTimer();
     };
-  }, [showControls]);
+  }, [showControls, clearStallTimer]);
 
   const handleProgress = (progress: PlaybackProgress): void => {
     setPositionSeconds(progress.positionSeconds);
@@ -104,64 +208,157 @@ export function PlayerScreen({ streamUrl, platform, onClose, identity, title, su
   const handlePlayStateChange = useCallback(
     ({ isPlaying: playing, didEnd }: { isPlaying: boolean; didEnd: boolean }) => {
       setIsPlaying(playing);
+      if (playing) showControls(); // restart the hide timer that pausing held open
       if (didEnd && onNextEpisode) onNextEpisode();
     },
-    [onNextEpisode],
+    [onNextEpisode, showControls],
+  );
+
+  // Stable identity: VideoSurface reloads the stream when onError changes.
+  const handleError = useCallback(
+    (error: PlayerError) => {
+      if (!error.fatal) return; // the engine is recovering; buffering covers it
+      clearStallTimer();
+      setFailure({ kind: error.kind });
+    },
+    [clearStallTimer],
+  );
+
+  const handleBufferingChange = useCallback(
+    (isBuffering: boolean) => {
+      clearStallTimer();
+      if (isBuffering) stallTimerRef.current = setTimeout(() => setFailure({ kind: "network", stalled: true }), STALL_TIMEOUT_MS);
+    },
+    [clearStallTimer],
   );
 
   // A fresh stream (channel/episode change) starts with no known tracks
-  // until the new engine reports in via onEngineReady — reset here so the
-  // Audio & Subtitles menu doesn't briefly show the previous stream's tracks.
+  // until the new engine reports in — reset so the Audio & Subtitles panel
+  // doesn't briefly show the previous stream's tracks.
   useEffect(() => {
     setActiveAudioTrackId(null);
     setActiveSubtitleTrackId(null);
     setDurationSeconds(NaN);
     setPositionSeconds(0);
+    setPendingSeekSeconds(null);
+    setFailure(null);
+    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
   }, [streamUrl]);
 
-  useRemoteInput(platform, {
-    onBack: onClose,
-    onPlayPause: () => {
-      showControls();
-      togglePlayPause();
-    },
-  });
+  function startPlayback(fromSeconds: number | undefined): void {
+    setStartAt(fromSeconds !== undefined ? { streamUrl, seconds: fromSeconds } : null);
+    setPositionSeconds(fromSeconds ?? 0);
+    setResumeAnsweredFor(streamUrl);
+    showControls();
+  }
 
-  // Any D-pad press at all counts as activity, even when it lands on the
-  // page underneath a hidden overlay (e.g. the first press that's meant to
-  // just bring the controls back) — a plain document-level listener here is
-  // simpler than threading "activity" through every possible input path,
-  // and harmless since it only ever resets a visibility timer.
-  useEffect(() => {
-    function onAnyKeyDown(): void {
-      showControls();
-    }
-    document.addEventListener("keydown", onAnyKeyDown);
-    return () => document.removeEventListener("keydown", onAnyKeyDown);
-  }, [showControls]);
+  function retry(): void {
+    // Pick up where playback got to (live always rejoins the live edge).
+    const { positionSeconds: position } = stateRef.current;
+    const from = isLive ? undefined : position > 0 ? position : startPositionSeconds;
+    setStartAt(from !== undefined ? { streamUrl, seconds: from } : null);
+    setFailure(null);
+    setAttempt((n) => n + 1);
+    showControls();
+  }
 
   function togglePlayPause(): void {
     const engine = engineRef.current;
-    if (!engine) return;
-    if (isPlaying) engine.pause();
+    if (!engine || !stateRef.current.isShowingVideo) return;
+    showControls();
+    if (stateRef.current.isPlaying) engine.pause();
     else void engine.play();
   }
 
-  function seekBy(deltaSeconds: number): void {
-    const engine = engineRef.current;
-    if (!engine || !Number.isFinite(durationSeconds)) return;
-    const next = Math.min(durationSeconds, Math.max(0, positionSeconds + deltaSeconds));
-    engine.seekTo(next);
-    setPositionSeconds(next);
+  function play(): void {
+    if (!stateRef.current.isShowingVideo) return;
+    showControls();
+    void engineRef.current?.play();
   }
 
-  function seekTo(seconds: number): void {
-    const engine = engineRef.current;
-    if (!engine || !Number.isFinite(durationSeconds)) return;
-    const next = Math.min(durationSeconds, Math.max(0, seconds));
-    engine.seekTo(next);
-    setPositionSeconds(next);
+  function pause(): void {
+    if (!stateRef.current.isShowingVideo) return;
+    showControls();
+    engineRef.current?.pause();
   }
+
+  function commitSeek(): void {
+    const target = stateRef.current.pendingSeekSeconds;
+    seekPressCountRef.current = 0;
+    if (target === null) return;
+    engineRef.current?.seekTo(target);
+    setPositionSeconds(target);
+    setPendingSeekSeconds(null);
+    showControls();
+  }
+
+  function scrub(direction: -1 | 1): void {
+    const { positionSeconds: position, durationSeconds: duration, pendingSeekSeconds: pending } = stateRef.current;
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    const step = seekStepFor(seekPressCountRef.current++);
+    const target = Math.min(duration, Math.max(0, (pending ?? position) + direction * step));
+    stateRef.current.pendingSeekSeconds = target; // key repeat can outrun re-renders
+    setPendingSeekSeconds(target);
+    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+    seekTimerRef.current = setTimeout(commitSeek, SEEK_COMMIT_MS);
+  }
+
+  /** Rewind / Fast-forward keys: scrub from anywhere, landing focus on the seek bar. */
+  function scrubFromMediaKey(direction: -1 | 1): void {
+    const { isShowingVideo: showing, isMenuOpen: menuOpen, durationSeconds: duration } = stateRef.current;
+    if (!showing || menuOpen || isLive || !Number.isFinite(duration)) return;
+    showControls();
+    useFocusStore.getState().focus(PLAYER_SEEK_ID);
+    scrub(direction);
+  }
+
+  // Runs in the capture phase, ahead of the focus graph's own document
+  // listener (useRemoteInput), so it can claim a key before it moves focus.
+  useEffect(() => {
+    function onKeyDownCapture(event: KeyboardEvent): void {
+      const action = resolveRemoteAction(platform, event);
+      const { isMenuOpen: menuOpen, areControlsVisible: visible, isShowingVideo: showing } = stateRef.current;
+      if (action === "unknown" || !showing) return;
+      const wasHidden = !visible;
+      showControls();
+      if (menuOpen || (action !== "up" && action !== "down" && action !== "left" && action !== "right" && action !== "select")) return;
+
+      const canScrub = !isLive && Number.isFinite(stateRef.current.durationSeconds);
+      const isLeftRight = action === "left" || action === "right";
+      const focusedId = useFocusStore.getState().focusedId;
+
+      if (isLeftRight && canScrub && (wasHidden || focusedId === PLAYER_SEEK_ID)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (focusedId !== PLAYER_SEEK_ID) useFocusStore.getState().focus(PLAYER_SEEK_ID);
+        scrub(action === "left" ? -1 : 1);
+        return;
+      }
+      if (wasHidden) {
+        // The first press only wakes the controls up.
+        event.preventDefault();
+        event.stopPropagation();
+        if (action === "select") swallowNextKeyUp();
+      }
+    }
+    document.addEventListener("keydown", onKeyDownCapture, true);
+    return () => document.removeEventListener("keydown", onKeyDownCapture, true);
+    // scrub/commitSeek only touch refs and state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platform, isLive, showControls]);
+
+  useRemoteInput(platform, {
+    onBack: () => {
+      if (stateRef.current.isMenuOpen) setIsMenuOpen(false);
+      else onClose();
+    },
+    onPlayPause: togglePlayPause,
+    onPlay: play,
+    onPause: pause,
+    onStop: onClose,
+    onRewind: () => scrubFromMediaKey(-1),
+    onFastForward: () => scrubFromMediaKey(1),
+  });
 
   function selectAudioTrack(id: number): void {
     engineRef.current?.setAudioTrack(id);
@@ -173,43 +370,161 @@ export function PlayerScreen({ streamUrl, platform, onClose, identity, title, su
     setActiveSubtitleTrackId(id);
   }
 
+  if (isChoosingResume && resumeFrom) {
+    return (
+      <PlayerMessage>
+        <ResumeChoice
+          title={title}
+          subtitle={subtitle}
+          resumeFrom={resumeFrom}
+          onResume={() => startPlayback(resumeFrom.positionSeconds)}
+          onStartOver={() => startPlayback(undefined)}
+        />
+      </PlayerMessage>
+    );
+  }
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 50 }}>
-      <VideoSurface
-        streamUrl={streamUrl}
-        onProgress={handleProgress}
-        onEngineReady={handleEngineReady}
-        onPlayStateChange={handlePlayStateChange}
-      />
-      <div
-        style={{
-          opacity: areControlsVisible ? 1 : 0,
-          pointerEvents: areControlsVisible ? "auto" : "none",
-          transition: "opacity 220ms ease-out",
-        }}
-      >
-        <PlaybackControls
-          title={title ?? ""}
-          subtitle={subtitle}
-          isLive={isLive}
-          isPlaying={isPlaying}
-          positionSeconds={positionSeconds}
-          durationSeconds={Number.isFinite(durationSeconds) ? durationSeconds : 0}
-          audioTracks={audioTracks}
-          activeAudioTrackId={activeAudioTrackId}
-          subtitleTracks={subtitleTracks}
-          activeSubtitleTrackId={activeSubtitleTrackId}
-          hasNextEpisode={Boolean(onNextEpisode)}
-          onBack={onClose}
-          onTogglePlayPause={togglePlayPause}
-          onSeekBy={seekBy}
-          onSeekTo={seekTo}
-          onSelectAudioTrack={selectAudioTrack}
-          onSelectSubtitleTrack={selectSubtitleTrack}
-          onNextEpisode={() => onNextEpisode?.()}
-          onActivity={showControls}
+      {failure === null && (
+        <VideoSurface
+          key={attempt}
+          streamUrl={streamUrl}
+          engineFactory={engineFactory}
+          startPositionSeconds={startPositionSeconds}
+          onProgress={handleProgress}
+          onEngineReady={handleEngineReady}
+          onPlayStateChange={handlePlayStateChange}
+          onError={handleError}
+          onBufferingChange={handleBufferingChange}
         />
-      </div>
+      )}
+      {failure === null ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: areControlsVisible ? 1 : 0,
+            pointerEvents: areControlsVisible ? "auto" : "none",
+            transition: "opacity 220ms ease-out",
+          }}
+        >
+          <PlaybackControls
+            title={title ?? ""}
+            subtitle={subtitle}
+            isLive={isLive}
+            isPlaying={isPlaying}
+            positionSeconds={positionSeconds}
+            durationSeconds={Number.isFinite(durationSeconds) ? durationSeconds : 0}
+            pendingSeekSeconds={pendingSeekSeconds}
+            audioTracks={audioTracks}
+            activeAudioTrackId={activeAudioTrackId}
+            subtitleTracks={subtitleTracks}
+            activeSubtitleTrackId={activeSubtitleTrackId}
+            hasNextEpisode={Boolean(onNextEpisode)}
+            isMenuOpen={isMenuOpen}
+            onOpenMenu={() => setIsMenuOpen(true)}
+            onTogglePlayPause={togglePlayPause}
+            onSelectAudioTrack={selectAudioTrack}
+            onSelectSubtitleTrack={selectSubtitleTrack}
+            onNextEpisode={() => onNextEpisode?.()}
+          />
+        </div>
+      ) : (
+        <PlaybackError title={title} message={describeFailure(failure, isLive)} onRetry={retry} onBack={onClose} />
+      )}
     </div>
+  );
+}
+
+/** Full-screen black stage for the resume choice and errors, content left-aligned like the controls. */
+function PlayerMessage({ children }: { children: React.ReactNode }): JSX.Element {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 50,
+        display: "flex",
+        alignItems: "center",
+        padding: `3rem ${BROWSE_SIDE_PADDING}`,
+        background: "radial-gradient(ellipse at 30% 40%, #1a1d2a 0%, #07080b 70%)",
+      }}
+    >
+      <div style={{ maxWidth: "64rem" }}>{children}</div>
+    </div>
+  );
+}
+
+function useTwoButtonGraph(scope: string, firstId: string, secondId: string, onFirst: () => void, onSecond: () => void): void {
+  const setGraph = useFocusStore((state) => state.setGraph);
+  const clearGraph = useFocusStore((state) => state.clearGraph);
+  const focus = useFocusStore((state) => state.focus);
+  const latestRef = useRef({ onFirst, onSecond });
+  latestRef.current = { onFirst, onSecond };
+
+  useEffect(() => {
+    setGraph(scope, [
+      { id: firstId, neighbors: { right: secondId }, onSelect: () => latestRef.current.onFirst() },
+      { id: secondId, neighbors: { left: firstId }, onSelect: () => latestRef.current.onSecond() },
+    ]);
+    // Other scopes (the controls) may still hold focus while unmounting.
+    focus(firstId);
+    return () => clearGraph(scope);
+  }, [scope, firstId, secondId, setGraph, clearGraph, focus]);
+}
+
+function ResumeChoice({
+  title,
+  subtitle,
+  resumeFrom,
+  onResume,
+  onStartOver,
+}: {
+  title?: string;
+  subtitle?: string;
+  resumeFrom: ResumePoint;
+  onResume: () => void;
+  onStartOver: () => void;
+}): JSX.Element {
+  useTwoButtonGraph(RESUME_SCOPE, RESUME_ID, START_OVER_ID, onResume, onStartOver);
+  const ratio = Math.min(1, resumeFrom.positionSeconds / resumeFrom.durationSeconds);
+  const remaining = Math.max(0, resumeFrom.durationSeconds - resumeFrom.positionSeconds);
+
+  return (
+    <>
+      <div style={{ fontSize: TV_TEXT, fontWeight: 600, color: "var(--text-dim)", marginBottom: "0.75rem" }}>Continue watching</div>
+      {title && <h1 style={{ fontSize: "3.5rem", fontWeight: 800, color: "#fff", margin: 0, lineHeight: 1.1 }}>{title}</h1>}
+      {subtitle && <div style={{ fontSize: "1.625rem", color: "rgba(255,255,255,0.8)", marginTop: "0.625rem" }}>{subtitle}</div>}
+
+      <div style={{ display: "flex", alignItems: "center", gap: "1.25rem", margin: "2.5rem 0 3rem", maxWidth: "40rem" }}>
+        <div style={{ flex: 1, height: "0.5rem", borderRadius: 999, background: "rgba(255,255,255,0.2)", overflow: "hidden" }}>
+          <div style={{ width: `${ratio * 100}%`, height: "100%", background: "var(--accent)" }} />
+        </div>
+        <span style={{ fontSize: TV_TEXT, color: "rgba(255,255,255,0.75)", whiteSpace: "nowrap" }}>{formatPlaybackTime(remaining)} left</span>
+      </div>
+
+      <div style={{ display: "flex", gap: "1.25rem" }}>
+        <TvButton id={RESUME_ID} label={`Resume from ${formatPlaybackTime(resumeFrom.positionSeconds)}`} icon={Play} variant="primary" onSelect={onResume} />
+        <TvButton id={START_OVER_ID} label="Start Over" icon={RotateCcw} onSelect={onStartOver} />
+      </div>
+    </>
+  );
+}
+
+function PlaybackError({ title, message, onRetry, onBack }: { title?: string; message: string; onRetry: () => void; onBack: () => void }): JSX.Element {
+  useTwoButtonGraph(ERROR_SCOPE, RETRY_ID, ERROR_BACK_ID, onRetry, onBack);
+  return (
+    <PlayerMessage>
+      <div role="alert">
+        <TriangleAlert size="3.5rem" strokeWidth={1.75} color="#ffb347" />
+        <h1 style={{ fontSize: "3rem", fontWeight: 800, color: "#fff", margin: "1.25rem 0 0.75rem" }}>Can't play {title ? `“${title}”` : "this"}</h1>
+        <p style={{ fontSize: "1.625rem", color: "rgba(255,255,255,0.8)", margin: "0 0 3rem", lineHeight: 1.45, maxWidth: "52rem" }}>{message}</p>
+        <div style={{ display: "flex", gap: "1.25rem" }}>
+          <TvButton id={RETRY_ID} label="Try Again" icon={RotateCcw} variant="primary" onSelect={onRetry} />
+          <TvButton id={ERROR_BACK_ID} label="Back" icon={ArrowLeft} onSelect={onBack} />
+        </div>
+      </div>
+    </PlayerMessage>
   );
 }

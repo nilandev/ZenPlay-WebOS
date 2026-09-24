@@ -2,6 +2,7 @@ import { useState } from "react";
 import { resolveRemoteAction, type PlatformId } from "@core";
 import { Focusable } from "../focus/Focusable.js";
 import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
+import { swallowNextKeyUp } from "../focus/swallow-key-up.js";
 import { TV_TEXT } from "../tv-metrics.js";
 
 export interface TvTextFieldProps {
@@ -93,23 +94,4 @@ export function TvTextField({ id, label, value, onChange, platform, placeholder,
       </label>
     </Focusable>
   );
-}
-
-/**
- * The remote handler selects on keyup. After OK leaves a text field (on
- * keydown), its keyup would otherwise select the node focus just moved to —
- * e.g. submitting the form from the last field. Some on-screen keyboards
- * never send the keyup, so the swallow expires on its own.
- */
-function swallowNextKeyUp(): void {
-  const swallow = (event: KeyboardEvent) => {
-    event.stopImmediatePropagation();
-    cleanup();
-  };
-  const cleanup = () => {
-    document.removeEventListener("keyup", swallow, true);
-    clearTimeout(timer);
-  };
-  const timer = setTimeout(cleanup, 600);
-  document.addEventListener("keyup", swallow, true);
 }

@@ -1,6 +1,7 @@
 import Hls, { ErrorData, Events, type HlsConfig } from "hls.js";
 import type {
   AudioTrackInfo,
+  LoadOptions,
   PlaybackProgress,
   PlayerEngine,
   PlayerError,
@@ -29,6 +30,9 @@ const IPTV_TUNED_CONFIG: Partial<HlsConfig> = {
   fragLoadingMaxRetry: 6,
   enableWorker: true,
 };
+
+/** A fatal hls.js error within this long of the last recovery attempt is treated as unrecoverable. */
+const RECOVERY_WINDOW_MS = 15_000;
 
 /**
  * True for an actual HLS manifest URL (live channels and catch-up always
@@ -77,6 +81,15 @@ export class HlsPlayerEngine implements PlayerEngine {
   private errorCallbacks = new Set<(error: PlayerError) => void>();
   private timeUpdateCallbacks = new Set<(progress: PlaybackProgress) => void>();
   private droppedFrames = 0;
+  /** When hls.js last attempted recovery from a fatal error — a second fatal error soon after means recovery isn't working. */
+  private lastRecoveryAt = 0;
+  /** loadedmetadata listener that applies a start position — removed if another load/unload happens first. */
+  private pendingStartSeek: (() => void) | null = null;
+
+  private clearPendingStartSeek(): void {
+    if (this.pendingStartSeek) this.video?.removeEventListener("loadedmetadata", this.pendingStartSeek);
+    this.pendingStartSeek = null;
+  }
   private handleTimeUpdate = (): void => {
     if (!this.video) return;
     const progress: PlaybackProgress = { positionSeconds: this.video.currentTime, durationSeconds: this.video.duration };
@@ -90,12 +103,40 @@ export class HlsPlayerEngine implements PlayerEngine {
   attach(videoElement: HTMLVideoElement): void {
     this.video = videoElement;
     this.video.addEventListener("timeupdate", this.handleTimeUpdate);
+    this.video.addEventListener("error", this.handleMediaElementError);
   }
 
-  async load(streamUrl: string): Promise<void> {
+  /**
+   * Direct-play files and native HLS never go through hls.js, so the
+   * <video> element's own error event is the only signal that a stream is
+   * dead or unplayable. (With hls.js attached, hls.js reports these itself.)
+   */
+  private handleMediaElementError = (): void => {
+    const error = this.video?.error;
+    if (!error || this.hls || !this.video?.getAttribute("src")) return;
+    if (error.code === MediaError.MEDIA_ERR_ABORTED) return;
+    const kind: PlayerError["kind"] = error.code === MediaError.MEDIA_ERR_NETWORK ? "network" : "media";
+    for (const cb of this.errorCallbacks) cb({ kind, fatal: true, message: error.message || `MediaError ${error.code}`, raw: error });
+  };
+
+  async load(streamUrl: string, options: LoadOptions = {}): Promise<void> {
     if (!this.video) throw new Error("HlsPlayerEngine.attach() must be called before load()");
 
     this.destroyHlsInstance();
+    this.lastRecoveryAt = 0;
+    const startPosition = options.startPositionSeconds && options.startPositionSeconds > 0 ? options.startPositionSeconds : undefined;
+    this.clearPendingStartSeek();
+    if (startPosition !== undefined) {
+      // The platform player (direct-play and native HLS) only accepts a
+      // position once it knows the media's duration.
+      const video = this.video;
+      const seek = () => {
+        video.currentTime = startPosition;
+        this.clearPendingStartSeek();
+      };
+      video.addEventListener("loadedmetadata", seek);
+      this.pendingStartSeek = seek;
+    }
 
     if (!isHlsStream(streamUrl)) {
       // Xtream VOD/series streams aren't always .m3u8 — container_extension
@@ -127,7 +168,7 @@ export class HlsPlayerEngine implements PlayerEngine {
       return;
     }
 
-    const hls = new Hls(IPTV_TUNED_CONFIG);
+    const hls = new Hls({ ...IPTV_TUNED_CONFIG, startPosition: startPosition ?? -1 });
     this.hls = hls;
 
     hls.on(Events.ERROR, (_event, data: ErrorData) => this.handleHlsError(data));
@@ -164,6 +205,7 @@ export class HlsPlayerEngine implements PlayerEngine {
 
   unload(): void {
     this.destroyHlsInstance();
+    this.clearPendingStartSeek();
     if (!this.video) return;
     this.video.pause();
     // Clearing src alone doesn't release the decoder — load() on an
@@ -175,6 +217,7 @@ export class HlsPlayerEngine implements PlayerEngine {
   destroy(): void {
     this.unload();
     this.video?.removeEventListener("timeupdate", this.handleTimeUpdate);
+    this.video?.removeEventListener("error", this.handleMediaElementError);
     this.errorCallbacks.clear();
     this.timeUpdateCallbacks.clear();
     this.video = null;
@@ -284,7 +327,15 @@ export class HlsPlayerEngine implements PlayerEngine {
     // as something the UI should react to (e.g. show a retry prompt).
     if (!data.fatal) return;
 
-    if (this.hls) {
+    // hls.js can often recover from a fatal network/media error. Try once
+    // quietly (reported as non-fatal, so the UI keeps showing buffering);
+    // a second fatal error within the window means it isn't recovering.
+    const now = Date.now();
+    const isRetryable = data.type === Hls.ErrorTypes.NETWORK_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR;
+    const isRecovering = isRetryable && now - this.lastRecoveryAt > RECOVERY_WINDOW_MS;
+    if (isRecovering) this.lastRecoveryAt = now;
+
+    if (this.hls && isRecovering) {
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
         this.hls.startLoad();
       } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -293,7 +344,7 @@ export class HlsPlayerEngine implements PlayerEngine {
     }
 
     for (const cb of this.errorCallbacks) {
-      cb({ kind, fatal: data.fatal, message: data.details, raw: data });
+      cb({ kind, fatal: !isRecovering, message: data.details, raw: data });
     }
   }
 

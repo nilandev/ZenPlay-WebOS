@@ -17,7 +17,14 @@ export interface VideoSurfaceProps {
   onEngineReady?: (engine: PlayerEngine | null) => void;
   /** Mirrors the underlying <video> element's play/pause/ended state — opt-in, used by PlayerScreen's play/pause icon and next-episode auto-advance. */
   onPlayStateChange?: (state: { isPlaying: boolean; didEnd: boolean }) => void;
+  /** Where to start the stream (resume) — read when the stream loads. */
+  startPositionSeconds?: number;
+  /** Mirrors the buffering indicator — used by PlayerScreen to give up on a stream that never recovers. */
+  onBufferingChange?: (isBuffering: boolean) => void;
 }
+
+/** A mid-stream stall shorter than this doesn't show the indicator — brief hiccups would otherwise flash it. */
+const STALL_INDICATOR_DELAY_MS = 400;
 
 /**
  * Owns a PlayerEngine instance for its lifetime and reloads it whenever
@@ -33,6 +40,8 @@ export function VideoSurface({
   onProgress,
   onEngineReady,
   onPlayStateChange,
+  startPositionSeconds,
+  onBufferingChange,
 }: VideoSurfaceProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
   const engineRef = useRef<PlayerEngine | null>(null);
@@ -43,6 +52,14 @@ export function VideoSurface({
   onEngineReadyRef.current = onEngineReady;
   const onPlayStateChangeRef = useRef(onPlayStateChange);
   onPlayStateChangeRef.current = onPlayStateChange;
+  const startPositionRef = useRef(startPositionSeconds);
+  startPositionRef.current = startPositionSeconds;
+  const onBufferingChangeRef = useRef(onBufferingChange);
+  onBufferingChangeRef.current = onBufferingChange;
+
+  useEffect(() => {
+    onBufferingChangeRef.current?.(isBuffering);
+  }, [isBuffering]);
 
   useEffect(() => {
     const engine = (engineFactory ?? (() => new HlsPlayerEngine()))();
@@ -61,7 +78,34 @@ export function VideoSurface({
     video?.addEventListener("pause", handlePause);
     video?.addEventListener("ended", handleEnded);
 
+    // Mid-stream stalls: the element fires "waiting" when it runs out of
+    // data and "playing" once it resumes.
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearStallTimer = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = null;
+    };
+    const handleWaiting = () => {
+      clearStallTimer();
+      stallTimer = setTimeout(() => setIsBuffering(true), STALL_INDICATOR_DELAY_MS);
+    };
+    const handleResumed = () => {
+      clearStallTimer();
+      setIsBuffering(false);
+    };
+    video?.addEventListener("waiting", handleWaiting);
+    video?.addEventListener("playing", handleResumed);
+    video?.addEventListener("pause", clearStallTimer);
+    video?.addEventListener("ended", handleResumed);
+    video?.addEventListener("error", handleResumed);
+
     return () => {
+      clearStallTimer();
+      video?.removeEventListener("waiting", handleWaiting);
+      video?.removeEventListener("playing", handleResumed);
+      video?.removeEventListener("pause", clearStallTimer);
+      video?.removeEventListener("ended", handleResumed);
+      video?.removeEventListener("error", handleResumed);
       unsubscribeError();
       unsubscribeProgress();
       video?.removeEventListener("play", handlePlay);
@@ -91,12 +135,15 @@ export function VideoSurface({
     let cancelled = false;
     setIsBuffering(true);
     engine
-      .load(streamUrl)
+      .load(streamUrl, { startPositionSeconds: startPositionRef.current })
       .then(() => {
         if (!cancelled) return engine.play();
       })
       .catch((error: unknown) => {
-        if (!cancelled) {
+        // AbortError: a newer load interrupted this one. NotAllowedError: the
+        // browser blocked autoplay — the viewer can still press Play.
+        const name = error instanceof DOMException ? error.name : "";
+        if (!cancelled && name !== "AbortError" && name !== "NotAllowedError") {
           onError?.({ kind: "unknown", fatal: true, message: String(error), raw: error });
         }
       })

@@ -15,6 +15,8 @@ import {
   loadProfiles,
   setActiveProfileId,
   updateProfile,
+  getResumePoint,
+  type ResumePoint,
 } from "./profile-store.js";
 import { buildRevalidationTargets, revalidateStaleTargets } from "./cache-revalidator.js";
 import { AddSourceScreen } from "./screens/AddSourceScreen.js";
@@ -73,6 +75,7 @@ export function App(): JSX.Element {
   const [playbackIdentity, setPlaybackIdentity] = useState<PlaybackIdentity | undefined>(undefined);
   const [playbackTitle, setPlaybackTitle] = useState<string | undefined>(undefined);
   const [playbackSubtitle, setPlaybackSubtitle] = useState<string | undefined>(undefined);
+  const [playbackResume, setPlaybackResume] = useState<ResumePoint | null>(null);
   // The episode after the one currently playing, computed when a series
   // episode starts (see playEpisode) — null when there isn't one (last
   // episode of the last season, or a movie), which is what tells
@@ -209,6 +212,7 @@ export function App(): JSX.Element {
   // Continue Watching doesn't apply to it.
   const playMovie = (movie: Channel): void => {
     setPlaybackIdentity({ profileId: activeProfile.id, contentId: movie.id, contentKind: "movie" });
+    setPlaybackResume(getResumePoint(activeProfile.id, movie.id));
     setPlaybackTitle(movie.name);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
@@ -226,6 +230,7 @@ export function App(): JSX.Element {
       contentKind: "series-episode",
       episodeId: episode.id,
     });
+    setPlaybackResume(getResumePoint(activeProfile.id, episode.seriesId, episode.id));
     setPlaybackTitle(episode.title);
     setPlaybackSubtitle(`S${episode.season} E${episode.episode}`);
     setNextEpisode(findNextEpisode(episode, allEpisodes));
@@ -235,6 +240,7 @@ export function App(): JSX.Element {
   };
   const playWithoutIdentity = (streamUrl: string): void => {
     setPlaybackIdentity(undefined);
+    setPlaybackResume(null);
     setPlaybackTitle(undefined);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
@@ -243,6 +249,7 @@ export function App(): JSX.Element {
   };
   const playLive = (channel: Channel): void => {
     setPlaybackIdentity(undefined);
+    setPlaybackResume(null);
     setPlaybackTitle(channel.name);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
@@ -255,6 +262,7 @@ export function App(): JSX.Element {
   const closePlayback = (): void => {
     setPlaybackUrl(null);
     setPlaybackIdentity(undefined);
+    setPlaybackResume(null);
     setPlaybackTitle(undefined);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
@@ -373,6 +381,7 @@ export function App(): JSX.Element {
             subtitle={playbackSubtitle}
             onNextEpisode={nextEpisode ? playNextEpisode : undefined}
             isLive={isPlaybackLive}
+            resumeFrom={playbackResume}
           />
       )}
     </div>

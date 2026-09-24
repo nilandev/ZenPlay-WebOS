@@ -64,6 +64,25 @@ export function upsertContinueWatching(entry: ContinueWatchingEntry): void {
   localStorage.setItem(CONTINUE_WATCHING_KEY, JSON.stringify(filtered));
 }
 
+/** Positions this close to the start aren't worth offering to resume. */
+const RESUME_MIN_SECONDS = 30;
+/** Positions this close to the end count as finished (credits) — play from the start instead. */
+const RESUME_END_MARGIN_SECONDS = 90;
+
+export interface ResumePoint {
+  positionSeconds: number;
+  durationSeconds: number;
+}
+
+/** Where to offer resuming a film or episode, or null to just start from the beginning. */
+export function getResumePoint(profileId: string, contentId: string, episodeId?: string): ResumePoint | null {
+  const entry = loadContinueWatching(profileId).find((e) => e.contentId === contentId && (e.episodeId ?? undefined) === episodeId);
+  if (!entry || !Number.isFinite(entry.durationSeconds) || entry.durationSeconds <= 0) return null;
+  const { positionSeconds, durationSeconds } = entry;
+  if (positionSeconds < RESUME_MIN_SECONDS || positionSeconds > durationSeconds - RESUME_END_MARGIN_SECONDS) return null;
+  return { positionSeconds, durationSeconds };
+}
+
 function favoriteKey(e: Pick<FavoriteEntry, "profileId" | "sourceId" | "contentKind" | "contentId">): string {
   return `${e.profileId}:${e.sourceId}:${e.contentKind}:${e.contentId}`;
 }

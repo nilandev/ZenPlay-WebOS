@@ -36,9 +36,14 @@ export interface PlayerError {
  * (currently just the hls.js-backed one). UI code depends only on this
  * interface so it never branches on platform.
  */
+export interface LoadOptions {
+  /** Start playback here instead of at the beginning (resuming a film or episode). Ignored for live streams. */
+  startPositionSeconds?: number;
+}
+
 export interface PlayerEngine {
   attach(videoElement: HTMLVideoElement): void;
-  load(streamUrl: string): Promise<void>;
+  load(streamUrl: string, options?: LoadOptions): Promise<void>;
   play(): Promise<void>;
   pause(): void;
   seekTo(seconds: number): void;
