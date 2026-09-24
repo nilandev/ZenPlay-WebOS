@@ -21,6 +21,8 @@ export interface XtreamLiveStreamRaw {
   epg_channel_id?: string;
   tv_archive?: number;
   tv_archive_duration?: number;
+  /** Provider channel number. Some panels send it as a string, some omit it. */
+  num?: number | string;
 }
 
 export interface XtreamVodStreamRaw {
@@ -64,6 +66,12 @@ export function buildXtreamStreamUrl(
   return `${base}/${kind}/${credentials.username}/${credentials.password}/${streamId}.${extension}`;
 }
 
+/** A positive integer channel number, or undefined for a missing/garbage value. */
+export function parseChannelNumber(raw: number | string | undefined): number | undefined {
+  const value = typeof raw === "string" ? Number.parseInt(raw, 10) : raw;
+  return value !== undefined && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 export function mapLiveStream(credentials: Pick<XtreamCredentials, "baseUrl" | "username" | "password">, s: XtreamLiveStreamRaw): Channel {
   return {
     id: String(s.stream_id),
@@ -75,6 +83,7 @@ export function mapLiveStream(credentials: Pick<XtreamCredentials, "baseUrl" | "
     kind: "live",
     hasArchive: s.tv_archive === 1,
     archiveDurationDays: s.tv_archive_duration,
+    number: parseChannelNumber(s.num),
   };
 }
 

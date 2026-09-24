@@ -3,38 +3,50 @@ import type { Channel } from "@core";
 import { Focusable, FocusScrollManagedContext } from "../focus/Focusable.js";
 import { buildListFocusGraph } from "../focus/build-grid-graph.js";
 import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
+import { SECTION_ICONS } from "../section-icons.js";
+import { TV_TEXT } from "../tv-metrics.js";
 import { MarqueeText } from "./MarqueeText.js";
 import { URLImage } from "./URLImage.js";
-import { SECTION_ICONS } from "../section-icons.js";
 
 export interface ChannelSidebarProps {
   channels: Channel[];
+  /** The channel currently playing/selected (e.g. in the Live TV preview) — marked with an "on air" dot. */
   activeChannelId?: string;
   onHighlight: (channel: Channel) => void;
   onSelect: (channel: Channel) => void;
-  width?: number;
-  /** Focus id to jump to when the user presses left from any row — the category sidebar's currently-focused id. */
+  /** CSS width of the column. */
+  width?: number | string;
+  /** Channel number per channel id; when given, each row shows its number. */
+  numberById?: Map<string, number>;
+  /** Focus id to jump to when the user presses left from any row — e.g. the category rail. */
   leftEntryId?: string;
-  /** Focus id to jump to when the user presses right from any row — the preview panel's single focus node. */
+  /** Focus id to jump to when the user presses right from any row, if anything sits to the right. */
   rightEntryId?: string;
 }
 
 const SCOPE = "content:channel-sidebar";
-/** Fixed row pitch (60px row + 6px gap) — windowing needs every row's position to be computable without measuring. */
-const ROW_HEIGHT_PX = 66;
-const ROW_GAP_PX = 6;
-const LIST_PADDING_PX = 12;
+/** Row pitch and height in rem — rows scale with the TV like everything else; windowing converts to px with the live root font size. */
+const ROW_PITCH_REM = 5;
+const ROW_HEIGHT_REM = 4.5;
+const LIST_PADDING_REM = 0.75;
 /** Rows rendered beyond each edge of the viewport, so a D-pad step always lands on an already-mounted row. */
 const OVERSCAN_ROWS = 6;
 /** Used until the list has been laid out (and in jsdom, which never lays out) — a full 1080p screen's worth of rows. */
 const FALLBACK_VIEWPORT_PX = 1080;
 
+function readRemPx(): number {
+  if (typeof document === "undefined") return 16;
+  const value = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return Number.isFinite(value) && value > 0 ? value : 16;
+}
+
 /**
- * Column 2 of the Live TV browse layout: a vertical list of channels
- * belonging to the currently selected category (column 1). Mirrors
- * CategorySidebar's own list-graph/scope wiring, but reports every focus
- * change via onHighlight (not just onSelect) — the spec's column 3 preview
- * player is meant to follow highlight, debounced, not wait for a commit.
+ * Vertical channel list (Live TV, Program Guide), sized for the 10-foot view:
+ * large rows with the channel number, logo and name; the focused row is a
+ * solid white bar (the app-wide list focus style) and the channel on air in
+ * the preview carries a red dot, so "where focus is" and "what's playing"
+ * are never confused. Every focus change is reported via onHighlight (the
+ * preview follows highlight, debounced by the owner); Select calls onSelect.
  *
  * Windowed: an "All Channels" list can run to thousands of rows, so only
  * the rows in (or near) the viewport are mounted, absolutely positioned at
@@ -44,13 +56,27 @@ const FALLBACK_VIEWPORT_PX = 1080;
  * itself, so a D-pad press re-renders just the two rows whose focused state
  * changed instead of the whole list.
  */
-export function ChannelSidebar({ channels, activeChannelId, onHighlight, onSelect, width = 340, leftEntryId, rightEntryId }: ChannelSidebarProps): JSX.Element {
+export function ChannelSidebar({
+  channels,
+  activeChannelId,
+  onHighlight,
+  onSelect,
+  width = "34rem",
+  numberById,
+  leftEntryId,
+  rightEntryId,
+}: ChannelSidebarProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focus = useFocusStore((state) => state.focus);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(FALLBACK_VIEWPORT_PX);
+  const [remPx, setRemPx] = useState(readRemPx);
+
+  const rowPitchPx = ROW_PITCH_REM * remPx;
+  const listPaddingPx = LIST_PADDING_REM * remPx;
+  const rowGapPx = (ROW_PITCH_REM - ROW_HEIGHT_REM) * remPx;
 
   const onHighlightRef = useRef(onHighlight);
   onHighlightRef.current = onHighlight;
@@ -68,17 +94,18 @@ export function ChannelSidebar({ channels, activeChannelId, onHighlight, onSelec
       onSelect: () => onSelectRef.current(channels[index]),
     }));
     setGraph(SCOPE, nodes);
-  }, [channels, leftEntryId, rightEntryId, setGraph, clearGraph]);
+  }, [channels, leftEntryId, rightEntryId, setGraph]);
+
   // Rebuilds above replace the scope in place (setGraph is atomic); clearing
   // it on every rebuild would drop focus for an instant and snap it back to
   // the first node. Clear only when this component goes away.
   useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
-
   useLayoutEffect(() => {
     function measure(): void {
       const height = scrollRef.current?.clientHeight ?? 0;
       if (height > 0) setViewportHeight(height);
+      setRemPx(readRemPx());
     }
     measure();
     window.addEventListener("resize", measure);
@@ -98,11 +125,11 @@ export function ChannelSidebar({ channels, activeChannelId, onHighlight, onSelec
       const el = scrollRef.current;
       if (!el) return;
       const viewport = el.clientHeight || FALLBACK_VIEWPORT_PX;
-      const rowTop = LIST_PADDING_PX + index * ROW_HEIGHT_PX;
-      const rowBottom = rowTop + ROW_HEIGHT_PX - ROW_GAP_PX;
+      const rowTop = listPaddingPx + index * rowPitchPx;
+      const rowBottom = rowTop + rowPitchPx - rowGapPx;
       let next = el.scrollTop;
-      if (rowTop - LIST_PADDING_PX < next) next = rowTop - LIST_PADDING_PX;
-      else if (rowBottom + LIST_PADDING_PX > next + viewport) next = rowBottom + LIST_PADDING_PX - viewport;
+      if (rowTop - listPaddingPx < next) next = rowTop - listPaddingPx;
+      else if (rowBottom + listPaddingPx > next + viewport) next = rowBottom + listPaddingPx - viewport;
       if (next !== el.scrollTop) {
         el.scrollTop = next;
         setScrollTop(next);
@@ -113,7 +140,7 @@ export function ChannelSidebar({ channels, activeChannelId, onHighlight, onSelec
     return useFocusStore.subscribe((state, prev) => {
       if (state.focusedId !== prev.focusedId) onFocusChange(state.focusedId);
     });
-  }, [channels, indexById]);
+  }, [channels, indexById, rowPitchPx, listPaddingPx, rowGapPx]);
 
   // Re-focus the first row whenever the channel list itself changes (i.e.
   // the user picked a different category) — without this, focusedId would
@@ -127,8 +154,8 @@ export function ChannelSidebar({ channels, activeChannelId, onHighlight, onSelec
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channels]);
 
-  const firstIndex = Math.max(0, Math.floor((scrollTop - LIST_PADDING_PX) / ROW_HEIGHT_PX) - OVERSCAN_ROWS);
-  const lastIndex = Math.min(channels.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT_PX) + OVERSCAN_ROWS);
+  const firstIndex = Math.max(0, Math.floor((scrollTop - listPaddingPx) / rowPitchPx) - OVERSCAN_ROWS);
+  const lastIndex = Math.min(channels.length, Math.ceil((scrollTop + viewportHeight) / rowPitchPx) + OVERSCAN_ROWS);
 
   return (
     <div
@@ -136,26 +163,32 @@ export function ChannelSidebar({ channels, activeChannelId, onHighlight, onSelec
       onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
       style={{
         width,
+        height: "100%",
         flexShrink: 0,
-        borderRight: "1px solid var(--border, #313139)",
         overflowY: "auto",
-        padding: `${LIST_PADDING_PX}px 8px`,
+        padding: `${LIST_PADDING_REM}rem 0.75rem`,
+        boxSizing: "border-box",
       }}
     >
       <FocusScrollManagedContext.Provider value={true}>
-        <div style={{ position: "relative", height: channels.length * ROW_HEIGHT_PX }}>
+        <div style={{ position: "relative", height: channels.length * rowPitchPx }}>
           {channels.slice(firstIndex, lastIndex).map((channel, offset) => (
             <div
               key={channel.id}
               style={{
                 position: "absolute",
-                top: (firstIndex + offset) * ROW_HEIGHT_PX,
+                top: (firstIndex + offset) * rowPitchPx,
                 left: 0,
                 right: 0,
-                height: ROW_HEIGHT_PX - ROW_GAP_PX,
+                height: `${ROW_HEIGHT_REM}rem`,
               }}
             >
-              <ChannelRow channel={channel} isActive={activeChannelId === channel.id} onSelect={handleRowSelect} />
+              <ChannelRow
+                channel={channel}
+                number={numberById?.get(channel.id)}
+                isActive={activeChannelId === channel.id}
+                onSelect={handleRowSelect}
+              />
             </div>
           ))}
         </div>
@@ -167,10 +200,12 @@ export function ChannelSidebar({ channels, activeChannelId, onHighlight, onSelec
 /** One channel row — subscribes to its own focused state, so a focus move re-renders only the rows it leaves and enters. */
 const ChannelRow = memo(function ChannelRow({
   channel,
+  number,
   isActive,
   onSelect,
 }: {
   channel: Channel;
+  number?: number;
   isActive: boolean;
   onSelect: (channel: Channel) => void;
 }): JSX.Element {
@@ -184,30 +219,40 @@ const ChannelRow = memo(function ChannelRow({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 12,
+          gap: "1rem",
           width: "100%",
           height: "100%",
           textAlign: "left",
-          padding: "10px 12px",
-          borderRadius: 8,
+          padding: "0 1rem",
+          borderRadius: "0.875rem",
           border: "none",
-          background: isFocused ? "var(--accent, #38bdf8)" : isActive ? "var(--surface-raised, #24242c)" : "transparent",
-          color: isFocused ? "#062028" : isActive ? "var(--text, #f4f4f6)" : "var(--text-dim, #9a9aa4)",
+          background: isFocused ? "rgba(255,255,255,0.94)" : isActive ? "rgba(255,255,255,0.08)" : "transparent",
+          color: isFocused ? "#0b0c10" : isActive ? "#ffffff" : "rgba(235,236,242,0.78)",
           fontWeight: isActive || isFocused ? 700 : 500,
-          fontSize: 16,
-          transform: isFocused ? "scale(1.03)" : "scale(1)",
-          transition: "transform 120ms ease-out, background 120ms ease-out",
+          fontSize: TV_TEXT,
+          cursor: "pointer",
         }}
       >
+        {number !== undefined && (
+          <span style={{ width: "3.25rem", flexShrink: 0, fontSize: "1.125rem", fontWeight: 600, opacity: isFocused ? 0.7 : 0.55, fontVariantNumeric: "tabular-nums" }}>
+            {number}
+          </span>
+        )}
         <URLImage
           src={channel.logoUrl}
           alt=""
           seed={channel.id}
           objectFit="contain"
-          style={{ width: 40, height: 40, borderRadius: 6, flexShrink: 0, background: "rgba(255,255,255,0.06)" }}
-        placeholderIcon={SECTION_ICONS.live}
-          />
+          placeholderIcon={SECTION_ICONS.live}
+          style={{ width: "3.5rem", height: "3.5rem", borderRadius: "0.5rem", flexShrink: 0, background: isFocused ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.06)" }}
+        />
         <MarqueeText text={channel.name} active={isFocused} style={{ minWidth: 0, flex: 1 }} />
+        {isActive && (
+          <span
+            aria-label="On air"
+            style={{ width: "0.625rem", height: "0.625rem", borderRadius: 999, background: "#e0332f", boxShadow: "0 0 0.5rem #e0332f", flexShrink: 0 }}
+          />
+        )}
       </button>
     </Focusable>
   );

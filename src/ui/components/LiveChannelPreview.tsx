@@ -1,219 +1,262 @@
-import { useEffect, useRef } from "react";
-import type { Channel } from "@core";
-import { Heart, Tv } from "lucide-react";
+import type { Channel, EpgProgramme, NowNext } from "@core";
+import { Check, Plus, Tv } from "lucide-react";
 import { Focusable } from "../focus/Focusable.js";
-import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
+import { useIsFocused } from "../focus/focus-store.js";
+import { SECTION_ICONS } from "../section-icons.js";
+import { TV_TEXT } from "../tv-metrics.js";
+import { Shimmer } from "./Shimmer.js";
 import { URLImage } from "./URLImage.js";
 import { VideoSurface } from "./VideoSurface.js";
-import { SECTION_ICONS } from "../section-icons.js";
 
 export interface LiveChannelPreviewProps {
   channel: Channel | null;
   streamUrl: string | null;
-  onEnterFullScreen: () => void;
-  /** Focus id assigned to this panel's single node — passed to ChannelSidebar as its rightEntryId. */
-  focusId: string;
+  channelNumber?: number;
   isFavorite: boolean;
+  /** What's on now/next for `channel`, or null when there's no guide data. */
+  nowNext: NowNext | null;
+  isGuideLoading: boolean;
+  /** Focus id for the channel line's favourite button — the owner wires it into the focus graph (Right from the channel list). */
+  favoriteButtonId: string;
   onToggleFavorite: () => void;
-  /** Focus id assigned to the favourite-toggle button, directly below the preview — passed down to a favourites row below this panel, if any, as its up-neighbor entry point. */
-  favoriteButtonFocusId: string;
-  /** Focus id to jump to when pressing down from the favourite-toggle button — typically a favourites row's first item. */
-  belowFocusId?: string;
 }
 
-const SCOPE = "content:live-preview";
 const LIVE_RED = "#e0332f";
-const FOCUS_RING = "0 0 0 3px var(--accent), 0 0 0 8px rgba(56,189,248,0.35), 0 0 24px 4px rgba(56,189,248,0.45)";
 
 /**
- * Column 3 of the Live TV browse layout: a live preview of the channel
- * currently highlighted in column 2 (ChannelSidebar), registered as a single
- * focusable node so pressing OK/Select here (AC4) enters full-screen
- * playback via onEnterFullScreen. Directly below it, a channel info bar
- * (icon + name + favourite CTA + LIVE badge) and its own focusable
- * favourite-toggle button.
+ * Right-hand column of Live TV: a live 16:9 preview of the channel the list
+ * has settled on, the channel line (number, logo, name, favourite, LIVE),
+ * and a Now & Next panel — what the viewer most wants to know while
+ * flicking through channels. The video itself isn't a focus stop (OK on a
+ * channel row plays it full screen); the one focusable control is the
+ * favourite button in the channel line, reached with Right from the list.
  */
 export function LiveChannelPreview({
   channel,
   streamUrl,
-  onEnterFullScreen,
-  focusId,
+  channelNumber,
   isFavorite,
+  nowNext,
+  isGuideLoading,
+  favoriteButtonId,
   onToggleFavorite,
-  favoriteButtonFocusId,
-  belowFocusId,
 }: LiveChannelPreviewProps): JSX.Element {
-  const setGraph = useFocusStore((state) => state.setGraph);
-  const clearGraph = useFocusStore((state) => state.clearGraph);
-  // Boolean selectors rather than the raw focusedId, so moving focus around
-  // the channel list (which never lands on these two nodes) doesn't
-  // re-render this panel and its VideoSurface on every press.
-  const isPreviewFocused = useIsFocused(focusId);
-  const isFavoriteButtonFocused = useIsFocused(favoriteButtonFocusId);
-
-  // onEnterFullScreen/onToggleFavorite are recreated every render by the
-  // owning screen (LiveTvScreen), which would otherwise force the graph
-  // effect below to re-run on every render — including ones triggered by
-  // focus itself moving within this same scope. clearGraph followed by
-  // setGraph is not atomic from the store's point of view: the moment
-  // clearGraph removes this scope, the currently-focused node (e.g. the
-  // favourite button) briefly doesn't exist anywhere, so its
-  // currentStillValid check fails and focusedId resets to null — then the
-  // immediately-following setGraph falls back to its first node, snapping
-  // focus back to the preview box every time. Reading the latest callbacks
-  // from refs instead keeps onSelect current without making them effect
-  // dependencies, so the graph is only rebuilt when the actual node shape
-  // (ids) changes.
-  const onEnterFullScreenRef = useRef(onEnterFullScreen);
-  onEnterFullScreenRef.current = onEnterFullScreen;
-  const onToggleFavoriteRef = useRef(onToggleFavorite);
-  onToggleFavoriteRef.current = onToggleFavorite;
-
-  useEffect(() => {
-    setGraph(SCOPE, [
-      { id: focusId, neighbors: { down: favoriteButtonFocusId }, onSelect: () => onEnterFullScreenRef.current() },
-      { id: favoriteButtonFocusId, neighbors: { up: focusId, down: belowFocusId }, onSelect: () => onToggleFavoriteRef.current() },
-    ]);
-    return () => clearGraph(SCOPE);
-  }, [focusId, favoriteButtonFocusId, belowFocusId, setGraph, clearGraph]);
-
-
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      <Focusable id={focusId} style={{ height: "auto" }}>
-        <div
-          onClick={onEnterFullScreen}
-          style={{
-            position: "relative",
-            aspectRatio: "16 / 9",
-            margin: "16px 16px 0",
-            borderRadius: 12,
-            overflow: "hidden",
-            background: "linear-gradient(160deg, #1a1a20 0%, #0e0e12 100%)",
-            cursor: "pointer",
-            boxShadow: isPreviewFocused ? FOCUS_RING : "none",
-            transition: "box-shadow 140ms ease-out",
-          }}
-        >
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Tv size={64} strokeWidth={1.25} color="rgba(255,255,255,0.18)" />
-          </div>
-          <VideoSurface streamUrl={streamUrl} />
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.75rem", minWidth: 0 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", maxWidth: "70rem", marginBottom: "-0.75rem" }}>
+        <LiveTvBadge />
+      </div>
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: "70rem",
+          aspectRatio: "16 / 9",
+          borderRadius: "1.25rem",
+          overflow: "hidden",
+          background: "linear-gradient(160deg, #1a1a20 0%, #0e0e12 100%)",
+          boxShadow: "0 1.5rem 3rem rgba(0,0,0,0.45)",
+        }}
+      >
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Tv size="5rem" strokeWidth={1.25} color="rgba(255,255,255,0.18)" />
         </div>
-      </Focusable>
+        <VideoSurface streamUrl={streamUrl} />
+      </div>
 
       {channel && (
-        <ChannelInfoBar
-          channel={channel}
-          isFavorite={isFavorite}
-          onToggleFavorite={onToggleFavorite}
-          isFavoriteButtonFocused={isFavoriteButtonFocused}
-        />
+        <div style={{ maxWidth: "70rem" }}>
+          <ChannelLine
+            channel={channel}
+            channelNumber={channelNumber}
+            isFavorite={isFavorite}
+            favoriteButtonId={favoriteButtonId}
+            onToggleFavorite={onToggleFavorite}
+          />
+          <NowNextPanel nowNext={nowNext} isLoading={isGuideLoading} />
+        </div>
       )}
     </div>
   );
 }
 
-/**
- * Sits directly below the preview player (not overlaid on the video) —
- * channel icon + name + favourite CTA on the left, a "LIVE" badge on the
- * right, matching the LiveTvLogo wordmark's red so both read as the same
- * brand.
- */
-function ChannelInfoBar({
+function ChannelLine({
   channel,
+  channelNumber,
   isFavorite,
+  favoriteButtonId,
   onToggleFavorite,
-  isFavoriteButtonFocused,
 }: {
   channel: Channel;
+  channelNumber?: number;
   isFavorite: boolean;
+  favoriteButtonId: string;
   onToggleFavorite: () => void;
-  isFavoriteButtonFocused: boolean;
 }): JSX.Element {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        margin: "12px 16px 0",
-        padding: "10px 16px",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
-        <div
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 8,
-            flexShrink: 0,
-            background: "rgba(255,255,255,0.06)",
-          }}
-        >
-          <URLImage src={channel.logoUrl} alt="" seed={channel.id} objectFit="contain" placeholderIcon={SECTION_ICONS.live} />
-        </div>
-        <span
-          style={{
-            fontSize: 22,
-            fontWeight: 700,
-            color: "var(--text, #f4f4f6)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {channel.name}
-        </span>
-
-        <button
-          type="button"
-          aria-label={isFavorite ? "Remove from favourites" : "Add to favourites"}
-          onClick={onToggleFavorite}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 40,
-            height: 40,
-            borderRadius: "50%",
-            flexShrink: 0,
-            border: isFavoriteButtonFocused ? "1px solid rgba(255,255,255,0.7)" : "1px solid var(--border, #313139)",
-            background: isFavoriteButtonFocused ? "rgba(255,255,255,0.14)" : "transparent",
-            boxShadow: isFavoriteButtonFocused ? FOCUS_RING : "none",
-            transform: isFavoriteButtonFocused ? "scale(1.08)" : "scale(1)",
-            transition: "transform 140ms ease-out, box-shadow 140ms ease-out, background 140ms ease-out",
-          }}
-        >
-          <Heart size={18} strokeWidth={2} color={isFavorite ? "#ff6b6b" : "var(--text-dim, #9a9aa4)"} fill={isFavorite ? "#ff6b6b" : "none"} />
-        </button>
+    <div style={{ display: "flex", alignItems: "center", gap: "1.25rem" }}>
+      <div style={{ width: "4.5rem", height: "4.5rem", borderRadius: "0.75rem", flexShrink: 0, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+        <URLImage src={channel.logoUrl} alt="" seed={channel.id} objectFit="contain" placeholderIcon={SECTION_ICONS.live} />
       </div>
+      {channelNumber !== undefined && (
+        <span style={{ fontSize: "1.75rem", fontWeight: 700, color: "rgba(235,236,242,0.55)", fontVariantNumeric: "tabular-nums" }}>{channelNumber}</span>
+      )}
+      <span style={{ fontSize: "2rem", fontWeight: 800, color: "#fff", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {channel.name}
+      </span>
+      <FavoriteButton id={favoriteButtonId} isFavorite={isFavorite} onToggle={onToggleFavorite} />
+    </div>
+  );
+}
 
-      <span
+/**
+ * "+ My List" / "✓ My List": adds or removes the previewed channel from the
+ * user's favourites — same wording and icons as the series detail page's
+ * My List button. Sits at the right end of the channel line. Solid white
+ * when focused (the app's primary-button style). The Focusable is sized to the button — its default 100%
+ * width would stretch it across the line.
+ */
+function FavoriteButton({ id, isFavorite, onToggle }: { id: string; isFavorite: boolean; onToggle: () => void }): JSX.Element {
+  const isFocused = useIsFocused(id);
+  return (
+    <Focusable id={id} style={{ width: "auto", height: "auto", flexShrink: 0, marginLeft: "auto" }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-pressed={isFavorite}
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          flexShrink: 0,
-          padding: "5px 12px",
+          gap: "0.625rem",
+          padding: "0.75rem 1.5rem",
+          border: "none",
           borderRadius: 999,
-          background: "rgba(224,51,47,0.15)",
-          border: `1px solid ${LIVE_RED}`,
+          fontSize: TV_TEXT,
+          fontWeight: 700,
+          whiteSpace: "nowrap",
+          background: isFocused ? "#ffffff" : "rgba(255,255,255,0.12)",
+          color: isFocused ? "#0b0c10" : "#ffffff",
+          boxShadow: isFocused ? "0 1rem 2rem -0.5rem rgba(0,0,0,0.6)" : "inset 0 0 0 1px rgba(255,255,255,0.1)",
+          transform: isFocused ? "scale(1.06)" : "scale(1)",
+          transition: "transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)",
+          cursor: "pointer",
         }}
       >
-        <span
-          aria-hidden
-          style={{
-            width: 7,
-            height: 7,
-            borderRadius: "50%",
-            background: LIVE_RED,
-            boxShadow: `0 0 6px 1px ${LIVE_RED}`,
-          }}
-        />
-        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.06em", color: LIVE_RED }}>LIVE</span>
-      </span>
+        {isFavorite ? <Check size="1.5rem" strokeWidth={2.5} /> : <Plus size="1.5rem" strokeWidth={2.5} />}
+        My List
+      </button>
+    </Focusable>
+  );
+}
+
+/** "● LIVE TV" marker, shown above the preview's top-right corner (not over the picture, where broadcasters put their own logo). */
+function LiveTvBadge(): JSX.Element {
+  return (
+    <span
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.5rem",
+        padding: "0.375rem 1rem",
+        borderRadius: 999,
+        background: "rgba(224,51,47,0.15)",
+        border: `2px solid ${LIVE_RED}`,
+      }}
+    >
+      <span aria-hidden style={{ width: "0.625rem", height: "0.625rem", borderRadius: "50%", background: LIVE_RED, boxShadow: `0 0 0.5rem ${LIVE_RED}` }} />
+      <span style={{ fontSize: "1.125rem", fontWeight: 800, letterSpacing: "0.06em", color: LIVE_RED }}>LIVE TV</span>
+    </span>
+  );
+}
+
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * NOW: time range, title, a progress bar through the programme and a
+ * two-line synopsis. NEXT: start time and title. Renders nothing when the
+ * channel has no guide data, so channels without EPG just show their line.
+ */
+function NowNextPanel({ nowNext, isLoading }: { nowNext: NowNext | null; isLoading: boolean }): JSX.Element | null {
+  if (isLoading) {
+    return (
+      <div style={{ marginTop: "1.75rem" }}>
+        <Shimmer width="30rem" height="1.75rem" style={{ marginBottom: "1rem" }} />
+        <Shimmer width="46rem" height="1.25rem" />
+      </div>
+    );
+  }
+  if (!nowNext) return null;
+  const { now, next } = nowNext;
+
+  return (
+    <div style={{ marginTop: "1.75rem" }}>
+      {now && <NowProgramme programme={now} />}
+      {next && (
+        <div style={{ display: "flex", alignItems: "baseline", gap: "1rem", marginTop: now ? "1.25rem" : 0, fontSize: TV_TEXT, color: "rgba(235,236,242,0.7)" }}>
+          <ProgrammeLabel text="NEXT" />
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatTime(next.start)}</span>
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#fff", fontWeight: 600 }}>{next.title}</span>
+        </div>
+      )}
     </div>
+  );
+}
+
+function NowProgramme({ programme }: { programme: EpgProgramme }): JSX.Element {
+  const total = programme.stop.getTime() - programme.start.getTime();
+  const progress = total > 0 ? Math.min(1, Math.max(0, (Date.now() - programme.start.getTime()) / total)) : 0;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: "1rem" }}>
+        <ProgrammeLabel text="NOW" accent />
+        <span style={{ fontSize: TV_TEXT, color: "rgba(235,236,242,0.7)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+          {formatTime(programme.start)} – {formatTime(programme.stop)}
+        </span>
+        <span style={{ fontSize: "1.75rem", fontWeight: 800, color: "#fff", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {programme.title}
+        </span>
+      </div>
+      <div aria-hidden style={{ marginTop: "0.875rem", height: "0.375rem", borderRadius: 999, background: "rgba(255,255,255,0.15)", overflow: "hidden" }}>
+        <div style={{ width: `${progress * 100}%`, height: "100%", borderRadius: 999, background: "var(--accent, #38bdf8)" }} />
+      </div>
+      {programme.description && (
+        <p
+          style={{
+            margin: "0.875rem 0 0",
+            fontSize: TV_TEXT,
+            lineHeight: 1.45,
+            color: "rgba(235,236,242,0.75)",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {programme.description}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ProgrammeLabel({ text, accent = false }: { text: string; accent?: boolean }): JSX.Element {
+  return (
+    <span
+      style={{
+        flexShrink: 0,
+        fontSize: "1rem",
+        fontWeight: 800,
+        letterSpacing: "0.08em",
+        padding: "0.25rem 0.625rem",
+        borderRadius: "0.375rem",
+        background: accent ? "var(--accent, #38bdf8)" : "rgba(255,255,255,0.12)",
+        color: accent ? "#062028" : "rgba(235,236,242,0.85)",
+      }}
+    >
+      {text}
+    </span>
   );
 }

@@ -11,6 +11,8 @@ export interface Channel {
   /** Present when the provider (Xtream) exposes catch-up/archive for this channel. */
   hasArchive?: boolean;
   archiveDurationDays?: number;
+  /** Provider-assigned channel number (Xtream `num`, M3U `tvg-chno`), for live channels — shown in channel lists and used for number-key tuning. */
+  number?: number;
 }
 
 export interface SeriesEpisode {

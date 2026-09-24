@@ -57,6 +57,8 @@ export function parseM3u(content: string): Channel[] {
       const attrs = parseAttributes(pendingExtinf);
       const name = attrs["tvg-name"] || parseDisplayName(pendingExtinf);
       const groupTitle = attrs["group-title"];
+      const parsedNumber = Number.parseInt(attrs["tvg-chno"] ?? "", 10);
+      const channelNumber = Number.isInteger(parsedNumber) && parsedNumber > 0 ? parsedNumber : undefined;
 
       channels.push({
         id: attrs["tvg-id"] || `m3u-${autoId++}`,
@@ -66,6 +68,7 @@ export function parseM3u(content: string): Channel[] {
         streamUrl: line,
         epgChannelId: attrs["tvg-id"] || undefined,
         kind: detectKind(line, groupTitle),
+        ...(channelNumber ? { number: channelNumber } : {}),
       });
 
       pendingExtinf = null;

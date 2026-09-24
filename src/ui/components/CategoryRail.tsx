@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef } from "react";
-import { ChevronRight, LayoutList } from "lucide-react";
+import { ChevronRight, LayoutList, type LucideIcon } from "lucide-react";
 import { Focusable } from "../focus/Focusable.js";
 import { buildListFocusGraph } from "../focus/build-grid-graph.js";
 import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
@@ -9,6 +9,8 @@ export interface CategoryRailItem {
   id: string;
   label: string;
   count?: number;
+  /** Optional icon before the label, e.g. SECTION_ICONS.favourites on a "My List" entry. */
+  icon?: LucideIcon;
 }
 
 export interface CategoryRailProps {
@@ -220,7 +222,10 @@ const CategoryRailRow = memo(function CategoryRailRow({
             style={{ position: "absolute", left: 0, top: "25%", bottom: "25%", width: "0.25rem", borderRadius: 999, background: "var(--accent, #38bdf8)" }}
           />
         )}
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: "0.75rem", minWidth: 0 }}>
+          {item.icon && <item.icon size="1.5rem" strokeWidth={2} style={{ flexShrink: 0 }} />}
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
+        </span>
         {item.count !== undefined && <span style={{ fontSize: "1.125rem", fontWeight: 600, opacity: 0.6, flexShrink: 0 }}>{item.count}</span>}
       </button>
     </Focusable>
