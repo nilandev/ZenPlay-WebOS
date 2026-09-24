@@ -104,7 +104,7 @@ describe("FavouritesScreen (My List)", () => {
     // With My List's channels as the lineup, for CH+/CH− in the player.
     expect(onPlayChannel).toHaveBeenCalledWith(
       expect.objectContaining({ id: "ch-2" }),
-      expect.objectContaining({ lineup: [expect.objectContaining({ id: "ch-2" })] }),
+      expect.objectContaining({ lineup: [expect.objectContaining({ id: "ch-2" }), expect.objectContaining({ id: "ch-1" })] }),
     );
 
     act(() => useFocusStore.getState().focus("favourites-item:series:s-1"));

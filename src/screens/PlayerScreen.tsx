@@ -171,6 +171,20 @@ export function PlayerScreen({
   const lastWriteRef = useRef(0);
   const engineRef = useRef<PlayerEngine | null>(null);
 
+  // Where focus was on the screen underneath when the player opened —
+  // handed back on close, so the viewer lands on the card they played
+  // instead of on nothing (the player's own elements are gone by then).
+  const [focusBeforePlayer] = useState(() => useFocusStore.getState().focusedId);
+  useEffect(
+    () => () => {
+      setTimeout(() => {
+        const { focusedId, nodes, focus } = useFocusStore.getState();
+        if (focusBeforePlayer && (!focusedId || !nodes[focusedId])) focus(focusBeforePlayer);
+      }, 0);
+    },
+    [focusBeforePlayer],
+  );
+
   // Both are keyed by stream URL, so Next Episode (a new URL, same mounted
   // player) asks again and never inherits the previous episode's start.
   const [resumeAnsweredFor, setResumeAnsweredFor] = useState<string | null>(null);

@@ -151,6 +151,13 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
     const initialFocusId = wasPanelOpenRef.current && returnTo && nodes.some((n) => n.id === returnTo) ? returnTo : defaultFocusId;
     wasPanelOpenRef.current = false;
     setGraph(SCOPE, nodes, initialFocusId);
+    // setGraph keeps focus wherever it already is if that element still
+    // exists — and the screen under the player (the series page, the Live
+    // TV list) stays mounted, so focus would stay on the hidden card that
+    // started playback and the D-pad would move around that page instead.
+    // Take focus explicitly unless it's already on one of these controls.
+    const { focusedId, focus } = useFocusStore.getState();
+    if (!focusedId || !nodes.some((node) => node.id === focusedId)) focus(initialFocusId);
   }, [buttonRow, isLive, isPanelOpen, setGraph]);
 
   useEffect(() => () => clearGraph(SCOPE), [clearGraph]);

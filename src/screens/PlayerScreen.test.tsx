@@ -478,4 +478,30 @@ describe("PlayerScreen", () => {
       expect(screen.queryByRole("status", { name: "Channel" })).toBeNull();
     });
   });
+
+  it("takes focus from the screen underneath (which stays mounted) and hands it back on close", async () => {
+    // The page the viewer played from keeps its focus graph registered, with focus on the card they pressed.
+    act(() => {
+      useFocusStore.getState().setGraph("underlying-page", [
+        { id: "episode-card", neighbors: { down: "other-card" } },
+        { id: "other-card", neighbors: { up: "episode-card" } },
+      ]);
+      useFocusStore.getState().focus("episode-card");
+    });
+    const { engine, tick } = makeEngine(3600);
+    const view = render(<PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="Film" engineFactory={() => engine} />);
+    await act(async () => {});
+    tick(600);
+    expect(focusedId()).toBe("seek-bar");
+
+    press("ArrowDown");
+    expect(focusedId()).toBe("play-pause");
+    press("Enter");
+    expect(engine.pause).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+    act(() => vi.advanceTimersByTime(0));
+    expect(focusedId()).toBe("episode-card");
+    useFocusStore.getState().clearGraph("underlying-page");
+  });
 });
