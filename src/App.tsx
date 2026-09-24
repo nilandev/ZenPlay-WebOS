@@ -122,9 +122,8 @@ export function App(): JSX.Element {
   // that does no data work — see its doc comment). A brand-new source's
   // local VOD/series catalog tables aren't included here (see
   // buildRevalidationTargets' doc comment on why they're excluded from this
-  // revalidator entirely), so with Home's startCatalogBackgroundSync gone
-  // nothing currently populates them — Movies/Series fall back to their
-  // legacy direct-fetch path.
+  // revalidator entirely) — VodScreen/SeriesScreen start their own catalog's
+  // sync while open (see catalog-sync.ts's startCatalogBackgroundSync).
   useEffect(() => {
     if (!activeSource || !activeProfile) return;
     void revalidateStaleTargets(buildRevalidationTargets(activeSource));

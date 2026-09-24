@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useRef } from "react";
 import { Focusable } from "../focus/Focusable.js";
 import { buildListFocusGraph } from "../focus/build-grid-graph.js";
-import { useFocusStore } from "../focus/focus-store.js";
+import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
 import { MarqueeText } from "./MarqueeText.js";
 
 export interface CategorySidebarItem {
@@ -45,10 +45,14 @@ export function CategorySidebar({ items, activeId, onSelect, width = 280, conten
       onSelect: () => onSelect(items[index].id),
     }));
     setGraph(SCOPE, nodes);
-    return () => clearGraph(SCOPE);
     // items/onSelect are expected to be stable references from the owning screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, contentEntryId, setGraph, clearGraph]);
+  // Rebuilds above replace the scope in place (setGraph is atomic); clearing
+  // it on every rebuild would drop focus for an instant and snap it back to
+  // the first node. Clear only when this component goes away.
+  useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
+
 
   return (
     <div
@@ -78,7 +82,7 @@ const CategoryRow = memo(function CategoryRow({
   isActive: boolean;
   onSelect: (id: string) => void;
 }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === item.id);
+  const isFocused = useIsFocused(item.id);
 
   return (
     <Focusable id={item.id} style={{ height: "auto" }}>

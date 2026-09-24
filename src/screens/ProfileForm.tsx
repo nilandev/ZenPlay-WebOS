@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useRef, useState } from "react";
 import { AVATAR_CHOICES, type PlatformId, type Profile } from "@core";
-import { Focusable, MeshBackground, useFocusStore, useRemoteInput, type FocusNode, glassBlur } from "@ui";
+import { Focusable, MeshBackground, useFocusStore, useRemoteInput, type FocusNode, glassBlur, useIsFocused } from "@ui";
 import { Trash2 } from "lucide-react";
 
 const AVATAR_GRID_COLUMNS = 5;
@@ -10,10 +10,6 @@ const SAVE_ID = "profile-form-save";
 const DELETE_ID = "profile-form-delete";
 const CONFIRM_KEEP_ID = "profile-form-confirm-keep";
 const CONFIRM_DELETE_ID = "profile-form-confirm-delete";
-
-function useIsFocused(id: string): boolean {
-  return useFocusStore((state) => state.focusedId === id);
-}
 
 export interface ProfileFormFields {
   name: string;

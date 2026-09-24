@@ -84,3 +84,28 @@ describe("useFocusStore", () => {
     expect(() => useFocusStore.getState().select()).not.toThrow();
   });
 });
+
+describe("useIsFocused", () => {
+  it("re-renders only the items losing and gaining focus", async () => {
+    const { render, act } = await import("@testing-library/react");
+    const { createElement } = await import("react");
+    const { useIsFocused } = await import("./focus-store.js");
+    const renderCounts = new Map<string, number>();
+    const ids = Array.from({ length: 50 }, (_, i) => `n${i}`);
+
+    function Item({ id }: { id: string }) {
+      renderCounts.set(id, (renderCounts.get(id) ?? 0) + 1);
+      return createElement("span", null, useIsFocused(id) ? `${id}*` : id);
+    }
+
+    useFocusStore.getState().setGraph("iso", ids.map((id, i) => ({ id, neighbors: { right: ids[i + 1] } })), "n0");
+    useFocusStore.getState().focus("n0"); // setGraph keeps a still-valid focus from other scopes
+    render(createElement("div", null, ids.map((id) => createElement(Item, { key: id, id }))));
+    renderCounts.clear();
+
+    act(() => useFocusStore.getState().move("right"));
+
+    expect([...renderCounts.keys()].sort()).toEqual(["n0", "n1"]);
+    useFocusStore.getState().clearGraph("iso");
+  });
+});

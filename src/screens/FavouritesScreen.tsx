@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Channel, FavoriteEntry, FavoriteKind, PlatformId, PlaylistSource, SeriesInfo } from "@core";
-import { buildGridFocusGraph, FavoriteHeart, Focusable, FocusCard, MeshBackground, useFocusStore, useRemoteInput, type FocusNode } from "@ui";
+import { buildGridFocusGraph, FavoriteHeart, Focusable, FocusCard, MeshBackground, useFocusStore, useRemoteInput, type FocusNode, useIsFocused, SECTION_ICONS } from "@ui";
 import { Heart } from "lucide-react";
 import { loadChannelsByKind, loadSeriesList } from "../content-loader.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
@@ -20,10 +20,6 @@ const itemId = (entry: FavoriteEntry) => `favourites-item:${entry.contentKind}:$
 
 const EMPTY_CHANNELS: Channel[] = [];
 const EMPTY_SERIES: SeriesInfo[] = [];
-
-function useIsFocused(id: string): boolean {
-  return useFocusStore((state) => state.focusedId === id);
-}
 
 export interface FavouritesScreenProps {
   source: PlaylistSource;
@@ -175,6 +171,9 @@ export function FavouritesScreen({
                 title={item.title}
                 imageUrl={item.imageUrl}
                 aspectRatio={item.aspectRatio}
+                placeholderIcon={
+                  item.entry.contentKind === "live" ? SECTION_ICONS.live : item.entry.contentKind === "movie" ? SECTION_ICONS.movies : SECTION_ICONS.series
+                }
                 onSelect={() => {
                   if (item.entry.contentKind === "live") {
                     const channel = liveChannels.find((c) => c.id === item.entry.contentId);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PlatformId, PlaylistSource } from "@core";
-import { Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode, glassBlur } from "@ui";
+import { Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode, glassBlur, useIsFocused } from "@ui";
 import { Check, DatabaseZap, Plus, Radio, RefreshCw, Trash2 } from "lucide-react";
 import { clearCachedContent, clearCachedContentForSource } from "../content-cache.js";
 import { loadPlaylistInfo } from "../content-loader.js";
@@ -18,10 +18,6 @@ const clearCacheId = (sourceId: string) => `manage-playlists-clear-cache:${sourc
 const deleteId = (sourceId: string) => `manage-playlists-delete:${sourceId}`;
 
 const EMPTY_PLAYLIST_INFO = { name: "", expiresAt: null as Date | null };
-
-function useIsFocused(id: string): boolean {
-  return useFocusStore((state) => state.focusedId === id);
-}
 
 function kindLabel(kind: PlaylistSource["kind"]): string {
   if (kind === "xtream") return "Xtream Codes";

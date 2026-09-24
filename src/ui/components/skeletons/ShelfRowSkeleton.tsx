@@ -1,10 +1,11 @@
 import { Shimmer } from "../Shimmer.js";
 import { SlowLoadHint } from "../SlowLoadHint.js";
+import { BROWSE_CONTENT_LEFT, BROWSE_GAP, BROWSE_SIDE_PADDING, POSTER_COLUMNS, POSTER_WIDTH } from "../../tv-metrics.js";
 
 export interface ShelfRowSkeletonProps {
   rows?: number;
   cardsPerRow?: number;
-  cardWidth?: number;
+  cardWidth?: number | string;
   aspectRatio?: string;
 }
 
@@ -18,22 +19,20 @@ export interface ShelfRowSkeletonProps {
  * mount). A shimmer with no further feedback for that long reads as the
  * app being stuck rather than still working.
  */
-export function ShelfRowSkeleton({ rows = 2, cardsPerRow = 6, cardWidth = 220, aspectRatio = "2 / 3" }: ShelfRowSkeletonProps): JSX.Element {
+// Defaults mirror a real shelf at TV size (see tv-metrics.ts): same poster width, gap and margins, one extra card for the peek at the right edge.
+export function ShelfRowSkeleton({ rows = 2, cardsPerRow = POSTER_COLUMNS + 1, cardWidth = POSTER_WIDTH, aspectRatio = "2 / 3" }: ShelfRowSkeletonProps): JSX.Element {
   return (
-    <div style={{ paddingTop: 24 }}>
+    <div style={{ paddingTop: "1.5rem" }}>
       <SlowLoadHint />
       {Array.from({ length: rows }, (_, rowIndex) => (
-        <section key={rowIndex} style={{ marginBottom: 32 }}>
-          <div style={{ margin: "0 0 12px 40px" }}>
-            <Shimmer width={160} height={20} />
+        <section key={rowIndex} style={{ marginBottom: "2rem" }}>
+          <div style={{ margin: `0 0 1.25rem ${BROWSE_CONTENT_LEFT}` }}>
+            <Shimmer width="14rem" height="1.75rem" />
           </div>
-          <div style={{ display: "flex", gap: 16, padding: "0 40px", overflow: "hidden" }}>
+          <div style={{ display: "flex", gap: BROWSE_GAP, padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`, overflow: "hidden" }}>
             {Array.from({ length: cardsPerRow }, (_, cardIndex) => (
               <div key={cardIndex} style={{ flex: "0 0 auto", width: cardWidth }}>
-                <Shimmer height="auto" borderRadius={12} style={{ width: cardWidth, aspectRatio }} />
-                <div style={{ marginTop: 8 }}>
-                  <Shimmer width="80%" height={14} />
-                </div>
+                <Shimmer height="auto" borderRadius={16} style={{ width: cardWidth, aspectRatio }} />
               </div>
             ))}
           </div>

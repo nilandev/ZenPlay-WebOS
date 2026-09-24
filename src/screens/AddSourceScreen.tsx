@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PlatformId, PlaylistSource } from "@core";
-import { Focusable, useFocusStore, useRemoteInput, type FocusNode } from "@ui";
+import { Focusable, useFocusStore, useRemoteInput, type FocusNode, useIsFocused } from "@ui";
 import { Radio, Rss } from "lucide-react";
 
 export interface AddSourceScreenProps {
@@ -282,7 +282,7 @@ function ModeTab({
   active: boolean;
   onClick: () => void;
 }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === id);
+  const isFocused = useIsFocused(id);
   return (
     <Focusable id={id} style={{ height: "auto", flex: 1 }}>
       <button
@@ -321,7 +321,7 @@ function ModeTab({
 }
 
 function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === id);
+  const isFocused = useIsFocused(id);
   return (
     <Focusable id={id} style={{ height: "auto" }}>
       <label
@@ -355,7 +355,7 @@ function ActionButton({
   variant: "primary" | "secondary";
   children: React.ReactNode;
 }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === id);
+  const isFocused = useIsFocused(id);
   const isPrimary = variant === "primary";
   return (
     <Focusable id={id} style={{ height: "auto", marginTop: isPrimary ? "0.625rem" : 0 }}>

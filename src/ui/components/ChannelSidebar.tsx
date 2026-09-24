@@ -2,9 +2,10 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { Channel } from "@core";
 import { Focusable, FocusScrollManagedContext } from "../focus/Focusable.js";
 import { buildListFocusGraph } from "../focus/build-grid-graph.js";
-import { useFocusStore } from "../focus/focus-store.js";
+import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
 import { MarqueeText } from "./MarqueeText.js";
 import { URLImage } from "./URLImage.js";
+import { SECTION_ICONS } from "../section-icons.js";
 
 export interface ChannelSidebarProps {
   channels: Channel[];
@@ -67,8 +68,12 @@ export function ChannelSidebar({ channels, activeChannelId, onHighlight, onSelec
       onSelect: () => onSelectRef.current(channels[index]),
     }));
     setGraph(SCOPE, nodes);
-    return () => clearGraph(SCOPE);
   }, [channels, leftEntryId, rightEntryId, setGraph, clearGraph]);
+  // Rebuilds above replace the scope in place (setGraph is atomic); clearing
+  // it on every rebuild would drop focus for an instant and snap it back to
+  // the first node. Clear only when this component goes away.
+  useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
+
 
   useLayoutEffect(() => {
     function measure(): void {
@@ -169,7 +174,7 @@ const ChannelRow = memo(function ChannelRow({
   isActive: boolean;
   onSelect: (channel: Channel) => void;
 }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === channel.id);
+  const isFocused = useIsFocused(channel.id);
 
   return (
     <Focusable id={channel.id}>
@@ -200,7 +205,8 @@ const ChannelRow = memo(function ChannelRow({
           seed={channel.id}
           objectFit="contain"
           style={{ width: 40, height: 40, borderRadius: 6, flexShrink: 0, background: "rgba(255,255,255,0.06)" }}
-        />
+        placeholderIcon={SECTION_ICONS.live}
+          />
         <MarqueeText text={channel.name} active={isFocused} style={{ minWidth: 0, flex: 1 }} />
       </button>
     </Focusable>

@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 import type { PlatformId, Profile } from "@core";
-import { buildGridFocusGraph, Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode } from "@ui";
+import { buildGridFocusGraph, Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode, useIsFocused } from "@ui";
 import { ProfileForm } from "./ProfileForm.js";
-
-function useIsFocused(id: string): boolean {
-  return useFocusStore((state) => state.focusedId === id);
-}
 
 export interface ProfilesScreenProps {
   profiles: Profile[];

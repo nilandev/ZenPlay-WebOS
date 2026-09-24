@@ -1,14 +1,10 @@
 import { useEffect, useState } from "react";
 import type { PlatformId, Profile } from "@core";
-import { buildGridFocusGraph, Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode } from "@ui";
+import { buildGridFocusGraph, Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode, useIsFocused } from "@ui";
 import { Pencil } from "lucide-react";
 import { ProfileForm } from "./ProfileForm.js";
 
 const BACK_ID = "manage-profiles-back";
-
-function useIsFocused(id: string): boolean {
-  return useFocusStore((state) => state.focusedId === id);
-}
 
 export interface ManageProfilesScreenProps {
   profiles: Profile[];

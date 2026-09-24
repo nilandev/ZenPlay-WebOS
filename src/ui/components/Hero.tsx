@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Play } from "lucide-react";
 import { resolveRemoteAction, type PlatformId } from "@core";
 import { Focusable } from "../focus/Focusable.js";
-import { useFocusStore } from "../focus/focus-store.js";
+import { useIsFocused } from "../focus/focus-store.js";
 import { URLImage } from "./URLImage.js";
 import { LITE_EFFECTS } from "../perf-tier.js";
 
@@ -67,7 +67,7 @@ const PEEK_COUNT_PER_SIDE = 2;
  *  - content.length > 0: the real rotating carousel.
  */
 export function Hero({ platform, content, isLoading, activeIndex, onActiveIndexChange, onPlay }: HeroProps): JSX.Element {
-  const isPlayFocused = useFocusStore((state) => state.focusedId === HERO_PLAY_FOCUS_ID);
+  const isPlayFocused = useIsFocused(HERO_PLAY_FOCUS_ID);
 
   useEffect(() => {
     if (content.length <= 1 || isPlayFocused) return;
@@ -243,7 +243,7 @@ function CrossfadeBackdrop({ src, seed }: { src?: string; seed: string }): JSX.E
 }
 
 function ActiveCard({ content, onPlay }: { content: HeroContent; onPlay: () => void }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === HERO_PLAY_FOCUS_ID);
+  const isFocused = useIsFocused(HERO_PLAY_FOCUS_ID);
 
   return (
     <div

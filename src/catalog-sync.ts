@@ -37,7 +37,7 @@ const SYNC_STALE_AFTER_MS = 24 * 60 * 60 * 1000; // once/day, per the request's 
 
 const catalogWorker = createCatalogWorkerClient();
 
-/** One in-flight sync per source+kind — guards against HomeScreen's per-tab-switch remount (see its startCatalogBackgroundSync effect) kicking off overlapping syncs of the same table. */
+/** One in-flight sync per source+kind — guards against a screen remounting (VodScreen/SeriesScreen start this on every mount, see startCatalogBackgroundSync) kicking off overlapping syncs of the same table. */
 const inFlightSyncs = new Map<string, Promise<void>>();
 
 function syncMetaKey(sourceId: string, kind: CatalogKind): string {
@@ -164,20 +164,26 @@ export function syncCatalog(source: PlaylistSource, kind: CatalogKind): Promise<
 const CHECK_INTERVAL_MS = 20 * 60 * 1000; // How often to check whether a sync is due — the actual sync only ever runs once per SYNC_STALE_AFTER_MS, this just keeps a suspended/backgrounded TV from missing its daily window, same rationale as cache-revalidator.ts's startBackgroundRevalidation interval.
 
 /**
- * Checks both catalogs (vod + series) for `getSource()`'s current source and
- * kicks off a background syncCatalog for whichever is due, then repeats on
+ * Checks the given catalogs for `getSource()`'s current source and kicks off
+ * a background syncCatalog for whichever is due, then repeats on
  * CHECK_INTERVAL_MS — mirrors cache-revalidator.ts's
  * startBackgroundRevalidation (see its doc comment for why a plain interval,
- * not requestIdleCallback). Wired from HomeScreen alongside that revalidator
- * and idle-prefetch.ts's schedulePrefetch. Returns a stop function.
+ * not requestIdleCallback). Started by VodScreen ("vod") and SeriesScreen
+ * ("series") while they're open — not from Home, which does no data work —
+ * so each screen's local paginated table (see use-catalog-page.ts) gets
+ * built the first time it's visited and refreshed daily after that.
+ * Returns a stop function.
  */
-export function startCatalogBackgroundSync(getSource: () => PlaylistSource): () => void {
+export function startCatalogBackgroundSync(getSource: () => PlaylistSource, kinds: CatalogKind[] = ["vod", "series"]): () => void {
   async function checkAndSync(): Promise<void> {
     const source = getSource();
     if (source.kind !== "xtream") return;
-    for (const kind of ["vod", "series"] as CatalogKind[]) {
+    for (const kind of kinds) {
       if (await isCatalogSyncDue(source.id, kind)) {
-        void syncCatalog(source, kind);
+        // A failed sync (offline, provider error) isn't fatal: the screen
+        // keeps using its legacy direct-fetch path, and the next interval
+        // tick retries since sync_meta was never written.
+        syncCatalog(source, kind).catch(() => {});
       }
     }
   }

@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useRef } from "react";
 import { FocusScrollManagedContext } from "../focus/Focusable.js";
 import { useFocusStore } from "../focus/focus-store.js";
+import { BROWSE_CONTENT_LEFT, BROWSE_GAP, BROWSE_SIDE_PADDING, TV_HEADING } from "../tv-metrics.js";
 
 export interface ShelfProps<T> {
-  title: string;
+  /** Row heading; omit for a bare row (e.g. the episode row under season tabs). */
+  title?: string;
   items: T[];
   getId: (item: T) => string;
   renderItem: (item: T) => React.ReactNode;
+  /** Optional extra card after the items (e.g. SeeAllCard), and its focus id so the row scrolls to it too. */
+  trailing?: React.ReactNode;
+  trailingId?: string;
+  /** Left inset of the row. Defaults to BROWSE_CONTENT_LEFT (clearing the category rail); pages without the rail pass BROWSE_SIDE_PADDING. */
+  leftInset?: string;
 }
 
 /**
@@ -24,7 +31,7 @@ export interface ShelfProps<T> {
  * own scrollIntoView for the cards inside), so there's exactly one scroll
  * request per press instead of two competing ones.
  */
-export function Shelf<T>({ title, items, getId, renderItem }: ShelfProps<T>): JSX.Element {
+export function Shelf<T>({ title, items, getId, renderItem, trailing, trailingId, leftInset = BROWSE_CONTENT_LEFT }: ShelfProps<T>): JSX.Element {
   const sectionRef = useRef<HTMLElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -32,7 +39,11 @@ export function Shelf<T>({ title, items, getId, renderItem }: ShelfProps<T>): JS
   // so a parent re-render doesn't rebuild the id set and re-subscribe.
   const getIdRef = useRef(getId);
   getIdRef.current = getId;
-  const ids = useMemo(() => new Set(items.map((item) => getIdRef.current(item))), [items]);
+  const ids = useMemo(() => {
+    const set = new Set(items.map((item) => getIdRef.current(item)));
+    if (trailingId) set.add(trailingId);
+    return set;
+  }, [items, trailingId]);
 
   useEffect(() => {
     function scrollToFocused(focusedId: string | null): void {
@@ -56,22 +67,22 @@ export function Shelf<T>({ title, items, getId, renderItem }: ShelfProps<T>): JS
   if (items.length === 0) return <></>;
 
   return (
-    <section ref={sectionRef} style={{ marginBottom: 32 }}>
-      <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 -8px 40px" }}>{title}</h2>
+    <section ref={sectionRef} style={{ marginBottom: "1rem" }}>
+      {title && <h2 style={{ fontSize: TV_HEADING, fontWeight: 700, margin: `0 0 -0.5rem ${leftInset}` }}>{title}</h2>}
       <div
         ref={trackRef}
         style={{
           position: "relative",
           display: "flex",
-          gap: 16,
+          gap: BROWSE_GAP,
           overflowX: "auto",
           // overflow-x: auto forces overflow-y to clip too (the two axes
           // can't be independently visible/auto per spec), so the padding
           // has to contain FocusCard's focused-state lift — otherwise it gets
-          // cut off by this track. Top: the scale(1.1) growth (~17px on the
-          // default 220x330 card). Bottom: that growth plus the lift shadow
+          // cut off by this track. Top: the scale(1.1) growth (~1.3rem on a
+          // POSTER_WIDTH card). Bottom: that growth plus the lift shadow
           // falling beneath the card (see FocusCard's shadow).
-          padding: "32px 40px 48px",
+          padding: `2.25rem ${BROWSE_SIDE_PADDING} 3.5rem ${leftInset}`,
           scrollbarWidth: "none",
           scrollBehavior: "smooth",
         }}
@@ -82,6 +93,7 @@ export function Shelf<T>({ title, items, getId, renderItem }: ShelfProps<T>): JS
               {renderItem(item)}
             </div>
           ))}
+          {trailing && <div style={{ flex: "0 0 auto" }}>{trailing}</div>}
         </FocusScrollManagedContext.Provider>
       </div>
     </section>

@@ -2,9 +2,10 @@ import { useEffect, useRef } from "react";
 import type { Channel } from "@core";
 import { Heart, Tv } from "lucide-react";
 import { Focusable } from "../focus/Focusable.js";
-import { useFocusStore } from "../focus/focus-store.js";
+import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
 import { URLImage } from "./URLImage.js";
 import { VideoSurface } from "./VideoSurface.js";
+import { SECTION_ICONS } from "../section-icons.js";
 
 export interface LiveChannelPreviewProps {
   channel: Channel | null;
@@ -47,8 +48,8 @@ export function LiveChannelPreview({
   // Boolean selectors rather than the raw focusedId, so moving focus around
   // the channel list (which never lands on these two nodes) doesn't
   // re-render this panel and its VideoSurface on every press.
-  const isPreviewFocused = useFocusStore((state) => state.focusedId === focusId);
-  const isFavoriteButtonFocused = useFocusStore((state) => state.focusedId === favoriteButtonFocusId);
+  const isPreviewFocused = useIsFocused(focusId);
+  const isFavoriteButtonFocused = useIsFocused(favoriteButtonFocusId);
 
   // onEnterFullScreen/onToggleFavorite are recreated every render by the
   // owning screen (LiveTvScreen), which would otherwise force the graph
@@ -151,7 +152,7 @@ function ChannelInfoBar({
             background: "rgba(255,255,255,0.06)",
           }}
         >
-          <URLImage src={channel.logoUrl} alt="" seed={channel.id} objectFit="contain" />
+          <URLImage src={channel.logoUrl} alt="" seed={channel.id} objectFit="contain" placeholderIcon={SECTION_ICONS.live} />
         </div>
         <span
           style={{

@@ -2,8 +2,9 @@ import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "r
 import type { Channel, PlatformId, PlaylistSource, Profile } from "@core";
 import { Search, X } from "lucide-react";
 import {
-  CATEGORY_DROPDOWN_TRIGGER_ID,
-  CategoryDropdown,
+  CategoryRail,
+  categoryRailItemId,
+  SeeAllCard,
   FavoriteHeart,
   Focusable,
   FocusTrackingBackdrop,
@@ -15,11 +16,23 @@ import {
   useFocusStore,
   useRemoteInput,
   glassBlur,
+  useIsFocused,
+  BROWSE_CONTENT_LEFT,
+  BROWSE_GAP,
+  BROWSE_ROW_GAP,
+  BROWSE_SIDE_PADDING,
+  POSTER_COLUMNS,
+  POSTER_WIDTH,
+  TV_TEXT,
+  SECTION_ICONS,
 } from "@ui";
 import { loadChannelsByKind, loadVodCategories } from "../content-loader.js";
-import { toggleFavorite, isFavorite as checkIsFavorite } from "../profile-store.js";
+import { loadFavorites, toggleFavorite } from "../profile-store.js";
+import { useSearchQuery } from "../use-debounced-value.js";
+import { useIncrementalList } from "../use-incremental-list.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useVodCatalogPage } from "../use-catalog-page.js";
+import { startCatalogBackgroundSync } from "../catalog-sync.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { useCatalogShelves } from "../use-catalog-shelves.js";
 import { getCatalogPage } from "../catalog-store.js";
@@ -38,24 +51,24 @@ const EMPTY_MOVIES: Channel[] = [];
 const EMPTY_CATEGORIES: Awaited<ReturnType<typeof loadVodCategories>> = [];
 const CONTENT_ENTRY_SCOPE = "content";
 const ALL_CATEGORIES_ID = "__all__";
-const GRID_GAP = 16; // matches Shelf's card-to-card gap, so the single-category grid reads the same as the "All Categories" shelf rows.
-const GRID_CARD_WIDTH = 220; // FocusCard's own default width — the grid packs cards at this fixed size via auto-fill rather than stretching them, see its gridTemplateColumns comment.
-const GRID_SIDE_PADDING = 40; // matches the grid's own left+right padding below.
-
-/**
- * How many cards actually fit per row in the auto-fill grid below, computed
- * the same way the browser's own grid layout would — see SeriesScreen's
- * identical computeGridColumns for the full rationale (buildGridFocusGraph
- * needs a concrete column count, and auto-fill's real column count depends
- * on viewport width rather than a fixed constant this code also controls).
- */
-function computeGridColumns(): number {
-  const available = window.innerWidth - GRID_SIDE_PADDING * 2;
-  return Math.max(1, Math.floor((available + GRID_GAP) / (GRID_CARD_WIDTH + GRID_GAP)));
-}
 const gridItemId = (movieId: string) => `vod-grid:${movieId}`;
-const TRIGGER_UP_TARGET = CATEGORY_DROPDOWN_TRIGGER_ID;
+/**
+ * The category each source was last browsed in, so coming back to this
+ * screen (it remounts on every tab switch — see App.tsx) reopens where the
+ * user was. Module-level on purpose: it should outlive the screen, not an
+ * app restart.
+ */
+const lastCategoryBySource = new Map<string, string>();
+
+/** Test-only: forgets remembered categories so each test starts on Browse. */
+export function __resetCategoryMemoryForTests(): void {
+  lastCategoryBySource.clear();
+}
+/** Focus id of a shelf's trailing "See all" card. */
+const seeAllId = (categoryId: string) => `seeall:${categoryId}`;
 const SEARCH_INPUT_ID = "vod-search-input";
+/** Legacy-path shelves are capped like the local-table path's (see use-catalog-shelves.ts's SHELF_SIZE); the full category is one dropdown pick away. */
+const LEGACY_SHELF_LIMIT = 20;
 
 /**
  * Groups movies into shelves by category, labeling each shelf with the real
@@ -67,13 +80,13 @@ const SEARCH_INPUT_ID = "vod-search-input";
  * which has none at all) falls back to the id itself so the shelf still
  * gets *a* label instead of being blank.
  */
-function groupByCategory(movies: Channel[], categoryNameById: Map<string, string>): Array<{ id: string; title: string; items: Channel[] }> {
+function groupByCategory(movies: Channel[], categoryNameById: Map<string, string>, limitPerShelf: number): Array<{ id: string; title: string; items: Channel[] }> {
   const byGroup = new Map<string, Channel[]>();
   for (const movie of movies) {
     const key = movie.groupTitle ?? "Movies";
     const list = byGroup.get(key);
-    if (list) list.push(movie);
-    else byGroup.set(key, [movie]);
+    if (!list) byGroup.set(key, [movie]);
+    else if (list.length < limitPerShelf) list.push(movie);
   }
   return Array.from(byGroup.entries()).map(([id, items]) => ({ id, title: categoryNameById.get(id) ?? id, items }));
 }
@@ -81,12 +94,17 @@ function groupByCategory(movies: Channel[], categoryNameById: Map<string, string
 export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybackOpen = false }: VodScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
-  const [activeCategoryId, setActiveCategoryId] = useState(ALL_CATEGORIES_ID);
-  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
+  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(source.id) ?? ALL_CATEGORIES_ID);
+  useEffect(() => {
+    lastCategoryBySource.set(source.id, activeCategoryId);
+  }, [source.id, activeCategoryId]);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const trimmedQuery = searchQuery.trim().toLowerCase();
+  // The query that actually runs: debounced and ignored below 2 characters
+  // (see useSearchQuery), so typing doesn't refilter/re-render the catalog
+  // on every keystroke. searchQuery itself only drives the input's text.
+  const trimmedQuery = useSearchQuery(searchQuery);
   const isAllCategories = activeCategoryId === ALL_CATEGORIES_ID;
 
   // Once catalog-sync.ts has completed at least one background sync for this
@@ -101,6 +119,13 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // defaults-to-false boolean would wrongly fire the legacy fetch on every
   // mount, even for a source that turns out to already be synced.
   const localCatalogStatus = useLocalCatalogReady(source.id, "vod");
+
+  // Builds (first visit) or refreshes (daily) this screen's local catalog
+  // table while the screen is open. Until the first sync lands the screen
+  // runs on the capped legacy path below; once it does, the sync bumps
+  // useLocalCatalogReady's version and the screen switches to the local
+  // paginated reads without remounting.
+  useEffect(() => startCatalogBackgroundSync(() => source, ["vod"]), [source]);
   const isLocalCatalogReady = localCatalogStatus === "ready";
   const isCheckingLocalCatalog = localCatalogStatus === "checking";
 
@@ -147,13 +172,15 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     isInitialLoading: isLocalGridLoading,
     hasMore: localGridHasMore,
     loadMore: loadMoreLocalGrid,
+    total: localGridTotal,
   } = useVodCatalogPage(source.id, {
     categoryId: isAllCategories ? undefined : activeCategoryId,
     namePrefix: trimmedQuery || undefined,
     enabled: isLocalCatalogReady && (!isAllCategories || trimmedQuery.length > 0),
   });
 
-  const gridColumns = useMemo(() => computeGridColumns(), []);
+  // Fixed TV poster density (see tv-metrics.ts) — the grid and the D-pad focus graph share this column count.
+  const gridColumns = POSTER_COLUMNS;
 
   const loadCategories = useCallback(() => loadVodCategories(source), [source]);
   const { data: categories } = useCachedContent(`vod-categories:${source.id}`, "category", loadCategories, EMPTY_CATEGORIES);
@@ -163,6 +190,16 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // needed (toggleFavorite persists to localStorage but isn't itself
   // reactive state).
   const [favoritesVersion, setFavoritesVersion] = useState(0);
+  // Read once per toggle rather than once per card per render (each lookup
+  // parses the whole favourites list from localStorage).
+  const favoriteMovieIds = useMemo(() => {
+    void favoritesVersion;
+    return new Set(
+      loadFavorites(profile.id)
+        .filter((f) => f.sourceId === source.id && f.contentKind === "movie")
+        .map((f) => f.contentId),
+    );
+  }, [profile.id, source.id, favoritesVersion]);
 
   const categoryNameById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
 
@@ -182,7 +219,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // no per-shelf lazy fetch), so this naturally reads [] while a single
   // category is selected, which is fine since shelves aren't rendered in
   // that mode anyway (see gridMovies/the render branch below).
-  const legacyShelves = useMemo(() => groupByCategory(legacyMovies, categoryNameById), [legacyMovies, categoryNameById]);
+  const legacyShelves = useMemo(() => groupByCategory(legacyMovies, categoryNameById, LEGACY_SHELF_LIMIT), [legacyMovies, categoryNameById]);
   const shelves = isLocalCatalogReady ? localShelves : legacyShelves;
 
   // "All Categories" row's count is only meaningful on the legacy fallback
@@ -190,15 +227,15 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // count for it rather than paying for a full-table count query just for
   // this label — categories' own per-category counts were never shown
   // either (count: undefined below), so this isn't a regression in what's
-  // actually rendered (see CategoryDropdown's item type).
+  // actually rendered (see CategoryRail's item type).
   const categoryItems = useMemo(
     () => [
-      { id: ALL_CATEGORIES_ID, label: "All Categories", count: isLocalCatalogReady ? undefined : legacyMovies.length },
+      { id: ALL_CATEGORIES_ID, label: "Browse", count: isLocalCatalogReady ? undefined : legacyMovies.length },
       ...categories.map((c) => ({ id: c.id, label: c.name, count: undefined as number | undefined })),
     ],
     [isLocalCatalogReady, legacyMovies.length, categories],
   );
-  const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "All Categories";
+  const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "Browse";
 
   // A category other than "All Categories", or a non-empty search query,
   // replaces the shelf browser with a single flat, vertically-scrolling
@@ -214,7 +251,13 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     if (trimmedQuery) return withinCategory.filter((item) => item.name.toLowerCase().includes(trimmedQuery));
     return isAllCategories ? null : withinCategory;
   }, [isAllCategories, legacyCategoryMovies, legacyMovies, trimmedQuery]);
-  const gridMovies = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridMovies) : legacyGridMovies;
+  // The legacy path has the whole category/search result in memory, but
+  // renders it a page at a time like the local-table path does — mounting
+  // thousands of cards at once is what made category picks and search lag.
+  const legacyGridPage = useIncrementalList(isLocalCatalogReady ? null : legacyGridMovies);
+  const gridMovies = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridMovies) : (legacyGridPage?.visible ?? null);
+  const gridHasMore = isLocalCatalogReady ? localGridHasMore : (legacyGridPage?.hasMore ?? false);
+  const loadMoreGrid = isLocalCatalogReady ? loadMoreLocalGrid : legacyGridPage?.loadMore;
 
   const isInitialLoading = isCheckingLocalCatalog
     ? true
@@ -242,44 +285,112 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   if (!isInitialLoading) hasEverShownContentRef.current = true;
   const showFullScreenSkeleton = isInitialLoading && !hasEverShownContentRef.current;
 
+  // Header for the content area: the category (or search) being shown and,
+  // for a single category, how many titles it holds.
+  const headerTitle = trimmedQuery ? `Results for "${trimmedQuery}"` : isAllCategories ? "Movies" : activeCategoryLabel;
+  const headerCount = gridMovies ? (isLocalCatalogReady ? localGridTotal : legacyGridMovies?.length) : null;
+
+  const firstContentId = gridMovies ? (gridMovies[0] ? gridItemId(gridMovies[0].id) : undefined) : shelves[0]?.items[0]?.id;
+  const firstContentIdRef = useRef(firstContentId);
+  firstContentIdRef.current = firstContentId;
+  const activeCategoryIdRef = useRef(activeCategoryId);
+  activeCategoryIdRef.current = activeCategoryId;
+  // Set when a category is picked from the rail (or a "See all" card), so
+  // focus follows into the new content once its focus graph registers —
+  // see the browse graph effect below.
+  const focusContentOnNextGraphRef = useRef(false);
+
+  const selectCategory = useCallback((id: string) => {
+    if (id === activeCategoryIdRef.current) {
+      // Already showing: just hand focus back to the content.
+      const first = firstContentIdRef.current;
+      if (first) useFocusStore.getState().focus(first);
+      return;
+    }
+    focusContentOnNextGraphRef.current = true;
+    setActiveCategoryId(id);
+  }, []);
+
+  /** Moves focus into the category rail (which expands it), leaving the search box's native focus if it had it. */
+  const openCategoryRail = useCallback(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    useFocusStore.getState().focus(categoryRailItemId(activeCategoryIdRef.current));
+  }, []);
+
   // Search input's proxy focus node — see VodSearchInput's doc comment for
   // why a native <input> needs a Focusable stand-in rather than being a
   // spatial-nav node itself. Sits to the right of the category dropdown's
   // trigger in the same sticky bar.
   useEffect(() => {
-    const node = { id: SEARCH_INPUT_ID, neighbors: { left: TRIGGER_UP_TARGET }, onSelect: () => searchInputRef.current?.focus() };
-    setGraph("chrome:vod-search", [node]);
-    return () => clearGraph("chrome:vod-search");
-  }, [setGraph, clearGraph]);
+    const node = { id: SEARCH_INPUT_ID, neighbors: { left: categoryRailItemId(activeCategoryId), down: firstContentId }, onSelect: () => searchInputRef.current?.focus() };
+    setGraph("chrome:vod-search", [node], undefined, { passive: true });
+  }, [activeCategoryId, firstContentId, setGraph, clearGraph]);
+  // Rebuilds above replace the scope in place (setGraph is atomic); clearing
+  // it on every rebuild would drop focus for an instant and snap it back to
+  // the first node. Clear only when this component goes away.
+  useEffect(() => () => clearGraph("chrome:vod-search"), [clearGraph]);
+
 
   // Browse mode's focus graph: either the shelf browser (one row per
-  // category, "All Categories") or a single flat grid (one category picked
-  // from the dropdown, or a search in progress) — never both, so only one
-  // of these branches ever runs. The top row's "up" links back to the
-  // category dropdown's trigger so it's always reachable by pressing Up
-  // from the very first row, regardless of which mode is showing.
+  // category, plus a trailing "See all" card) or a single flat grid (one
+  // category from the rail, or a search) — never both. Up from the top row
+  // reaches the search box; Left from the first column opens the category
+  // rail on the active category.
   useEffect(() => {
-    if (isCategoryDropdownOpen) return;
+    const railEntryId = categoryRailItemId(activeCategoryId);
+    const claimFocus = (id: string) => {
+      if (!focusContentOnNextGraphRef.current) return;
+      focusContentOnNextGraphRef.current = false;
+      useFocusStore.getState().focus(id);
+    };
 
     if (gridMovies) {
       const ids = gridMovies.map((item) => gridItemId(item.id));
-      if (ids.length === 0) return;
+      if (ids.length === 0) {
+        setGraph(CONTENT_ENTRY_SCOPE, []);
+        return;
+      }
       const nodes = buildGridFocusGraph(ids, gridColumns).map((node, index) => ({
         ...node,
-        neighbors: { ...node.neighbors, up: index < gridColumns ? TRIGGER_UP_TARGET : node.neighbors.up },
+        neighbors: {
+          ...node.neighbors,
+          up: index < gridColumns ? SEARCH_INPUT_ID : node.neighbors.up,
+          left: index % gridColumns === 0 ? railEntryId : node.neighbors.left,
+        },
       }));
       setGraph(CONTENT_ENTRY_SCOPE, nodes, ids[0]);
-      return () => clearGraph(CONTENT_ENTRY_SCOPE);
+      claimFocus(ids[0]);
+      return;
     }
 
-    const rows = shelves.map((shelf) => shelf.items.map((item) => item.id));
-    if (rows.length === 0 || rows.every((r) => r.length === 0)) return;
-    const nodes = buildShelfFocusGraph(rows).map((node, index) =>
-      index < rows[0].length ? { ...node, neighbors: { ...node.neighbors, up: TRIGGER_UP_TARGET } } : node,
-    );
+    const rows = shelves.map((shelf) => [...shelf.items.map((item) => item.id), seeAllId(shelf.id)]);
+    if (rows.length === 0) {
+      setGraph(CONTENT_ENTRY_SCOPE, []);
+      return;
+    }
+    const categoryBySeeAllId = new Map(shelves.map((shelf) => [seeAllId(shelf.id), shelf.id]));
+    const rowStarts = new Set(rows.map((row) => row[0]));
+    const nodes = buildShelfFocusGraph(rows).map((node, index) => {
+      const seeAllCategory = categoryBySeeAllId.get(node.id);
+      return {
+        ...node,
+        neighbors: {
+          ...node.neighbors,
+          up: index < rows[0].length ? SEARCH_INPUT_ID : node.neighbors.up,
+          left: rowStarts.has(node.id) ? railEntryId : node.neighbors.left,
+        },
+        onSelect: seeAllCategory ? () => selectCategory(seeAllCategory) : undefined,
+      };
+    });
     setGraph(CONTENT_ENTRY_SCOPE, nodes, rows[0][0]);
-    return () => clearGraph(CONTENT_ENTRY_SCOPE);
-  }, [shelves, gridMovies, isCategoryDropdownOpen, gridColumns, setGraph, clearGraph]);
+    claimFocus(rows[0][0]);
+  }, [shelves, gridMovies, gridColumns, activeCategoryId, selectCategory, setGraph, clearGraph]);
+
+  // Rebuilds above replace the scope in place (setGraph is atomic); clearing
+  // it on every rebuild would drop focus for an instant and snap it back to
+  // the first node. Clear only when this component goes away.
+  useEffect(() => () => clearGraph(CONTENT_ENTRY_SCOPE), [clearGraph]);
+
 
   // Grid mode's cards register under a gridItemId(...)-prefixed id (see its
   // effect above) so they can't collide with the same movie's id as used by
@@ -287,7 +398,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // once — resolve back to the raw movie id here before lookups.
   const resolveMovieIdFromFocusId = useCallback((id: string) => (id.startsWith("vod-grid:") ? id.slice("vod-grid:".length) : id), []);
 
-  // Grows the local-table grid as focus approaches its current end, rather
+  // Grows the grid (local-table or legacy, see gridHasMore) as focus approaches its current end, rather
   // than requiring an explicit "Load more" button — the last full row (or
   // fewer, on a short final page) is treated as the trigger zone. This is
   // what keeps a paginated grid compatible with spatial navigation's need
@@ -306,8 +417,8 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   );
   const isFocusInGridEndZone = useFocusStore((state) => state.focusedId !== null && (gridEndZoneIds?.has(state.focusedId) ?? false));
   useEffect(() => {
-    if (isFocusInGridEndZone && localGridHasMore) loadMoreLocalGrid();
-  }, [isFocusInGridEndZone, gridMovies, localGridHasMore, loadMoreLocalGrid]);
+    if (isFocusInGridEndZone && gridHasMore) loadMoreGrid?.();
+  }, [isFocusInGridEndZone, gridMovies, gridHasMore, loadMoreGrid]);
 
   // Lookups (play/favourite/backdrop) need to search whichever list is
   // actually on screen — the local-table grid/shelves when synced, or the
@@ -336,13 +447,78 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
         setFavoritesVersion((v) => v + 1);
       },
       onBack: () => {
-        if (isCategoryDropdownOpen) setIsCategoryDropdownOpen(false);
-        else onBack();
+        // Back from the content opens the category rail first; Back from the
+        // rail leaves the screen.
+        if (useFocusStore.getState().focusedId?.startsWith("rail:")) onBack();
+        else openCategoryRail();
       },
     },
     !isPlaybackOpen,
   );
 
+
+  // The grid/shelves, memoised so screen-level state that doesn't change
+  // them — the category menu opening/closing, each raw keystroke in the
+  // search box — doesn't re-render every card on screen.
+  const browseContent = useMemo(
+    () => (
+      <>
+          {gridMovies ? (
+            gridMovies.length === 0 ? (
+              <p style={{ color: "var(--text-dim)", padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`, fontSize: TV_TEXT }}>
+                {trimmedQuery ? `No movies match "${trimmedQuery}".` : "No movies in this category."}
+              </p>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${POSTER_COLUMNS}, minmax(0, 1fr))`,
+                  columnGap: BROWSE_GAP,
+                  rowGap: BROWSE_ROW_GAP,
+                  padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`,
+                }}
+              >
+                {gridMovies.map((item) => (
+                  <FocusCard
+                    placeholderIcon={SECTION_ICONS.movies}
+                    key={item.id}
+                    width="100%"
+                    id={gridItemId(item.id)}
+                    title={item.name}
+                    imageUrl={item.logoUrl}
+                    onSelect={() => onPlay(item)}
+                    badge={<FavoriteHeart isFavorite={favoriteMovieIds.has(item.id)} />}
+                  />
+                ))}
+              </div>
+            )
+          ) : (
+            shelves.map((shelf) => (
+              <Shelf
+                key={shelf.id}
+                title={shelf.title}
+                items={shelf.items}
+                getId={(item) => item.id}
+                trailing={<SeeAllCard id={seeAllId(shelf.id)} label={shelf.title} onSelect={() => selectCategory(shelf.id)} />}
+                trailingId={seeAllId(shelf.id)}
+                renderItem={(item) => (
+                  <FocusCard
+                    placeholderIcon={SECTION_ICONS.movies}
+                    id={item.id}
+                    width={POSTER_WIDTH}
+                    title={item.name}
+                    imageUrl={item.logoUrl}
+                    onSelect={() => onPlay(item)}
+                    badge={<FavoriteHeart isFavorite={favoriteMovieIds.has(item.id)} />}
+                  />
+                )}
+              />
+            ))
+          )}
+      </>
+    ),
+    [gridMovies, shelves, trimmedQuery, favoriteMovieIds, onPlay, selectCategory],
+  );
 
   // Only a fetch failure with nothing to show at all is a hard error — a
   // failed background refresh with a good (possibly stale) cache hit
@@ -355,13 +531,20 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
 
   if (showFullScreenSkeleton) return <ShelfRowSkeleton />;
 
-  const firstContentId = gridMovies ? (gridMovies[0] ? gridItemId(gridMovies[0].id) : undefined) : shelves[0]?.items[0]?.id;
 
   return (
     <div style={{ paddingTop: 24, paddingBottom: 40 }}>
       <FocusTrackingBackdrop getImageUrl={getBackdropUrl} />
+      <CategoryRail
+        title="Movies"
+        items={categoryItems}
+        activeId={activeCategoryId}
+        onSelect={selectCategory}
+        rightEntryId={firstContentId}
+        sectionBreakAt={1}
+      />
 
-      {/* Sticky so the category filter and search stay reachable/visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
+      {/* Sticky so the title and search stay visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
       <div
         style={{
           position: "sticky",
@@ -369,90 +552,26 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
           zIndex: 20,
           display: "flex",
           alignItems: "center",
-          gap: 16,
-          padding: "16px 40px",
-          marginBottom: 12,
+          gap: BROWSE_GAP,
+          padding: `1.5rem ${BROWSE_SIDE_PADDING} 1.5rem ${BROWSE_CONTENT_LEFT}`,
+          marginBottom: "0.5rem",
           background: "linear-gradient(180deg, var(--bg, #0b0b0f) 70%, rgba(11,11,15,0) 100%)",
         }}
       >
-        <CategoryDropdown
-          items={categoryItems}
-          activeId={activeCategoryId}
-          activeLabel={activeCategoryLabel}
-          isOpen={isCategoryDropdownOpen}
-          onOpen={() => setIsCategoryDropdownOpen(true)}
-          onClose={() => setIsCategoryDropdownOpen(false)}
-          onSelect={(id) => {
-            setActiveCategoryId(id);
-            setIsCategoryDropdownOpen(false);
-          }}
-          contentEntryId={firstContentId}
-          rightEntryId={SEARCH_INPUT_ID}
-        />
-        <div style={{ marginLeft: "auto", width: "100%", maxWidth: 420 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: "2.25rem", fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{headerTitle}</div>
+          {headerCount != null && (
+            <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "var(--text-dim)", marginTop: "0.25rem" }}>
+              {headerCount} {headerCount === 1 ? "title" : "titles"}
+            </div>
+          )}
+        </div>
+        <div style={{ marginLeft: "auto", width: "100%", maxWidth: "32rem" }}>
           <VodSearchInput ref={searchInputRef} value={searchQuery} onChange={setSearchQuery} />
         </div>
       </div>
 
-      {gridMovies ? (
-        gridMovies.length === 0 ? (
-          <p style={{ color: "var(--text-dim)", padding: "0 40px" }}>
-            {trimmedQuery ? `No movies match "${searchQuery.trim()}".` : "No movies in this category."}
-          </p>
-        ) : (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(auto-fill, ${GRID_CARD_WIDTH}px)`,
-              gap: GRID_GAP,
-              padding: `0 ${GRID_SIDE_PADDING}px`,
-            }}
-          >
-            {gridMovies.map((item) => (
-              <FocusCard
-                key={item.id}
-                id={gridItemId(item.id)}
-                title={item.name}
-                imageUrl={item.logoUrl}
-                onSelect={() => onPlay(item)}
-                badge={
-                  <FavoriteHeart
-                    isFavorite={(() => {
-                      void favoritesVersion; // re-evaluate on every toggle — see favoritesVersion's declaration
-                      return checkIsFavorite(profile.id, source.id, "movie", item.id);
-                    })()}
-                  />
-                }
-              />
-            ))}
-          </div>
-        )
-      ) : (
-        shelves.map((shelf) => (
-          <Shelf
-            key={shelf.id}
-            title={shelf.title}
-            items={shelf.items}
-            getId={(item) => item.id}
-            renderItem={(item) => (
-              <FocusCard
-                id={item.id}
-                title={item.name}
-                imageUrl={item.logoUrl}
-                onSelect={() => onPlay(item)}
-                badge={
-                  <FavoriteHeart
-                    isFavorite={(() => {
-                      void favoritesVersion; // re-evaluate on every toggle — see favoritesVersion's declaration
-                      return checkIsFavorite(profile.id, source.id, "movie", item.id);
-                    })()}
-                  />
-                }
-              />
-            )}
-          />
-        ))
-      )}
+      {browseContent}
     </div>
   );
 }
@@ -471,7 +590,7 @@ interface VodSearchInputProps {
  * Focusable is a thin proxy that hands off to the real input via ref).
  */
 const VodSearchInput = forwardRef<HTMLInputElement, VodSearchInputProps>(function VodSearchInput({ value, onChange }, ref) {
-  const isFocused = useFocusStore((state) => state.focusedId === SEARCH_INPUT_ID);
+  const isFocused = useIsFocused(SEARCH_INPUT_ID);
 
   return (
     <Focusable id={SEARCH_INPUT_ID}>
@@ -479,9 +598,9 @@ const VodSearchInput = forwardRef<HTMLInputElement, VodSearchInputProps>(functio
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 10,
+          gap: "0.75rem",
           width: "100%",
-          padding: "10px 16px",
+          padding: "0.875rem 1.5rem",
           borderRadius: 999,
           border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.16)",
           background: "rgba(28,28,34,0.7)",
@@ -490,7 +609,7 @@ const VodSearchInput = forwardRef<HTMLInputElement, VodSearchInputProps>(functio
           transition: "box-shadow 160ms ease-out, border-color 160ms ease-out",
         }}
       >
-        <Search size={18} color="var(--text-dim, #9a9aa4)" style={{ flexShrink: 0 }} />
+        <Search size="1.5rem" color="var(--text-dim, #9a9aa4)" style={{ flexShrink: 0 }} />
         <input
           ref={ref}
           type="text"
@@ -502,7 +621,7 @@ const VodSearchInput = forwardRef<HTMLInputElement, VodSearchInputProps>(functio
             border: "none",
             background: "transparent",
             padding: 0,
-            fontSize: 16,
+            fontSize: TV_TEXT,
             color: "var(--text, #f4f4f6)",
           }}
         />
@@ -513,7 +632,7 @@ const VodSearchInput = forwardRef<HTMLInputElement, VodSearchInputProps>(functio
             aria-label="Clear search"
             style={{ display: "flex", background: "none", border: "none", padding: 2, color: "var(--text-dim, #9a9aa4)" }}
           >
-            <X size={16} />
+            <X size="1.375rem" />
           </button>
         )}
       </div>

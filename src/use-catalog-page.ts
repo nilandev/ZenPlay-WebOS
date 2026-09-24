@@ -19,6 +19,8 @@ export interface CatalogPageState<T> {
   hasMore: boolean;
   loadMore: () => void;
   error: string | null;
+  /** Total matching records (all pages), or null until the first page has loaded — for "412 titles"-style headers. */
+  total: number | null;
 }
 
 type SeriesSummary = Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle">;
@@ -58,6 +60,7 @@ function useCatalogPageImpl<T>(
   const [isInitialLoading, setIsInitialLoading] = useState(enabled);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [total, setTotal] = useState<number | null>(null);
   const offsetRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
   const fetchPageRef = useRef(fetchPage);
@@ -71,6 +74,7 @@ function useCatalogPageImpl<T>(
     let cancelled = false;
     offsetRef.current = 0;
     setError(null);
+    setTotal(null);
 
     if (!enabled) {
       setItems([]);
@@ -85,6 +89,7 @@ function useCatalogPageImpl<T>(
         if (cancelled) return;
         offsetRef.current = page.length;
         setItems(page);
+        setTotal(total);
         setHasMore(page.length < total);
         setIsInitialLoading(false);
       })
@@ -119,5 +124,5 @@ function useCatalogPageImpl<T>(
       });
   }, [filter, hasMore, enabled]);
 
-  return { items, isInitialLoading, hasMore, loadMore, error };
+  return { items, isInitialLoading, hasMore, loadMore, error, total };
 }

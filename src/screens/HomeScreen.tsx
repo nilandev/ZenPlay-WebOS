@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Clapperboard, Film, Heart, History as HistoryIcon, ListVideo, RefreshCw, Settings as SettingsIcon, Tv, type LucideIcon } from "lucide-react";
+import { RefreshCw, type LucideIcon } from "lucide-react";
 import type { PlatformId, PlaylistSource, Profile } from "@core";
 import {
   Clock,
@@ -8,8 +8,10 @@ import {
   MeshBackground,
   ProfileSwitcher,
   PROFILE_SWITCHER_FOCUS_ID,
+  SECTION_ICONS,
   useFocusStore,
   useRemoteInput,
+  useIsFocused,
 } from "@ui";
 import type { FocusNode } from "@ui";
 import { buildRevalidationTargets, revalidateStaleTargets } from "../cache-revalidator.js";
@@ -32,16 +34,16 @@ const REFRESH_TILE_ID = "refresh";
  * secondary row beneath them.
  */
 const PRIMARY_TILES: HomeTile[] = [
-  { id: "live", label: "Live TV", icon: Tv },
-  { id: "movies", label: "Movies", icon: Film },
-  { id: "series", label: "Series", icon: Clapperboard },
-  { id: "guide", label: "Guide", icon: ListVideo },
+  { id: "live", label: "Live TV", icon: SECTION_ICONS.live },
+  { id: "movies", label: "Movies", icon: SECTION_ICONS.movies },
+  { id: "series", label: "Series", icon: SECTION_ICONS.series },
+  { id: "guide", label: "Guide", icon: SECTION_ICONS.guide },
 ];
 const SECONDARY_TILES: HomeTile[] = [
-  { id: "favourites", label: "My List", icon: Heart },
-  { id: "history", label: "Recently Watched", icon: HistoryIcon },
+  { id: "favourites", label: "My List", icon: SECTION_ICONS.favourites },
+  { id: "history", label: "Recently Watched", icon: SECTION_ICONS.history },
   { id: REFRESH_TILE_ID, label: "Refresh Playlist", icon: RefreshCw },
-  { id: "settings", label: "App Settings", icon: SettingsIcon },
+  { id: "settings", label: "App Settings", icon: SECTION_ICONS.settings },
 ];
 
 /**
@@ -291,7 +293,7 @@ const TILE_RADIUS = "1.5rem";
 
 /** Primary destination: a tall portrait card, large icon over a label. */
 function PrimaryTile({ tile, onSelect }: { tile: HomeTile; onSelect: () => void }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === tile.id);
+  const isFocused = useIsFocused(tile.id);
   const Icon = tile.icon;
 
   return (
@@ -313,7 +315,7 @@ function PrimaryTile({ tile, onSelect }: { tile: HomeTile; onSelect: () => void 
 
 /** Secondary tile: short and wide, icon beside its label. isSpinning rotates the icon (Refresh while a refresh is in flight). */
 function SecondaryTile({ tile, isSpinning, onSelect }: { tile: HomeTile; isSpinning?: boolean; onSelect: () => void }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === tile.id);
+  const isFocused = useIsFocused(tile.id);
   const Icon = tile.icon;
 
   return (

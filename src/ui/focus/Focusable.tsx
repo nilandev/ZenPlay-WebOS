@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
-import { useFocusStore } from "./focus-store.js";
+import { useIsFocused } from "./focus-store.js";
 
 /**
  * Set to true by a container that scrolls its own focused child into view
@@ -33,7 +33,7 @@ export interface FocusableProps {
  * without relying on browser auto-scroll behavior (unreliable on older webOS TV WebKit).
  */
 export function Focusable({ id, children, className, focusedClassName, style }: FocusableProps): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === id);
+  const isFocused = useIsFocused(id);
   const ref = useRef<HTMLDivElement>(null);
   const isScrollManaged = useContext(FocusScrollManagedContext);
 

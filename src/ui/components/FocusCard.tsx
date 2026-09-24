@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import { Focusable } from "../focus/Focusable.js";
-import { useFocusStore } from "../focus/focus-store.js";
+import { useIsFocused } from "../focus/focus-store.js";
 import { LiftSurface } from "./LiftSurface.js";
 import { URLImage } from "./URLImage.js";
 
-const CARD_RADIUS = "0.75rem";
+const CARD_RADIUS = "1rem";
 
 export interface FocusCardProps {
   id: string;
@@ -12,16 +13,10 @@ export interface FocusCardProps {
   subtitle?: string;
   imageUrl?: string;
   /**
-   * Defaults to 220 (px) for backward compatibility with callers whose
-   * layout math depends on this exact pixel value — VodScreen/SeriesScreen
-   * both hardcode a matching GRID_CARD_WIDTH constant that their D-pad grid
-   * focus graph (buildGridFocusGraph) needs to stay in sync with the CSS
-   * grid's real rendered column count, so changing this default would need
-   * to change that column-count math too (out of scope for the Home
-   * redesign this prop was touched for — see AC4's scope note in the
-   * implementation plan). Home's own shelves pass an explicit rem width
-   * instead of relying on this default, so they do scale with the root
-   * font-size even though the default itself doesn't.
+   * Defaults to 220 (px) for callers that don't size cards themselves. The
+   * TV browse screens (Movies/Series) pass tv-metrics.ts's POSTER_WIDTH in
+   * shelves and "100%" inside their fixed-column grid, so shelves and grids
+   * share one poster size.
    */
   width?: number | string;
   aspectRatio?: string;
@@ -29,6 +24,8 @@ export interface FocusCardProps {
   badge?: ReactNode;
   /** 0–1 watch progress (e.g. positionSeconds / durationSeconds) — renders a thin filled bar near the card's bottom edge when set. Callers are expected to clamp/guard against NaN (e.g. a zero-length duration) before passing this in. */
   progress?: number;
+  /** Placeholder icon when there's no artwork — the section's icon (see section-icons.ts). */
+  placeholderIcon?: LucideIcon;
 }
 
 /**
@@ -59,8 +56,9 @@ export function FocusCard({
   onSelect,
   badge,
   progress,
+  placeholderIcon,
 }: FocusCardProps): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === id);
+  const isFocused = useIsFocused(id);
 
   return (
     <Focusable id={id} className="focus-card">
@@ -74,8 +72,8 @@ export function FocusCard({
         shadow="0 1.25rem 2rem -0.5rem rgba(0,0,0,0.75), 0 0.375rem 0.75rem rgba(0,0,0,0.45)"
         faceStyle={{ aspectRatio, background: "#1c1c22" }}
       >
-        <URLImage src={imageUrl} alt="" seed={id} loading="lazy" />
-        {badge && <div style={{ position: "absolute", top: "0.5rem", right: "0.5rem" }}>{badge}</div>}
+        <URLImage src={imageUrl} alt="" seed={id} loading="lazy" placeholderIcon={placeholderIcon} />
+        {badge && <div style={{ position: "absolute", top: "0.75rem", right: "0.75rem" }}>{badge}</div>}
         <div
           style={{
             position: "absolute",
@@ -84,14 +82,14 @@ export function FocusCard({
             flexDirection: "column",
             justifyContent: "flex-end",
             background: "linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(0,0,0,0.55) 80%, rgba(0,0,0,0.85) 100%)",
-            padding: "1rem 0.625rem 0.5rem",
+            padding: "1.25rem 1rem 0.875rem",
           }}
         >
-          <div style={{ fontSize: "1.125rem", fontWeight: 700, color: "#fff", lineHeight: 1.3, textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
+          <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "#fff", lineHeight: 1.25, textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
             {title}
           </div>
           {subtitle && (
-            <div style={{ fontSize: "0.875rem", color: "rgba(255,255,255,0.8)", marginTop: "0.1875rem", textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
+            <div style={{ fontSize: "1.125rem", color: "rgba(255,255,255,0.8)", marginTop: "0.25rem", textShadow: "0 1px 4px rgba(0,0,0,0.85)" }}>
               {subtitle}
             </div>
           )}
@@ -99,8 +97,8 @@ export function FocusCard({
             <div
               aria-hidden
               style={{
-                marginTop: "0.5rem",
-                height: "0.1875rem",
+                marginTop: "0.625rem",
+                height: "0.25rem",
                 borderRadius: 999,
                 background: "rgba(255,255,255,0.25)",
                 overflow: "hidden",

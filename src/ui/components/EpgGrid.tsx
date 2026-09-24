@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import type { Channel, EpgProgramme } from "@core";
 import { Focusable } from "../focus/Focusable.js";
-import { useFocusStore } from "../focus/focus-store.js";
+import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
 import { buildGridFocusGraph } from "../focus/build-grid-graph.js";
 
 const PIXELS_PER_MINUTE = 4;
@@ -194,7 +194,7 @@ function ProgrammeCell({
   timeRange: string;
   onClick: () => void;
 }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === id);
+  const isFocused = useIsFocused(id);
   const focus = useFocusStore((state) => state.focus);
 
   return (

@@ -1,15 +1,16 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PlatformId, PlaylistSource, Profile, SeriesEpisode } from "@core";
-import { Play, RotateCcw, Search, Star, X } from "lucide-react";
+import type { FocusNode } from "@ui";
+import { Check, Play, Plus, RotateCcw, Search, Star, X } from "lucide-react";
 import {
-  CATEGORY_DROPDOWN_TRIGGER_ID,
-  CategoryDropdown,
+  CategoryRail,
+  categoryRailItemId,
+  SeeAllCard,
   FavoriteHeart,
-  FocusBackdrop,
   FocusTrackingBackdrop,
   FocusCard,
   Focusable,
-  PillButton,
+  LiftSurface,
   Shelf,
   ShelfRowSkeleton,
   Shimmer,
@@ -19,11 +20,26 @@ import {
   useFocusStore,
   useRemoteInput,
   glassBlur,
+  useIsFocused,
+  BROWSE_CONTENT_LEFT,
+  BROWSE_GAP,
+  BROWSE_ROW_GAP,
+  BROWSE_SIDE_PADDING,
+  POSTER_COLUMNS,
+  POSTER_WIDTH,
+  TV_TEXT,
+  TV_HEADING,
+  EPISODE_COLUMNS,
+  EPISODE_WIDTH,
+  SECTION_ICONS,
 } from "@ui";
 import { loadSeriesCategories, loadSeriesDetails, loadSeriesList } from "../content-loader.js";
-import { toggleFavorite, isFavorite as checkIsFavorite, loadContinueWatching } from "../profile-store.js";
+import { toggleFavorite, loadContinueWatching, loadFavorites } from "../profile-store.js";
+import { useSearchQuery } from "../use-debounced-value.js";
+import { useIncrementalList } from "../use-incremental-list.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useSeriesCatalogPage } from "../use-catalog-page.js";
+import { startCatalogBackgroundSync } from "../catalog-sync.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { useCatalogShelves } from "../use-catalog-shelves.js";
 import { getCatalogPage } from "../catalog-store.js";
@@ -54,29 +70,24 @@ const EMPTY_CATEGORIES: Awaited<ReturnType<typeof loadSeriesCategories>> = [];
 const EMPTY_SERIES_DETAILS: SeriesDetailsResult = { details: {}, episodes: [] };
 const CONTENT_ENTRY_SCOPE = "content";
 const ALL_CATEGORIES_ID = "__all__";
-const GRID_GAP = 16; // matches Shelf's card-to-card gap, so the single-category grid reads the same as the "All Categories" shelf rows.
-const GRID_CARD_WIDTH = 220; // FocusCard's own default width — the grid packs cards at this fixed size via auto-fill rather than stretching them, see its gridTemplateColumns comment.
-const GRID_SIDE_PADDING = 40; // matches the grid's own left+right padding below.
-
-/**
- * How many cards actually fit per row in the auto-fill grid below, computed
- * the same way the browser's own grid layout would (available width minus
- * side padding, divided into GRID_CARD_WIDTH + gap slots) — needed because
- * buildGridFocusGraph must be told a concrete column count to wire up/down
- * neighbors correctly, and auto-fill's real column count depends on
- * viewport width rather than being some fixed number this code also
- * controls. webOS TV runs at a fixed resolution (no runtime window
- * resizing), so reading window.innerWidth once here — rather than
- * subscribing to a resize observer — is enough to stay in sync with what
- * the grid actually renders.
- */
-function computeGridColumns(): number {
-  const available = window.innerWidth - GRID_SIDE_PADDING * 2;
-  return Math.max(1, Math.floor((available + GRID_GAP) / (GRID_CARD_WIDTH + GRID_GAP)));
-}
 const gridItemId = (seriesId: string) => `series-grid:${seriesId}`;
-const TRIGGER_UP_TARGET = CATEGORY_DROPDOWN_TRIGGER_ID;
+/**
+ * The category each source was last browsed in, so coming back to this
+ * screen (it remounts on every tab switch — see App.tsx) reopens where the
+ * user was. Module-level on purpose: it should outlive the screen, not an
+ * app restart.
+ */
+const lastCategoryBySource = new Map<string, string>();
+
+/** Test-only: forgets remembered categories so each test starts on Browse. */
+export function __resetCategoryMemoryForTests(): void {
+  lastCategoryBySource.clear();
+}
+/** Focus id of a shelf's trailing "See all" card. */
+const seeAllId = (categoryId: string) => `seeall:${categoryId}`;
 const SEARCH_INPUT_ID = "series-search-input";
+/** Legacy-path shelves are capped like the local-table path's (see use-catalog-shelves.ts's SHELF_SIZE); the full category is one dropdown pick away. */
+const LEGACY_SHELF_LIMIT = 20;
 
 /**
  * Groups series into shelves by category, labeling each shelf with the real
@@ -90,13 +101,14 @@ const SEARCH_INPUT_ID = "series-search-input";
 function groupByCategory(
   list: SeriesSummary[],
   categoryNameById: Map<string, string>,
+  limitPerShelf: number,
 ): Array<{ id: string; title: string; items: SeriesSummary[] }> {
   const byGroup = new Map<string, SeriesSummary[]>();
   for (const series of list) {
     const key = series.groupTitle ?? "Series";
     const items = byGroup.get(key);
-    if (items) items.push(series);
-    else byGroup.set(key, [series]);
+    if (!items) byGroup.set(key, [series]);
+    else if (items.length < limitPerShelf) items.push(series);
   }
   return Array.from(byGroup.entries()).map(([id, items]) => ({ id, title: categoryNameById.get(id) ?? id, items }));
 }
@@ -116,12 +128,17 @@ export function SeriesScreen({
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const [selected, setSelectedState] = useState<string | null>(initialSelectedId ?? null);
   const [activeSeason, setActiveSeason] = useState<number | null>(null);
-  const [activeCategoryId, setActiveCategoryId] = useState(ALL_CATEGORIES_ID);
-  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
+  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(source.id) ?? ALL_CATEGORIES_ID);
+  useEffect(() => {
+    lastCategoryBySource.set(source.id, activeCategoryId);
+  }, [source.id, activeCategoryId]);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const trimmedQuery = searchQuery.trim().toLowerCase();
+  // The query that actually runs: debounced and ignored below 2 characters
+  // (see useSearchQuery), so typing doesn't refilter/re-render the catalog
+  // on every keystroke. searchQuery itself only drives the input's text.
+  const trimmedQuery = useSearchQuery(searchQuery);
   const isAllCategories = activeCategoryId === ALL_CATEGORIES_ID;
 
   // Once catalog-sync.ts has completed at least one background sync for this
@@ -130,6 +147,13 @@ export function SeriesScreen({
   // use-local-catalog-ready.ts's doc comment for the three-state
   // checking/ready/not-synced shape.
   const localCatalogStatus = useLocalCatalogReady(source.id, "series");
+
+  // Builds (first visit) or refreshes (daily) this screen's local catalog
+  // table while the screen is open. Until the first sync lands the screen
+  // runs on the capped legacy path below; once it does, the sync bumps
+  // useLocalCatalogReady's version and the screen switches to the local
+  // paginated reads without remounting.
+  useEffect(() => startCatalogBackgroundSync(() => source, ["series"]), [source]);
   const isLocalCatalogReady = localCatalogStatus === "ready";
   const isCheckingLocalCatalog = localCatalogStatus === "checking";
 
@@ -170,13 +194,15 @@ export function SeriesScreen({
     isInitialLoading: isLocalGridLoading,
     hasMore: localGridHasMore,
     loadMore: loadMoreLocalGrid,
+    total: localGridTotal,
   } = useSeriesCatalogPage(source.id, {
     categoryId: isAllCategories ? undefined : activeCategoryId,
     namePrefix: trimmedQuery || undefined,
     enabled: isLocalCatalogReady && (!isAllCategories || trimmedQuery.length > 0),
   });
 
-  const gridColumns = useMemo(() => computeGridColumns(), []);
+  // Fixed TV poster density (see tv-metrics.ts) — the grid and the D-pad focus graph share this column count.
+  const gridColumns = POSTER_COLUMNS;
 
   const loadCategories = useCallback(() => loadSeriesCategories(source), [source]);
   const { data: categories } = useCachedContent(`series-categories:${source.id}`, "category", loadCategories, EMPTY_CATEGORIES);
@@ -196,8 +222,12 @@ export function SeriesScreen({
     isLocalCatalogReady && isAllCategories && !trimmedQuery,
   );
 
+  // The browse card that opened the detail page, so Back returns focus to
+  // it instead of dropping the user at the top of the list.
+  const returnFocusIdRef = useRef<string | null>(null);
   const setSelected = useCallback(
     (seriesId: string | null) => {
+      if (seriesId) returnFocusIdRef.current = useFocusStore.getState().focusedId;
       setSelectedState(seriesId);
       setActiveSeason(null);
       onSelectionChange?.(seriesId);
@@ -210,6 +240,16 @@ export function SeriesScreen({
   // needed (toggleFavorite persists to localStorage but isn't itself
   // reactive state).
   const [favoritesVersion, setFavoritesVersion] = useState(0);
+  // Read once per toggle rather than once per card per render (each lookup
+  // parses the whole favourites list from localStorage).
+  const favoriteSeriesIds = useMemo(() => {
+    void favoritesVersion;
+    return new Set(
+      loadFavorites(profile.id)
+        .filter((f) => f.sourceId === source.id && f.contentKind === "series")
+        .map((f) => f.contentId),
+    );
+  }, [profile.id, source.id, favoritesVersion]);
 
   const loadDetails = useCallback(
     () => (selected ? loadSeriesDetails(source, selected) : Promise.resolve(EMPTY_SERIES_DETAILS)),
@@ -228,19 +268,19 @@ export function SeriesScreen({
   // per-shelf lazy fetch), so this naturally reads [] while a single
   // category is selected — fine since shelves aren't rendered in that mode
   // anyway (see gridSeries below).
-  const legacyShelves = useMemo(() => groupByCategory(legacySeriesList, categoryNameById), [legacySeriesList, categoryNameById]);
+  const legacyShelves = useMemo(() => groupByCategory(legacySeriesList, categoryNameById, LEGACY_SHELF_LIMIT), [legacySeriesList, categoryNameById]);
   const shelves = isLocalCatalogReady ? localShelves : legacyShelves;
 
   // "All Categories" row's count is only meaningful on the legacy fallback
   // path — see VodScreen's identical comment.
   const categoryItems = useMemo(
     () => [
-      { id: ALL_CATEGORIES_ID, label: "All Categories", count: isLocalCatalogReady ? undefined : legacySeriesList.length },
+      { id: ALL_CATEGORIES_ID, label: "Browse", count: isLocalCatalogReady ? undefined : legacySeriesList.length },
       ...categories.map((c) => ({ id: c.id, label: c.name, count: undefined as number | undefined })),
     ],
     [isLocalCatalogReady, legacySeriesList.length, categories],
   );
-  const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "All Categories";
+  const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "Browse";
 
   // A category other than "All Categories", or a non-empty search query,
   // replaces the shelf browser with a single flat, vertically-scrolling
@@ -257,7 +297,13 @@ export function SeriesScreen({
     if (trimmedQuery) return withinCategory.filter((item) => item.name.toLowerCase().includes(trimmedQuery));
     return isAllCategories ? null : withinCategory;
   }, [isAllCategories, legacyCategorySeries, legacySeriesList, trimmedQuery]);
-  const gridSeries = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridSeries) : legacyGridSeries;
+  // The legacy path has the whole category/search result in memory, but
+  // renders it a page at a time like the local-table path does — mounting
+  // thousands of cards at once is what made category picks and search lag.
+  const legacyGridPage = useIncrementalList(isLocalCatalogReady ? null : legacyGridSeries);
+  const gridSeries = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridSeries) : (legacyGridPage?.visible ?? null);
+  const gridHasMore = isLocalCatalogReady ? localGridHasMore : (legacyGridPage?.hasMore ?? false);
+  const loadMoreGrid = isLocalCatalogReady ? loadMoreLocalGrid : legacyGridPage?.loadMore;
 
   const isBrowseLoading = isCheckingLocalCatalog
     ? true
@@ -300,86 +346,161 @@ export function SeriesScreen({
   );
   const resumeEpisode = continueEntry ? episodes.find((ep) => ep.id === continueEntry.episodeId) : undefined;
 
+  // Header for the content area: the category (or search) being shown and,
+  // for a single category, how many titles it holds.
+  const headerTitle = trimmedQuery ? `Results for "${trimmedQuery}"` : isAllCategories ? "Series" : activeCategoryLabel;
+  const headerCount = gridSeries ? (isLocalCatalogReady ? localGridTotal : legacyGridSeries?.length) : null;
+
+  const firstContentId = gridSeries ? (gridSeries[0] ? gridItemId(gridSeries[0].id) : undefined) : shelves[0]?.items[0]?.id;
+  const firstContentIdRef = useRef(firstContentId);
+  firstContentIdRef.current = firstContentId;
+  const activeCategoryIdRef = useRef(activeCategoryId);
+  activeCategoryIdRef.current = activeCategoryId;
+  // Set when a category is picked from the rail (or a "See all" card), so
+  // focus follows into the new content once its focus graph registers —
+  // see the browse graph effect below.
+  const focusContentOnNextGraphRef = useRef(false);
+
+  const selectCategory = useCallback((id: string) => {
+    if (id === activeCategoryIdRef.current) {
+      // Already showing: just hand focus back to the content.
+      const first = firstContentIdRef.current;
+      if (first) useFocusStore.getState().focus(first);
+      return;
+    }
+    focusContentOnNextGraphRef.current = true;
+    setActiveCategoryId(id);
+  }, []);
+
+  /** Moves focus into the category rail (which expands it), leaving the search box's native focus if it had it. */
+  const openCategoryRail = useCallback(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    useFocusStore.getState().focus(categoryRailItemId(activeCategoryIdRef.current));
+  }, []);
+
   // Search input's proxy focus node — see SeriesSearchInput's doc comment
   // for why a native <input> needs a Focusable stand-in rather than being a
   // spatial-nav node itself. Sits to the right of the category dropdown's
   // trigger in the same sticky bar.
   useEffect(() => {
-    if (selected) return;
-    const node = { id: SEARCH_INPUT_ID, neighbors: { left: TRIGGER_UP_TARGET }, onSelect: () => searchInputRef.current?.focus() };
-    setGraph("chrome:series-search", [node]);
-    return () => clearGraph("chrome:series-search");
-  }, [selected, setGraph, clearGraph]);
+    if (selected) {
+      clearGraph("chrome:series-search"); // no search box on the detail page
+      return;
+    }
+    const node = { id: SEARCH_INPUT_ID, neighbors: { left: categoryRailItemId(activeCategoryId), down: firstContentId }, onSelect: () => searchInputRef.current?.focus() };
+    setGraph("chrome:series-search", [node], undefined, { passive: true });
+  }, [selected, activeCategoryId, firstContentId, setGraph, clearGraph]);
+  // Rebuilds above replace the scope in place (setGraph is atomic); clearing
+  // it on every rebuild would drop focus for an instant and snap it back to
+  // the first node. Clear only when this component goes away.
+  useEffect(() => () => clearGraph("chrome:series-search"), [clearGraph]);
+
 
   // Browse mode's focus graph: either the shelf browser (one row per
-  // category, "All Categories") or a single flat grid (one category picked
-  // from the dropdown, or a search in progress) — never both, so only one
-  // of these branches ever runs. The top row's "up" links back to the
-  // category dropdown's trigger (a separate scope CategoryDropdown itself
-  // registers) so it's always reachable by pressing Up from the very first
-  // row, regardless of which mode is showing.
+  // category, plus a trailing "See all" card) or a single flat grid (one
+  // category from the rail, or a search) — never both. Up from the top row
+  // reaches the search box; Left from the first column opens the category
+  // rail on the active category.
   useEffect(() => {
-    if (selected || isCategoryDropdownOpen) return;
+    if (selected) return;
+
+    const railEntryId = categoryRailItemId(activeCategoryId);
+    const claimFocus = (id: string) => {
+      const returnTo = returnFocusIdRef.current;
+      if (returnTo && useFocusStore.getState().nodes[returnTo]) {
+        returnFocusIdRef.current = null;
+        useFocusStore.getState().focus(returnTo);
+        return;
+      }
+      if (!focusContentOnNextGraphRef.current) return;
+      focusContentOnNextGraphRef.current = false;
+      useFocusStore.getState().focus(id);
+    };
 
     if (gridSeries) {
       const ids = gridSeries.map((item) => gridItemId(item.id));
-      if (ids.length === 0) return;
+      if (ids.length === 0) {
+        setGraph(CONTENT_ENTRY_SCOPE, []);
+        return;
+      }
       const nodes = buildGridFocusGraph(ids, gridColumns).map((node, index) => ({
         ...node,
-        neighbors: { ...node.neighbors, up: index < gridColumns ? TRIGGER_UP_TARGET : node.neighbors.up },
+        neighbors: {
+          ...node.neighbors,
+          up: index < gridColumns ? SEARCH_INPUT_ID : node.neighbors.up,
+          left: index % gridColumns === 0 ? railEntryId : node.neighbors.left,
+        },
       }));
       setGraph(CONTENT_ENTRY_SCOPE, nodes, ids[0]);
-      return () => clearGraph(CONTENT_ENTRY_SCOPE);
+      claimFocus(ids[0]);
+      return;
     }
 
-    const rows = shelves.map((shelf) => shelf.items.map((item) => item.id));
-    if (rows.length === 0 || rows.every((r) => r.length === 0)) return;
-    const nodes = buildShelfFocusGraph(rows).map((node, index) =>
-      index < rows[0].length ? { ...node, neighbors: { ...node.neighbors, up: TRIGGER_UP_TARGET } } : node,
-    );
+    const rows = shelves.map((shelf) => [...shelf.items.map((item) => item.id), seeAllId(shelf.id)]);
+    if (rows.length === 0) {
+      setGraph(CONTENT_ENTRY_SCOPE, []);
+      return;
+    }
+    const categoryBySeeAllId = new Map(shelves.map((shelf) => [seeAllId(shelf.id), shelf.id]));
+    const rowStarts = new Set(rows.map((row) => row[0]));
+    const nodes = buildShelfFocusGraph(rows).map((node, index) => {
+      const seeAllCategory = categoryBySeeAllId.get(node.id);
+      return {
+        ...node,
+        neighbors: {
+          ...node.neighbors,
+          up: index < rows[0].length ? SEARCH_INPUT_ID : node.neighbors.up,
+          left: rowStarts.has(node.id) ? railEntryId : node.neighbors.left,
+        },
+        onSelect: seeAllCategory ? () => selectCategory(seeAllCategory) : undefined,
+      };
+    });
     setGraph(CONTENT_ENTRY_SCOPE, nodes, rows[0][0]);
-    return () => clearGraph(CONTENT_ENTRY_SCOPE);
-  }, [shelves, gridSeries, selected, isCategoryDropdownOpen, gridColumns, setGraph, clearGraph]);
+    claimFocus(rows[0][0]);
+  }, [shelves, gridSeries, selected, gridColumns, activeCategoryId, selectCategory, setGraph, clearGraph]);
 
-  // Detail view's focus graph spans three visual rows — hero actions, season
-  // tabs, episode grid — built together so up/down chains across all three
-  // instead of each row only wiring its own internal left/right (which is
-  // all SeasonTabs/the episode grid could do registering independently).
+  // Rebuilds above replace the scope in place (setGraph is atomic); clearing
+  // it on every rebuild would drop focus for an instant and snap it back to
+  // the first node. Clear only when this component goes away.
+  useEffect(() => () => clearGraph(CONTENT_ENTRY_SCOPE), [clearGraph]);
+
+
+  // Detail view's focus graph: three rows — actions (Play, My List),
+  // season tabs, and the episode row — chained so Up/Down move between
+  // rows: into the episodes from the tab of the season on screen, and back
+  // up to that same tab. Starts on Play.
   useEffect(() => {
     if (!selected) return;
 
-    const heroIds = ["series-hero-play", "series-hero-favorite"];
-    const heroNodes = buildGridFocusGraph(heroIds, heroIds.length);
+    const episodeIds = seasonEpisodes.map((ep) => ep.id);
+    const hasSeasonTabs = seasons.length > 1;
+    const activeTabId = hasSeasonTabs && currentSeason !== null ? seasonTabId(currentSeason) : undefined;
+    const belowActions = activeTabId ?? episodeIds[0];
 
-    const seasonIds = seasons.map((s) => `season-tab:${s}`);
-    const seasonNodes = buildGridFocusGraph(seasonIds, Math.max(seasonIds.length, 1)).map((node, index) => ({
-      ...node,
-      onSelect: () => setActiveSeason(seasons[index]),
+    const actionNodes: FocusNode[] = [
+      { id: DETAIL_PLAY_ID, neighbors: { right: DETAIL_FAVORITE_ID, down: belowActions } },
+      { id: DETAIL_FAVORITE_ID, neighbors: { left: DETAIL_PLAY_ID, down: belowActions } },
+    ];
+    const seasonNodes: FocusNode[] = hasSeasonTabs
+      ? seasons.map((season, index) => ({
+          id: seasonTabId(season),
+          neighbors: {
+            left: index > 0 ? seasonTabId(seasons[index - 1]) : undefined,
+            right: index < seasons.length - 1 ? seasonTabId(seasons[index + 1]) : undefined,
+            up: DETAIL_PLAY_ID,
+            down: episodeIds[0],
+          },
+          onSelect: () => setActiveSeason(season),
+        }))
+      : [];
+    const episodeNodes: FocusNode[] = episodeIds.map((id, index) => ({
+      id,
+      neighbors: { left: episodeIds[index - 1], right: episodeIds[index + 1], up: activeTabId ?? DETAIL_PLAY_ID },
     }));
 
-    const episodeIds = seasonEpisodes.map((ep) => ep.id);
-    const episodeNodes = buildGridFocusGraph(episodeIds, 3);
+    setGraph(CONTENT_ENTRY_SCOPE, [...actionNodes, ...seasonNodes, ...episodeNodes], DETAIL_PLAY_ID);
+  }, [selected, seasons, seasonEpisodes, currentSeason, setGraph, clearGraph]);
 
-    const firstEpisodeRowStart = 0;
-    const firstSeasonTabId = seasonIds[0];
-    const lastHeroRowId = heroIds[0];
-
-    // Link hero <-> season tabs <-> first episode row vertically.
-    if (seasonNodes.length > 0) {
-      for (const node of heroNodes) node.neighbors.down = firstSeasonTabId;
-      for (const node of seasonNodes) node.neighbors.up = lastHeroRowId;
-      if (episodeNodes.length > 0) {
-        for (const node of seasonNodes) node.neighbors.down = episodeIds[firstEpisodeRowStart];
-        episodeNodes[0].neighbors.up = firstSeasonTabId;
-      }
-    } else if (episodeNodes.length > 0) {
-      for (const node of heroNodes) node.neighbors.down = episodeIds[0];
-      episodeNodes[0].neighbors.up = lastHeroRowId;
-    }
-
-    setGraph(CONTENT_ENTRY_SCOPE, [...heroNodes, ...seasonNodes, ...episodeNodes], heroIds[0]);
-    return () => clearGraph(CONTENT_ENTRY_SCOPE);
-  }, [selected, seasons, seasonEpisodes, setGraph, clearGraph]);
 
   // Grid mode's cards register under a gridItemId(...)-prefixed id (see its
   // effect above) so they can't collide with the same series' id as used by
@@ -403,8 +524,8 @@ export function SeriesScreen({
   );
   const isFocusInGridEndZone = useFocusStore((state) => state.focusedId !== null && (gridEndZoneIds?.has(state.focusedId) ?? false));
   useEffect(() => {
-    if (isFocusInGridEndZone && localGridHasMore) loadMoreLocalGrid();
-  }, [isFocusInGridEndZone, gridSeries, localGridHasMore, loadMoreLocalGrid]);
+    if (isFocusInGridEndZone && gridHasMore) loadMoreGrid?.();
+  }, [isFocusInGridEndZone, gridSeries, gridHasMore, loadMoreGrid]);
 
   const posterUrlBySeriesId = useMemo(() => new Map(visibleSeries.map((s) => [s.id, s.posterUrl])), [visibleSeries]);
   const getBackdropUrl = useCallback(
@@ -435,32 +556,97 @@ export function SeriesScreen({
         setFavoritesVersion((v) => v + 1);
       },
       onBack: () => {
-        if (isCategoryDropdownOpen) setIsCategoryDropdownOpen(false);
-        else if (selected) setSelected(null);
-        else onBack();
+        // Detail view → back to browsing. Browsing: Back from the content
+        // opens the category rail first; Back from the rail leaves the screen.
+        if (selected) setSelected(null);
+        else if (useFocusStore.getState().focusedId?.startsWith("rail:")) onBack();
+        else openCategoryRail();
       },
     },
     !isPlaybackOpen,
   );
 
+  // The browse grid/shelves, memoised so screen-level state that doesn't
+  // change them — the category menu opening/closing, each raw keystroke in
+  // the search box — doesn't re-render every card on screen.
+  const browseContent = useMemo(
+    () => (
+      <>
+          {gridSeries ? (
+            gridSeries.length === 0 ? (
+              <p style={{ color: "var(--text-dim)", padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`, fontSize: TV_TEXT }}>
+                {trimmedQuery ? `No series match "${trimmedQuery}".` : "No series in this category."}
+              </p>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${POSTER_COLUMNS}, minmax(0, 1fr))`,
+                  columnGap: BROWSE_GAP,
+                  rowGap: BROWSE_ROW_GAP,
+                  padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`,
+                }}
+              >
+                {gridSeries.map((item) => (
+                  <FocusCard
+                    placeholderIcon={SECTION_ICONS.series}
+                    key={item.id}
+                    width="100%"
+                    id={gridItemId(item.id)}
+                    title={item.name}
+                    imageUrl={item.posterUrl}
+                    onSelect={() => setSelected(item.id)}
+                    badge={<FavoriteHeart isFavorite={favoriteSeriesIds.has(item.id)} />}
+                  />
+                ))}
+              </div>
+            )
+          ) : (
+            shelves.map((shelf) => (
+              <Shelf
+                key={shelf.id}
+                title={shelf.title}
+                items={shelf.items}
+                getId={(item) => item.id}
+                trailing={<SeeAllCard id={seeAllId(shelf.id)} label={shelf.title} onSelect={() => selectCategory(shelf.id)} />}
+                trailingId={seeAllId(shelf.id)}
+                renderItem={(item) => (
+                  <FocusCard
+                    placeholderIcon={SECTION_ICONS.series}
+                    id={item.id}
+                    width={POSTER_WIDTH}
+                    title={item.name}
+                    imageUrl={item.posterUrl}
+                    onSelect={() => setSelected(item.id)}
+                    badge={<FavoriteHeart isFavorite={favoriteSeriesIds.has(item.id)} />}
+                  />
+                )}
+              />
+            ))
+          )}
+      </>
+    ),
+    [gridSeries, shelves, trimmedQuery, favoriteSeriesIds, setSelected, selectCategory],
+  );
+
   if (selected) {
-    const isFavorited = (() => {
-      void favoritesVersion; // re-evaluate on every toggle — see favoritesVersion's declaration
-      return checkIsFavorite(profile.id, source.id, "series", selected);
-    })();
+    const isFavorited = favoriteSeriesIds.has(selected);
     const playTarget = resumeEpisode ?? seasonEpisodes[0];
-    const backdropUrl = details.backdropUrl ?? series?.posterUrl;
+    const playLabel = playTarget ? `${resumeEpisode ? "Resume" : "Play"} S${playTarget.season} E${playTarget.episode}` : "Play";
+    const resumeProgress =
+      continueEntry && continueEntry.durationSeconds > 0 ? continueEntry.positionSeconds / continueEntry.durationSeconds : undefined;
 
     return (
-      <div style={{ paddingBottom: 48 }}>
+      <div style={{ paddingBottom: "2rem" }}>
         <SeriesHero
           name={series?.name ?? "Series"}
           posterUrl={series?.posterUrl}
-          backdropUrl={backdropUrl}
+          backdropUrl={details.backdropUrl}
           details={details}
           seasonCount={seasons.length}
           isLoading={isEpisodesLoading}
           isFavorited={isFavorited}
+          playLabel={playLabel}
           canResume={Boolean(resumeEpisode)}
           onPlay={() => playTarget && onPlayEpisode(playTarget, episodes)}
           onToggleFavorite={() => {
@@ -469,42 +655,53 @@ export function SeriesScreen({
           }}
         />
 
-        <div style={{ padding: "0 40px" }}>
+        <div style={{ padding: `2.5rem ${BROWSE_SIDE_PADDING} 0` }}>
           {isEpisodesLoading ? (
-            <ShelfRowSkeleton rows={1} cardWidth={320} aspectRatio="16 / 9" />
+            <div style={{ display: "flex", gap: BROWSE_GAP, overflow: "hidden", paddingTop: "2.25rem" }}>
+              {Array.from({ length: EPISODE_COLUMNS }, (_, i) => (
+                <Shimmer key={i} height="auto" borderRadius={16} style={{ width: EPISODE_WIDTH, aspectRatio: "16 / 11", flexShrink: 0 }} />
+              ))}
+            </div>
           ) : seasons.length === 0 ? (
-            <p style={{ color: "var(--text-dim)", marginTop: 24 }}>No episodes available for this series yet.</p>
+            <p style={{ color: "var(--text-dim)", fontSize: TV_TEXT, margin: 0 }}>No episodes available for this series yet.</p>
           ) : (
-            <>
-              <SeasonTabs seasons={seasons} activeSeason={currentSeason} onSelect={setActiveSeason} />
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
-                  gap: 20,
-                  marginTop: 20,
-                }}
-              >
-                {seasonEpisodes.map((episode) => (
-                  <EpisodeCard key={episode.id} episode={episode} onSelect={() => onPlayEpisode(episode, episodes)} />
-                ))}
-              </div>
-            </>
+            <SeasonTabs seasons={seasons} activeSeason={currentSeason} episodeCount={seasonEpisodes.length} onSelect={setActiveSeason} />
           )}
         </div>
+        {!isEpisodesLoading && seasonEpisodes.length > 0 && (
+          <Shelf
+            items={seasonEpisodes}
+            getId={(episode) => episode.id}
+            leftInset={BROWSE_SIDE_PADDING}
+            renderItem={(episode) => (
+              <EpisodeCard
+                episode={episode}
+                progress={episode.id === resumeEpisode?.id ? resumeProgress : undefined}
+                onSelect={() => onPlayEpisode(episode, episodes)}
+              />
+            )}
+          />
+        )}
       </div>
     );
   }
 
   if (showFullScreenBrowseSkeleton) return <ShelfRowSkeleton />;
 
-  const firstContentId = gridSeries ? (gridSeries[0] ? gridItemId(gridSeries[0].id) : undefined) : shelves[0]?.items[0]?.id;
 
   return (
     <div style={{ paddingTop: 24, paddingBottom: 40 }}>
       <FocusTrackingBackdrop getImageUrl={getBackdropUrl} />
+      <CategoryRail
+        title="Series"
+        items={categoryItems}
+        activeId={activeCategoryId}
+        onSelect={selectCategory}
+        rightEntryId={firstContentId}
+        sectionBreakAt={1}
+      />
 
-      {/* Sticky so the category filter and search stay reachable/visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
+      {/* Sticky so the title and search stay visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
       <div
         style={{
           position: "sticky",
@@ -512,123 +709,58 @@ export function SeriesScreen({
           zIndex: 20,
           display: "flex",
           alignItems: "center",
-          gap: 16,
-          padding: "16px 40px",
-          marginBottom: 12,
+          gap: BROWSE_GAP,
+          padding: `1.5rem ${BROWSE_SIDE_PADDING} 1.5rem ${BROWSE_CONTENT_LEFT}`,
+          marginBottom: "0.5rem",
           background: "linear-gradient(180deg, var(--bg, #0b0b0f) 70%, rgba(11,11,15,0) 100%)",
         }}
       >
-        <CategoryDropdown
-          items={categoryItems}
-          activeId={activeCategoryId}
-          activeLabel={activeCategoryLabel}
-          isOpen={isCategoryDropdownOpen}
-          onOpen={() => setIsCategoryDropdownOpen(true)}
-          onClose={() => setIsCategoryDropdownOpen(false)}
-          onSelect={(id) => {
-            setActiveCategoryId(id);
-            setIsCategoryDropdownOpen(false);
-          }}
-          contentEntryId={firstContentId}
-          rightEntryId={SEARCH_INPUT_ID}
-        />
-        <div style={{ marginLeft: "auto", width: "100%", maxWidth: 420 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: "2.25rem", fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{headerTitle}</div>
+          {headerCount != null && (
+            <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "var(--text-dim)", marginTop: "0.25rem" }}>
+              {headerCount} {headerCount === 1 ? "title" : "titles"}
+            </div>
+          )}
+        </div>
+        <div style={{ marginLeft: "auto", width: "100%", maxWidth: "32rem" }}>
           <SeriesSearchInput ref={searchInputRef} value={searchQuery} onChange={setSearchQuery} />
         </div>
       </div>
 
-      {gridSeries ? (
-        gridSeries.length === 0 ? (
-          <p style={{ color: "var(--text-dim)", padding: "0 40px" }}>
-            {trimmedQuery ? `No series match "${searchQuery.trim()}".` : "No series in this category."}
-          </p>
-        ) : (
-          <div
-            style={{
-              display: "grid",
-              // auto-fill at FocusCard's own fixed width (220px, its
-              // default) rather than repeat(N, 1fr) — 1fr stretches each
-              // cell wider than the card itself on a real TV-width screen,
-              // so the card sits left-aligned inside a much wider cell and
-              // the *visual* gap between cards ends up far bigger than
-              // GRID_GAP even though the grid's own `gap` is correct. This
-              // packs cards at their natural width with just GRID_GAP
-              // between them, matching Shelf's row exactly.
-              gridTemplateColumns: `repeat(auto-fill, ${GRID_CARD_WIDTH}px)`,
-              gap: GRID_GAP,
-              padding: `0 ${GRID_SIDE_PADDING}px`,
-            }}
-          >
-            {gridSeries.map((item) => (
-              <FocusCard
-                key={item.id}
-                id={gridItemId(item.id)}
-                title={item.name}
-                imageUrl={item.posterUrl}
-                onSelect={() => setSelected(item.id)}
-                badge={
-                  <FavoriteHeart
-                    isFavorite={(() => {
-                      void favoritesVersion; // re-evaluate on every toggle — see favoritesVersion's declaration
-                      return checkIsFavorite(profile.id, source.id, "series", item.id);
-                    })()}
-                  />
-                }
-              />
-            ))}
-          </div>
-        )
-      ) : (
-        shelves.map((shelf) => (
-          <Shelf
-            key={shelf.id}
-            title={shelf.title}
-            items={shelf.items}
-            getId={(item) => item.id}
-            renderItem={(item) => (
-              <FocusCard
-                id={item.id}
-                title={item.name}
-                imageUrl={item.posterUrl}
-                onSelect={() => setSelected(item.id)}
-                badge={
-                  <FavoriteHeart
-                    isFavorite={(() => {
-                      void favoritesVersion; // re-evaluate on every toggle — see favoritesVersion's declaration
-                      return checkIsFavorite(profile.id, source.id, "series", item.id);
-                    })()}
-                  />
-                }
-              />
-            )}
-          />
-        ))
-      )}
+      {browseContent}
     </div>
   );
 }
 
+/** Focus ids of the detail page's two action buttons. */
+const DETAIL_PLAY_ID = "series-hero-play";
+const DETAIL_FAVORITE_ID = "series-hero-favorite";
+const seasonTabId = (season: number) => `season-tab:${season}`;
+
 interface SeriesHeroProps {
   name: string;
   posterUrl?: string;
+  /** A real landscape backdrop — omitted (no backdrop layer) when the provider only has a poster, rather than stretching a portrait poster across the screen. */
   backdropUrl?: string;
   details: { plot?: string; genre?: string[]; cast?: string[]; director?: string[]; rating?: number; releaseDate?: string };
   seasonCount: number;
   isLoading: boolean;
   isFavorited: boolean;
+  /** e.g. "Resume S2 E4" / "Play S1 E1" — says exactly what Select will start. */
+  playLabel: string;
   canResume: boolean;
   onPlay: () => void;
   onToggleFavorite: () => void;
 }
 
 /**
- * Full-bleed hero for the series detail view, Netflix/Apple-TV-style: a
- * blurred backdrop crossfade (reusing FocusBackdrop) with a bottom gradient
- * scrim holding title, rating/genre/year metadata, plot, and primary
- * actions. Every metadata row is independently optional — providers
- * (especially non-Xtream/M3U sources, or sparse Xtream panels) frequently
- * omit plot/cast/genre/rating, so each row renders nothing rather than an
- * empty/"undefined" line when its data is missing.
+ * Top of the series detail page, sized for the 10-foot view: the backdrop
+ * sits on the right and fades into the page (left and bottom) so text over
+ * it stays readable, with a large poster and the title, metadata, plot,
+ * credits and actions beside it. Every metadata row is independently
+ * optional — providers frequently omit plot/cast/genre/rating — so a
+ * missing field renders nothing rather than an empty line.
  */
 function SeriesHero({
   name,
@@ -638,80 +770,92 @@ function SeriesHero({
   seasonCount,
   isLoading,
   isFavorited,
+  playLabel,
   canResume,
   onPlay,
   onToggleFavorite,
 }: SeriesHeroProps): JSX.Element {
   const year = details.releaseDate ? new Date(details.releaseDate).getFullYear() : undefined;
   const hasMetaRow = Boolean(details.rating || year || (details.genre && details.genre.length > 0) || seasonCount > 0);
+  const credits = [
+    details.director?.length ? `Director: ${details.director.join(", ")}` : null,
+    details.cast?.length ? `Cast: ${details.cast.slice(0, 5).join(", ")}` : null,
+  ].filter(Boolean);
 
   return (
-    <div style={{ position: "relative", minHeight: 420, display: "flex", alignItems: "flex-end", marginBottom: 8 }}>
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage: backdropUrl ? `url(${backdropUrl})` : undefined,
-          backgroundSize: "cover",
-          backgroundPosition: "center 20%",
-          background: backdropUrl ? undefined : "linear-gradient(160deg, #26262e 0%, #16161a 100%)",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: "linear-gradient(180deg, rgba(11,11,15,0.15) 0%, rgba(11,11,15,0.55) 55%, var(--bg, #0b0b0f) 100%)",
-        }}
-      />
-      <div style={{ position: "relative", padding: "40px 40px 32px", display: "flex", gap: 28, alignItems: "flex-end", width: "100%" }}>
-        <div style={{ width: 160, aspectRatio: "2 / 3", borderRadius: 10, overflow: "hidden", boxShadow: "0 12px 32px rgba(0,0,0,0.5)", flexShrink: 0 }}>
-          <URLImage src={posterUrl} alt="" seed={name} />
+    <div style={{ position: "relative", paddingTop: "4.5rem" }}>
+      {backdropUrl && (
+        <div aria-hidden style={{ position: "absolute", top: 0, right: 0, width: "72%", height: "44rem", overflow: "hidden" }}>
+          <URLImage src={backdropUrl} alt="" seed={name} placeholderIcon={SECTION_ICONS.series} />
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background:
+                // Solid behind the text column, clearing to the right; plus a
+                // fade into the page at the bottom.
+                "linear-gradient(90deg, rgba(8,9,11,1) 0%, rgba(8,9,11,0.88) 30%, rgba(8,9,11,0.4) 55%, rgba(8,9,11,0) 80%), linear-gradient(0deg, rgba(8,9,11,1) 0%, rgba(8,9,11,0) 45%)",
+            }}
+          />
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+      )}
+
+      <div style={{ position: "relative", display: "flex", gap: "3rem", alignItems: "flex-end", padding: `0 ${BROWSE_SIDE_PADDING}` }}>
+        <div style={{ width: "15rem", aspectRatio: "2 / 3", borderRadius: "1rem", overflow: "hidden", boxShadow: "0 1.5rem 3rem rgba(0,0,0,0.55)", flexShrink: 0 }}>
+          <URLImage src={posterUrl} alt="" seed={name} placeholderIcon={SECTION_ICONS.series} />
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0, maxWidth: "58rem" }}>
+          <h1
+            style={{
+              fontSize: "3.25rem",
+              fontWeight: 800,
+              lineHeight: 1.1,
+              margin: "0 0 1rem",
+              textShadow: "0 2px 12px rgba(0,0,0,0.6)",
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {name}
+          </h1>
+
           {isLoading ? (
             <>
-              <Shimmer width={320} height={36} style={{ marginBottom: 12 }} />
-              <Shimmer width={220} height={16} style={{ marginBottom: 16 }} />
-              <Shimmer width="60%" height={14} />
+              <Shimmer width="24rem" height="1.5rem" style={{ marginBottom: "1.25rem" }} />
+              <Shimmer width="46rem" height="1.25rem" style={{ marginBottom: "0.75rem" }} />
+              <Shimmer width="38rem" height="1.25rem" />
             </>
           ) : (
             <>
-              <h1 style={{ fontSize: 36, fontWeight: 800, margin: "0 0 10px", textShadow: "0 2px 12px rgba(0,0,0,0.6)" }}>{name}</h1>
-
               {hasMetaRow && (
-                <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16, fontSize: 16, color: "var(--text-dim)" }}>
+                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "1.25rem", marginBottom: "1.25rem", fontSize: TV_TEXT, color: "rgba(235,236,242,0.8)" }}>
                   {details.rating !== undefined && (
-                    <span style={{ display: "flex", alignItems: "center", gap: 5, color: "#f5c518", fontWeight: 700 }}>
-                      <Star size={17} fill="#f5c518" strokeWidth={0} />
+                    <span style={{ display: "flex", alignItems: "center", gap: "0.375rem", color: "#f5c518", fontWeight: 700 }}>
+                      <Star size="1.375rem" fill="#f5c518" strokeWidth={0} />
                       {details.rating.toFixed(1)}
                     </span>
                   )}
                   {year && <span>{year}</span>}
                   {seasonCount > 0 && <span>{seasonCount} Season{seasonCount === 1 ? "" : "s"}</span>}
-                  {details.genre && details.genre.length > 0 && (
-                    <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {details.genre.map((g) => (
-                        <span
-                          key={g}
-                          style={{ padding: "3px 12px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.25)", fontSize: 14 }}
-                        >
-                          {g}
-                        </span>
-                      ))}
+                  {details.genre?.map((g) => (
+                    <span key={g} style={{ padding: "0.25rem 0.875rem", borderRadius: 999, border: "1px solid rgba(255,255,255,0.3)", fontSize: "1.125rem" }}>
+                      {g}
                     </span>
-                  )}
+                  ))}
                 </div>
               )}
 
               {details.plot && (
                 <p
                   style={{
-                    maxWidth: 640,
-                    fontSize: 17,
+                    maxWidth: "52rem",
+                    fontSize: TV_TEXT,
                     lineHeight: 1.5,
-                    color: "var(--text-dim)",
-                    margin: "0 0 10px",
+                    color: "rgba(235,236,242,0.85)",
+                    margin: "0 0 0.75rem",
                     display: "-webkit-box",
                     WebkitLineClamp: 3,
                     WebkitBoxOrient: "vertical",
@@ -722,158 +866,177 @@ function SeriesHero({
                 </p>
               )}
 
-              {(details.cast?.length || details.director?.length) && (
-                <p style={{ fontSize: 15, color: "var(--text-dim)", margin: "0 0 20px", opacity: 0.85 }}>
-                  {details.director?.length ? <>Director: {details.director.join(", ")}. </> : null}
-                  {details.cast?.length ? <>Cast: {details.cast.slice(0, 5).join(", ")}</> : null}
+              {credits.length > 0 && (
+                <p style={{ fontSize: "1.125rem", color: "var(--text-dim)", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {credits.join(" · ")}
                 </p>
               )}
-
-              <div style={{ display: "flex", gap: 12, marginTop: details.plot ? 4 : 20 }}>
-                <Focusable id="series-hero-play">
-                  <HeroPlayButton canResume={canResume} onPlay={onPlay} />
-                </Focusable>
-                <Focusable id="series-hero-favorite">
-                  <HeroFavoriteButton isFavorited={isFavorited} onToggle={onToggleFavorite} />
-                </Focusable>
-              </div>
             </>
           )}
+
+          <div style={{ display: "flex", gap: "1.25rem", marginTop: "2rem" }}>
+            <DetailActionButton id={DETAIL_PLAY_ID} icon={canResume ? RotateCcw : Play} label={playLabel} onSelect={onPlay} />
+            <DetailActionButton id={DETAIL_FAVORITE_ID} icon={isFavorited ? Check : Plus} label="My List" onSelect={onToggleFavorite} />
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-/** Wraps PillButton with the hero's own focus id rather than relying on grid focus, since the hero sits above the episode grid in its own row. */
-function HeroPlayButton({ canResume, onPlay }: { canResume: boolean; onPlay: () => void }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === "series-hero-play");
+/**
+ * Large pill action button for the detail page. Focused: solid white with
+ * dark text and a slight lift (the tvOS primary-button convention); idle:
+ * translucent. Only transform animates. The Focusable is sized to the
+ * button — its default 100% width would stretch it across the row.
+ */
+function DetailActionButton({ id, icon: Icon, label, onSelect }: { id: string; icon: typeof Play; label: string; onSelect: () => void }): JSX.Element {
+  const isFocused = useIsFocused(id);
   return (
-    <PillButton isFocused={isFocused} onClick={onPlay}>
-      <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {canResume ? <RotateCcw size={16} /> : <Play size={16} fill="currentColor" />}
-        {canResume ? "Resume" : "Play"}
-      </span>
-    </PillButton>
-  );
-}
-
-function HeroFavoriteButton({ isFavorited, onToggle }: { isFavorited: boolean; onToggle: () => void }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === "series-hero-favorite");
-  return (
-    <PillButton isFocused={isFocused} onClick={onToggle}>
-      {isFavorited ? "✓ My List" : "+ My List"}
-    </PillButton>
+    <Focusable id={id} style={{ width: "auto", height: "auto" }}>
+      <button
+        type="button"
+        onClick={onSelect}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+          padding: "1rem 2.25rem",
+          border: "none",
+          borderRadius: 999,
+          fontSize: TV_TEXT,
+          fontWeight: 700,
+          whiteSpace: "nowrap",
+          background: isFocused ? "#ffffff" : "rgba(255,255,255,0.14)",
+          color: isFocused ? "#0b0c10" : "#ffffff",
+          boxShadow: isFocused ? "0 1rem 2rem -0.5rem rgba(0,0,0,0.6)" : "inset 0 0 0 1px rgba(255,255,255,0.1)",
+          transform: isFocused ? "scale(1.06)" : "scale(1)",
+          transition: "transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)",
+          cursor: "pointer",
+        }}
+      >
+        <Icon size="1.625rem" strokeWidth={2.25} fill={Icon === Play && isFocused ? "currentColor" : "none"} />
+        {label}
+      </button>
+    </Focusable>
   );
 }
 
 interface SeasonTabsProps {
   seasons: number[];
   activeSeason: number | null;
+  episodeCount: number;
   onSelect: (season: number) => void;
 }
 
 /**
- * Netflix-style horizontal pill row for picking which season's episodes are
- * shown below. Purely a rendering component — its focus nodes are built
- * alongside the hero/episode grid's in the parent's single consolidated
- * effect so up/down chains correctly across all three rows (see that
- * effect's comment).
+ * Season picker above the episode row: large pill tabs (focused = solid
+ * white, like the action buttons; the season on screen = soft fill). A
+ * single-season series gets a plain "Episodes" heading instead of one lone
+ * tab. Focus wiring lives in the parent's detail graph so Up/Down chain
+ * across actions → seasons → episodes.
  */
-function SeasonTabs({ seasons, activeSeason, onSelect }: SeasonTabsProps): JSX.Element {
-  const focusedId = useFocusStore((state) => state.focusedId);
-
-  if (seasons.length <= 1) return <></>;
-
+function SeasonTabs({ seasons, activeSeason, episodeCount, onSelect }: SeasonTabsProps): JSX.Element {
+  if (seasons.length <= 1) {
+    return (
+      <h2 style={{ fontSize: TV_HEADING, fontWeight: 700, margin: 0 }}>
+        Episodes <span style={{ fontSize: TV_TEXT, fontWeight: 500, color: "var(--text-dim)", marginLeft: "0.5rem" }}>{episodeCount}</span>
+      </h2>
+    );
+  }
   return (
-    <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
-      {seasons.map((season) => {
-        const id = `season-tab:${season}`;
-        const isFocused = focusedId === id;
-        const isActive = activeSeason === season;
-        return (
-          <Focusable key={id} id={id}>
-            <button
-              type="button"
-              onClick={() => onSelect(season)}
-              style={{
-                padding: "8px 20px",
-                borderRadius: 999,
-                border: "1px solid " + (isFocused ? "rgba(255,255,255,0.6)" : "transparent"),
-                background: isActive ? "var(--text, #f4f4f6)" : "var(--surface-raised, #24242c)",
-                color: isActive ? "#0b0b0f" : "var(--text, #f4f4f6)",
-                fontWeight: 700,
-                fontSize: 17,
-                transform: isFocused ? "scale(1.06)" : "scale(1)",
-                transition: "transform 120ms ease-out",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Season {season}
-            </button>
-          </Focusable>
-        );
-      })}
+    <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+      {seasons.map((season) => (
+        <SeasonTab key={season} season={season} isActive={activeSeason === season} onSelect={onSelect} />
+      ))}
     </div>
   );
 }
 
-/** Wide 16:9 episode tile with number, title, duration, and synopsis — Netflix's episode-list style, versus the old poster-shaped FocusCard grid. */
-function EpisodeCard({ episode, onSelect }: { episode: SeriesEpisode; onSelect: () => void }): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === episode.id);
+function SeasonTab({ season, isActive, onSelect }: { season: number; isActive: boolean; onSelect: (season: number) => void }): JSX.Element {
+  const isFocused = useIsFocused(seasonTabId(season));
+  return (
+    <Focusable id={seasonTabId(season)} style={{ width: "auto", height: "auto" }}>
+      <button
+        type="button"
+        onClick={() => onSelect(season)}
+        style={{
+          padding: "0.75rem 1.75rem",
+          border: "none",
+          borderRadius: 999,
+          fontSize: TV_TEXT,
+          fontWeight: isActive || isFocused ? 700 : 500,
+          whiteSpace: "nowrap",
+          background: isFocused ? "#ffffff" : isActive ? "rgba(255,255,255,0.16)" : "transparent",
+          color: isFocused ? "#0b0c10" : isActive ? "#ffffff" : "rgba(235,236,242,0.7)",
+          transform: isFocused ? "scale(1.05)" : "scale(1)",
+          transition: "transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)",
+          cursor: "pointer",
+        }}
+      >
+        Season {season}
+      </button>
+    </Focusable>
+  );
+}
+
+/**
+ * Landscape episode card for the detail page's episode row: 16:9 thumbnail
+ * (with duration and, for the episode being resumed, a progress bar) over
+ * the episode number/title and a two-line synopsis. Lifts on focus like
+ * every other card in the app (LiftSurface) — no outline ring.
+ */
+function EpisodeCard({ episode, progress, onSelect }: { episode: SeriesEpisode; progress?: number; onSelect: () => void }): JSX.Element {
+  const isFocused = useIsFocused(episode.id);
   const minutes = episode.durationSeconds ? Math.round(episode.durationSeconds / 60) : undefined;
 
   return (
     <Focusable id={episode.id}>
-      <div
-        onClick={onSelect}
+      <LiftSurface
+        isFocused={isFocused}
+        radius="1rem"
+        width={EPISODE_WIDTH}
+        focusedScale={1.08}
         role="button"
         tabIndex={-1}
-        style={{
-          cursor: "pointer",
-          borderRadius: 12,
-          overflow: "hidden",
-          background: "var(--surface, #1a1a20)",
-          boxShadow: isFocused ? "0 0 0 3px var(--accent, #38bdf8), 0 12px 28px rgba(0,0,0,0.5)" : "0 4px 10px rgba(0,0,0,0.3)",
-          transform: isFocused ? "scale(1.03)" : "scale(1)",
-          transition: "transform 160ms ease-out, box-shadow 160ms ease-out",
-        }}
+        onClick={onSelect}
+        faceStyle={{ background: isFocused ? "#23252d" : "#16171d" }}
       >
         <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9", background: "#0f0f13" }}>
-          {episode.posterUrl ? (
-            <img src={episode.posterUrl} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-          ) : (
-            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#8b8b93" }}>
-              <Play size={28} />
-            </div>
-          )}
-          {minutes && (
+          <URLImage src={episode.posterUrl} alt="" seed={episode.id} placeholderIcon={SECTION_ICONS.series} />
+          {minutes !== undefined && (
             <span
               style={{
                 position: "absolute",
-                bottom: 8,
-                right: 8,
-                background: "rgba(0,0,0,0.7)",
+                bottom: "0.75rem",
+                right: "0.75rem",
+                background: "rgba(0,0,0,0.75)",
                 color: "#fff",
-                fontSize: 13,
-                fontWeight: 600,
-                padding: "4px 9px",
-                borderRadius: 6,
+                fontSize: "1rem",
+                fontWeight: 700,
+                padding: "0.25rem 0.625rem",
+                borderRadius: "0.5rem",
               }}
             >
               {minutes}m
             </span>
           )}
+          {progress !== undefined && (
+            <div aria-hidden style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "0.3rem", background: "rgba(255,255,255,0.25)" }}>
+              <div style={{ width: `${Math.min(1, Math.max(0, progress)) * 100}%`, height: "100%", background: "var(--accent, #38bdf8)" }} />
+            </div>
+          )}
         </div>
-        <div style={{ padding: "14px 16px" }}>
-          <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 5 }}>
-            E{episode.episode}. {episode.title}
+        <div style={{ padding: "1rem 1.25rem 1.25rem", minHeight: "7.25rem", boxSizing: "border-box" }}>
+          <div style={{ fontSize: TV_TEXT, fontWeight: 700, color: "#fff", marginBottom: "0.375rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {episode.episode}. {episode.title}
           </div>
           {episode.plot && (
             <p
               style={{
-                fontSize: 14,
-                color: "var(--text-dim)",
+                fontSize: "1.125rem",
+                lineHeight: 1.4,
+                color: "rgba(235,236,242,0.7)",
                 margin: 0,
                 display: "-webkit-box",
                 WebkitLineClamp: 2,
@@ -885,7 +1048,7 @@ function EpisodeCard({ episode, onSelect }: { episode: SeriesEpisode; onSelect: 
             </p>
           )}
         </div>
-      </div>
+      </LiftSurface>
     </Focusable>
   );
 }
@@ -910,7 +1073,7 @@ interface SeriesSearchInputProps {
  * itself.
  */
 const SeriesSearchInput = forwardRef<HTMLInputElement, SeriesSearchInputProps>(function SeriesSearchInput({ value, onChange }, ref) {
-  const isFocused = useFocusStore((state) => state.focusedId === SEARCH_INPUT_ID);
+  const isFocused = useIsFocused(SEARCH_INPUT_ID);
 
   return (
     <Focusable id={SEARCH_INPUT_ID}>
@@ -918,9 +1081,9 @@ const SeriesSearchInput = forwardRef<HTMLInputElement, SeriesSearchInputProps>(f
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 10,
+          gap: "0.75rem",
           width: "100%",
-          padding: "10px 16px",
+          padding: "0.875rem 1.5rem",
           borderRadius: 999,
           border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.16)",
           background: "rgba(28,28,34,0.7)",
@@ -929,7 +1092,7 @@ const SeriesSearchInput = forwardRef<HTMLInputElement, SeriesSearchInputProps>(f
           transition: "box-shadow 160ms ease-out, border-color 160ms ease-out",
         }}
       >
-        <Search size={18} color="var(--text-dim, #9a9aa4)" style={{ flexShrink: 0 }} />
+        <Search size="1.5rem" color="var(--text-dim, #9a9aa4)" style={{ flexShrink: 0 }} />
         <input
           ref={ref}
           type="text"
@@ -941,7 +1104,7 @@ const SeriesSearchInput = forwardRef<HTMLInputElement, SeriesSearchInputProps>(f
             border: "none",
             background: "transparent",
             padding: 0,
-            fontSize: 16,
+            fontSize: TV_TEXT,
             color: "var(--text, #f4f4f6)",
           }}
         />
@@ -952,7 +1115,7 @@ const SeriesSearchInput = forwardRef<HTMLInputElement, SeriesSearchInputProps>(f
             aria-label="Clear search"
             style={{ display: "flex", background: "none", border: "none", padding: 2, color: "var(--text-dim, #9a9aa4)" }}
           >
-            <X size={16} />
+            <X size="1.375rem" />
           </button>
         )}
       </div>

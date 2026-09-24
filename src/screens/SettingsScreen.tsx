@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PlatformId } from "@core";
-import { Focusable, MeshBackground, useFocusStore, useRemoteInput, type FocusNode, glassBlur } from "@ui";
+import { Focusable, MeshBackground, useFocusStore, useRemoteInput, type FocusNode, glassBlur, useIsFocused } from "@ui";
 import { loadSettings, updateSettings, type AppSettings, type PlaybackSpeed, type VideoQuality } from "../settings-store.js";
 
 const MANAGE_PLAYLISTS_ID = "settings-manage-playlists";
@@ -22,10 +22,6 @@ const PLAYBACK_SPEED_OPTIONS: { value: PlaybackSpeed; label: string }[] = [
   { value: 1.5, label: "1.5x" },
   { value: 2, label: "2x" },
 ];
-
-function useIsFocused(id: string): boolean {
-  return useFocusStore((state) => state.focusedId === id);
-}
 
 export interface SettingsScreenProps {
   platform: PlatformId;

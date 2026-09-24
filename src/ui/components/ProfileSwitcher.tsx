@@ -1,5 +1,5 @@
 import type { Profile } from "@core";
-import { useFocusStore } from "../focus/focus-store.js";
+import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
 
 export interface ProfileSwitcherProps {
   profile: Profile;
@@ -20,7 +20,7 @@ export const PROFILE_SWITCHER_FOCUS_ID = "profile-switcher";
  * conversation history.
  */
 export function ProfileSwitcher({ profile, onOpen }: ProfileSwitcherProps): JSX.Element {
-  const isFocused = useFocusStore((state) => state.focusedId === PROFILE_SWITCHER_FOCUS_ID);
+  const isFocused = useIsFocused(PROFILE_SWITCHER_FOCUS_ID);
 
   // Same Apple TV-style focus language as Home's menu tiles (see
   // HomeScreen's tileFaceStyle / LiftSurface): unfocused it's faint glass;

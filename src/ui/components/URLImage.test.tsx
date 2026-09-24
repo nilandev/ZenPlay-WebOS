@@ -57,3 +57,14 @@ describe("URLImage", () => {
     expect(svg1).toBe(svg2);
   });
 });
+
+describe("URLImage placeholder icon", () => {
+  it("uses the section's icon when one is given, regardless of seed", async () => {
+    const { Tv } = await import("lucide-react");
+    for (const seed of ["a", "b", "c", "d"]) {
+      const { container, unmount } = render(<URLImage alt="" seed={seed} placeholderIcon={Tv} />);
+      expect(container.querySelector("svg")?.getAttribute("class")).toContain("lucide-tv");
+      unmount();
+    }
+  });
+});

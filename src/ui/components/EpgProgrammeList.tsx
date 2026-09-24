@@ -5,6 +5,7 @@ import { buildListFocusGraph } from "../focus/build-grid-graph.js";
 import { useFocusStore } from "../focus/focus-store.js";
 import { Shimmer } from "./Shimmer.js";
 import { URLImage } from "./URLImage.js";
+import { SECTION_ICONS } from "../section-icons.js";
 
 export interface EpgProgrammeListProps {
   channel: Channel | null;
@@ -148,7 +149,7 @@ function ChannelHeader({ channel }: { channel: Channel }): JSX.Element {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "16px 16px 12px" }}>
       <div style={{ width: 48, height: 48, borderRadius: 8, flexShrink: 0, background: "rgba(255,255,255,0.06)" }}>
-        <URLImage src={channel.logoUrl} alt="" seed={channel.id} objectFit="contain" />
+        <URLImage src={channel.logoUrl} alt="" seed={channel.id} objectFit="contain" placeholderIcon={SECTION_ICONS.live} />
       </div>
       <div>
         <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text, #f4f4f6)" }}>{channel.name}</div>

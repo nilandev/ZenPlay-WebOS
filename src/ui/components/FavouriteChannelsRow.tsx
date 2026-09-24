@@ -5,6 +5,7 @@ import { Focusable } from "../focus/Focusable.js";
 import { buildGridFocusGraph } from "../focus/build-grid-graph.js";
 import { useFocusStore } from "../focus/focus-store.js";
 import { URLImage } from "./URLImage.js";
+import { SECTION_ICONS } from "../section-icons.js";
 
 export interface FavouriteChannelsRowProps {
   channels: Channel[];
@@ -97,7 +98,7 @@ export function FavouriteChannelsRow({ channels, onSelect, aboveFocusId }: Favou
                 }}
               >
                 <div style={{ position: "relative", width: 48, height: 48, flexShrink: 0 }}>
-                  <URLImage src={channel.logoUrl} alt="" seed={channel.id} objectFit="contain" />
+                  <URLImage src={channel.logoUrl} alt="" seed={channel.id} objectFit="contain" placeholderIcon={SECTION_ICONS.live} />
                   <Heart
                     size={14}
                     strokeWidth={2}

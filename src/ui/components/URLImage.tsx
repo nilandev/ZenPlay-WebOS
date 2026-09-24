@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Clapperboard, Film } from "lucide-react";
+import { Clapperboard, Film, type LucideIcon } from "lucide-react";
 import { LITE_EFFECTS } from "../perf-tier.js";
 
 export interface URLImageProps {
@@ -18,6 +18,12 @@ export interface URLImageProps {
    * (often off-center or non-square) reads as broken art.
    */
   objectFit?: "cover" | "contain";
+  /**
+   * Icon shown on the placeholder when there's no artwork — pass the
+   * section's icon (see section-icons.ts) so it matches where the user is.
+   * Without it the placeholder alternates between generic film icons.
+   */
+  placeholderIcon?: LucideIcon;
 }
 
 /**
@@ -70,7 +76,7 @@ function pickVariant(seed: string): (typeof PLACEHOLDER_VARIANTS)[number] {
  * clearly per-card instead of looking like an instant swap when a fast or
  * cached response resolves within a frame or two of the others.
  */
-export function URLImage({ src, alt = "", seed, loading = "lazy", style, className, objectFit = "cover" }: URLImageProps): JSX.Element {
+export function URLImage({ src, alt = "", seed, loading = "lazy", style, className, objectFit = "cover", placeholderIcon }: URLImageProps): JSX.Element {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(src ? "loading" : "error");
 
   useEffect(() => {
@@ -79,7 +85,7 @@ export function URLImage({ src, alt = "", seed, loading = "lazy", style, classNa
 
   const isLoaded = status === "loaded";
   const variant = pickVariant(seed ?? alt ?? src ?? "placeholder");
-  const Icon = variant.icon;
+  const Icon = placeholderIcon ?? variant.icon;
 
   return (
     <div className={className} style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", ...style }}>
