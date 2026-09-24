@@ -18,6 +18,7 @@ import { ArrowLeft, Play, RotateCcw, TriangleAlert } from "lucide-react";
 import { upsertContinueWatching, type ResumePoint } from "../profile-store.js";
 import type { ChannelLineup } from "../channel-lineup.js";
 import { useNowNext } from "../use-now-next.js";
+import { useWatchHistoryRecorder, type WatchTarget } from "../use-watch-history-recorder.js";
 import { PlayerEpisodesPanel } from "./PlayerEpisodesPanel.js";
 import { ChannelBanner, ChannelNumberEntry, PausedInfoOverlay, PlayerLoadingScreen, type PlaybackInfo } from "./PlayerOverlays.js";
 
@@ -61,6 +62,8 @@ export interface PlayerScreenProps {
   episodes?: SeriesEpisode[];
   currentEpisodeId?: string;
   onPlayEpisode?: (episode: SeriesEpisode) => void;
+  /** What's playing, for Recently Watched (omitted for catch-up). */
+  watchTarget?: WatchTarget;
   /** Test seam — see VideoSurface. */
   engineFactory?: () => PlayerEngine;
 }
@@ -166,6 +169,7 @@ export function PlayerScreen({
   episodes,
   currentEpisodeId,
   onPlayEpisode,
+  watchTarget,
   engineFactory,
 }: PlayerScreenProps): JSX.Element {
   const lastWriteRef = useRef(0);
@@ -242,6 +246,8 @@ export function PlayerScreen({
   // The key handler is registered once; it reads the latest channel props through this.
   const liveRef = useRef({ liveChannel, channelLineup, onTuneChannel });
   liveRef.current = { liveChannel, channelLineup, onTuneChannel };
+
+  useWatchHistoryRecorder(watchTarget, { hasStarted, isPlaying, positionSeconds, durationSeconds });
 
   const isMenuOpen = panel === "menu";
   const isShowingVideo = !isChoosingResume && failure === null;

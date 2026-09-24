@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Channel, PlaylistSource, Profile, SeriesEpisode } from "@core";
+import type { Channel, PlaylistSource, Profile, SeriesEpisode, WatchHistoryEntry } from "@core";
 import {
   addPlaylistSource,
   getActivePlaylistSourceId,
@@ -19,8 +19,9 @@ import {
   type ResumePoint,
 } from "./profile-store.js";
 import { buildRevalidationTargets, revalidateStaleTargets } from "./cache-revalidator.js";
-import { loadMovieDetails } from "./content-loader.js";
+import { loadMovieDetails, loadSeriesDetails } from "./content-loader.js";
 import type { ChannelLineup } from "./channel-lineup.js";
+import type { WatchTarget } from "./use-watch-history-recorder.js";
 import { AddSourceScreen } from "./screens/AddSourceScreen.js";
 import { HomeScreen } from "./screens/HomeScreen.js";
 import { LiveTvScreen } from "./screens/LiveTvScreen.js";
@@ -31,9 +32,9 @@ import { GuideScreen } from "./screens/GuideScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
 import { ManagePlaylistsScreen } from "./screens/ManagePlaylistsScreen.js";
 import { FavouritesScreen } from "./screens/FavouritesScreen.js";
+import { HistoryScreen } from "./screens/HistoryScreen.js";
 import { ProfilesScreen } from "./screens/ProfilesScreen.js";
 import { ManageProfilesScreen } from "./screens/ManageProfilesScreen.js";
-import { PlaceholderScreen } from "./screens/PlaceholderScreen.js";
 import { PlayerScreen, type PlaybackIdentity } from "./screens/PlayerScreen.js";
 import { detectPlatform } from "./platform.js";
 
@@ -85,6 +86,8 @@ export function App(): JSX.Element {
   const [playbackInfo, setPlaybackInfo] = useState<PlaybackInfo | undefined>(undefined);
   const [playbackEpisodeId, setPlaybackEpisodeId] = useState<string | undefined>(undefined);
   const [playbackChannel, setPlaybackChannel] = useState<Channel | undefined>(undefined);
+  // What's playing, for Recently Watched (see use-watch-history-recorder.ts).
+  const [watchTarget, setWatchTarget] = useState<WatchTarget | undefined>(undefined);
   // Where a live channel was started from — what CH+/CH− and number keys can reach in the player.
   const [channelLineup, setChannelLineup] = useState<ChannelLineup | null>(null);
   // The series around the episode playing — kept so Next Episode and the
@@ -117,6 +120,8 @@ export function App(): JSX.Element {
   // during playback, which isn't itself reactive state — same shape as the
   // favoritesVersion pattern those screens already use for favourites).
   const [playbackCloseVersion, setPlaybackCloseVersion] = useState(0);
+  // Bumped every time the player closes (live too), so Recently Watched re-reads what was just watched.
+  const [historyVersion, setHistoryVersion] = useState(0);
 
   useEffect(() => {
     const savedId = getActiveProfileId();
@@ -224,11 +229,21 @@ export function App(): JSX.Element {
   // so they can close over activeProfile once it's narrowed non-null by the
   // guard above; live TV/catch-up playback skips identity entirely since
   // Continue Watching doesn't apply to it.
-  const playMovie = (movie: Channel): void => {
+  // options.resume: the viewer already chose to continue (Recently Watched) — no Resume/Start Over prompt.
+  const playMovie = (movie: Channel, options: { resume?: boolean } = {}): void => {
     setPlaybackChannel(undefined);
     setPlaybackIdentity({ profileId: activeProfile.id, contentId: movie.id, contentKind: "movie" });
     setPlaybackResume(getResumePoint(activeProfile.id, movie.id));
-    setPlaybackAutoResume(false);
+    setPlaybackAutoResume(Boolean(options.resume));
+    setWatchTarget({
+      profileId: activeProfile.id,
+      sourceId: activeSource.id,
+      kind: "movie",
+      contentId: movie.id,
+      title: movie.name,
+      imageUrl: movie.logoUrl,
+      streamUrl: movie.streamUrl,
+    });
     setPlaybackEpisodeId(undefined);
     setPlaybackInfo({ posterUrl: movie.logoUrl });
     // Plot/rating/year/backdrop arrive a moment later (Xtream get_vod_info);
@@ -276,13 +291,32 @@ export function App(): JSX.Element {
       rating: episode.rating ?? context.details?.rating,
       year: yearFromDate(episode.releaseDate ?? context.details?.releaseDate),
     });
-    setNextEpisode(findNextEpisode(episode, allEpisodes));
+    const next = findNextEpisode(episode, allEpisodes);
+    const episodeLine = (ep: SeriesEpisode) => `S${ep.season} E${ep.episode} · ${ep.title}`;
+    setWatchTarget({
+      profileId: activeProfile.id,
+      sourceId: activeSource.id,
+      kind: "series",
+      contentId: episode.seriesId,
+      title: context.seriesName ?? episode.title,
+      subtitle: episodeLine(episode),
+      imageUrl: context.posterUrl ?? episode.posterUrl,
+      streamUrl: episode.streamUrl,
+      episodeId: episode.id,
+      season: episode.season,
+      episode: episode.episode,
+      nextEpisode: next
+        ? { episodeId: next.id, season: next.season, episode: next.episode, subtitle: `Up next: ${episodeLine(next)}`, streamUrl: next.streamUrl }
+        : undefined,
+    });
+    setNextEpisode(next);
     setSeriesEpisodes(allEpisodes);
     setIsPlaybackLive(false);
     setPlaybackUrl(episode.streamUrl);
   };
   const playWithoutIdentity = (streamUrl: string): void => {
     setPlaybackChannel(undefined);
+    setWatchTarget(undefined); // catch-up isn't recorded
     setPlaybackIdentity(undefined);
     setPlaybackResume(null);
     setPlaybackAutoResume(false);
@@ -302,17 +336,45 @@ export function App(): JSX.Element {
     setPlaybackEpisodeId(undefined);
     setPlaybackInfo({ logoUrl: channel.logoUrl });
     setPlaybackChannel(channel);
+    setWatchTarget({
+      profileId: activeProfile.id,
+      sourceId: activeSource.id,
+      kind: "live",
+      contentId: channel.id,
+      title: channel.name,
+      imageUrl: channel.logoUrl,
+      streamUrl: channel.streamUrl,
+      channelNumber: channel.number,
+    });
     setPlaybackTitle(channel.name);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
     setIsPlaybackLive(true);
     setPlaybackUrl(channel.streamUrl);
   };
+  // Recently Watched → a series: play its saved episode with the full episode
+  // list (for Next Episode and the Episodes panel). If the episode is gone
+  // from the provider, open the series page instead.
+  const continueSeries = (entry: WatchHistoryEntry): void => {
+    const openSeriesPage = () => {
+      setPendingSeriesId(entry.contentId);
+      setActiveTab("series");
+    };
+    loadSeriesDetails(activeSource, entry.contentId)
+      .then(({ details, episodes }) => {
+        const episode = episodes.find((ep) => ep.id === entry.episodeId);
+        if (!episode) return openSeriesPage();
+        playEpisode(episode, episodes, { seriesName: entry.title, posterUrl: entry.imageUrl, details, resume: Boolean(entry.positionSeconds) });
+      })
+      .catch(openSeriesPage);
+  };
   const playNextEpisode = (): void => {
     if (nextEpisode) playEpisode(nextEpisode, seriesEpisodes);
   };
   const closePlayback = (): void => {
+    setHistoryVersion((v) => v + 1);
     setChannelLineup(null);
+    setWatchTarget(undefined);
     setPlaybackChannel(undefined);
     setPlaybackUrl(null);
     setPlaybackIdentity(undefined);
@@ -412,7 +474,23 @@ export function App(): JSX.Element {
           isPlaybackOpen={Boolean(playbackUrl)}
         />
       )}
-      {activeTab === "history" && <PlaceholderScreen title="History" icon="🕘" platform={platform} onBack={goHome} />}
+      {activeTab === "history" && (
+        <HistoryScreen
+          source={activeSource}
+          profileId={activeProfile.id}
+          platform={platform}
+          onBack={goHome}
+          onPlayChannel={playLive}
+          onPlayMovie={playMovie}
+          onContinueSeries={continueSeries}
+          onOpenSeries={(seriesId) => {
+            setPendingSeriesId(seriesId);
+            setActiveTab("series");
+          }}
+          refreshKey={historyVersion}
+          isPlaybackOpen={Boolean(playbackUrl)}
+        />
+      )}
       {activeTab === "settings" && (
         <SettingsScreen platform={platform} onManagePlaylists={() => setActiveTab("manage-playlists")} onBack={goHome} />
       )}
@@ -441,6 +519,7 @@ export function App(): JSX.Element {
             liveChannel={playbackChannel}
             guideSource={activeSource}
             channelLineup={channelLineup}
+            watchTarget={watchTarget}
             onTuneChannel={(channel) => playLive(channel)}
             resumeFrom={playbackResume}
             autoResume={playbackAutoResume}

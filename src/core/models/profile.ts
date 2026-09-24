@@ -29,6 +29,37 @@ export interface ContinueWatchingEntry {
 export type FavoriteKind = "live" | "movie" | "series";
 
 /**
+ * One title in a profile's Recently Watched, per playlist. A series is one
+ * entry that follows its latest episode. Title, artwork and stream are
+ * saved at play time, so the page draws (and plays) without loading any
+ * catalog.
+ */
+export interface WatchHistoryEntry {
+  profileId: string;
+  sourceId: string;
+  kind: "movie" | "series" | "live";
+  /** Film, series or channel id. */
+  contentId: string;
+  title: string;
+  /** e.g. "S2 E4 · Ghosts" for a series. */
+  subtitle?: string;
+  imageUrl?: string;
+  /** Plays straight from the history (films and channels). */
+  streamUrl?: string;
+  /** Live channels: the number shown in the channel list. */
+  channelNumber?: number;
+  /** Series: the episode to continue with (the next one, once an episode is finished). */
+  episodeId?: string;
+  season?: number;
+  episode?: number;
+  positionSeconds?: number;
+  durationSeconds?: number;
+  /** A film (or a series' last episode) watched to the end. */
+  finished?: boolean;
+  updatedAt: string;
+}
+
+/**
  * Channel/movie/series ids are only unique within one playlist source's one
  * content-kind listing — an Xtream stream_id or an M3U tvg-id can easily
  * collide across two different sources, and a live channel and a movie can

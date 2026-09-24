@@ -5,25 +5,24 @@ import {
   buildShelfFocusGraph,
   Focusable,
   FocusCard,
-  LiftSurface,
   MeshBackground,
   POSTER_WIDTH,
   SECTION_ICONS,
   Shelf,
   TV_TEXT,
-  URLImage,
   useFocusStore,
   useIsFocused,
   useRemoteInput,
   type FocusNode,
 } from "@ui";
-import { Check, Heart, Pencil, X } from "lucide-react";
+import { Check, Heart, Pencil } from "lucide-react";
 import { getRecordsByIds } from "../catalog-store.js";
 import { loadChannelsByKind, loadSeriesList } from "../content-loader.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
+import { ChannelTile, RemoveBadge } from "./ListTiles.js";
 
 const SCOPE = "favourites";
 const EDIT_BUTTON_ID = "favourites-edit";
@@ -302,7 +301,14 @@ export function FavouritesScreen({
                 leftInset={BROWSE_SIDE_PADDING}
                 renderItem={(item) =>
                   item.entry.contentKind === "live" ? (
-                    <ChannelTile item={item} isEditing={isEditing} onSelect={() => activate(item)} />
+                    <ChannelTile
+                      id={itemId(item.entry)}
+                      title={item.title}
+                      imageUrl={item.imageUrl}
+                      seed={item.entry.contentId}
+                      isEditing={isEditing}
+                      onSelect={() => activate(item)}
+                    />
                   ) : (
                     <FocusCard
                       id={itemId(item.entry)}
@@ -354,64 +360,6 @@ function EditButton({ isEditing, onClick }: { isEditing: boolean; onClick: () =>
         <Icon size="1.5rem" strokeWidth={2.25} />
         {isEditing ? "Done" : "Edit My List"}
       </button>
-    </Focusable>
-  );
-}
-
-/** Red ✕ shown on every card in edit mode. */
-function RemoveBadge(): JSX.Element {
-  return (
-    <span
-      aria-label="Remove"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: "2.5rem",
-        height: "2.5rem",
-        borderRadius: 999,
-        background: "#e0332f",
-        color: "#fff",
-        boxShadow: "0 0.25rem 0.75rem rgba(0,0,0,0.5)",
-      }}
-    >
-      <X size="1.5rem" strokeWidth={3} />
-    </span>
-  );
-}
-
-/** A saved channel: a wide tile with the channel's logo and name, lifting on focus like every other card. */
-function ChannelTile({ item, isEditing, onSelect }: { item: ListItem; isEditing: boolean; onSelect: () => void }): JSX.Element {
-  const id = itemId(item.entry);
-  const isFocused = useIsFocused(id);
-  return (
-    <Focusable id={id}>
-      <LiftSurface
-        isFocused={isFocused}
-        radius="1rem"
-        width="24rem"
-        role="button"
-        tabIndex={-1}
-        onClick={onSelect}
-        faceStyle={{
-          aspectRatio: "16 / 9",
-          display: "flex",
-          flexDirection: "column",
-          background: isFocused ? "linear-gradient(160deg, #3a3d48 0%, #262830 100%)" : "linear-gradient(160deg, #23252d 0%, #17181d 100%)",
-        }}
-      >
-        <div style={{ flex: 1, minHeight: 0, padding: "1.25rem 2.5rem 0.5rem" }}>
-          <URLImage src={item.imageUrl} alt="" seed={item.entry.contentId} objectFit="contain" placeholderIcon={SECTION_ICONS.live} />
-        </div>
-        <div style={{ padding: "0 1.25rem 1rem", fontSize: TV_TEXT, fontWeight: 700, color: "#fff", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {item.title}
-        </div>
-        {isEditing && (
-          <div style={{ position: "absolute", top: "0.75rem", right: "0.75rem" }}>
-            <RemoveBadge />
-          </div>
-        )}
-      </LiftSurface>
     </Focusable>
   );
 }
