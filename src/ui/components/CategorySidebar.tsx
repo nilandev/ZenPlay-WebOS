@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { Focusable } from "../focus/Focusable.js";
 import { buildListFocusGraph } from "../focus/build-grid-graph.js";
 import { useFocusStore } from "../focus/focus-store.js";
@@ -33,7 +33,9 @@ const SCOPE = "chrome:category-sidebar";
 export function CategorySidebar({ items, activeId, onSelect, width = 280, contentEntryId, header }: CategorySidebarProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
-  const focusedId = useFocusStore((state) => state.focusedId);
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const handleItemSelect = useCallback((id: string) => onSelectRef.current(id), []);
 
   useEffect(() => {
     const ids = items.map((item) => item.id);
@@ -59,40 +61,51 @@ export function CategorySidebar({ items, activeId, onSelect, width = 280, conten
       }}
     >
       {header && <div style={{ padding: "8px 8px 16px" }}>{header}</div>}
-      {items.map((item) => {
-        const isFocused = focusedId === item.id;
-        const isActive = activeId === item.id;
-        return (
-          <Focusable key={item.id} id={item.id} style={{ height: "auto" }}>
-            <button
-              type="button"
-              onClick={() => onSelect(item.id)}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                width: "100%",
-                textAlign: "left",
-                padding: "14px 16px",
-                marginBottom: 6,
-                borderRadius: 8,
-                border: "none",
-                background: isFocused ? "var(--accent, #38bdf8)" : isActive ? "var(--surface-raised, #24242c)" : "transparent",
-                color: isFocused ? "#062028" : isActive ? "var(--text, #f4f4f6)" : "var(--text-dim, #9a9aa4)",
-                fontWeight: isActive || isFocused ? 700 : 500,
-                fontSize: 18,
-                transform: isFocused ? "scale(1.03)" : "scale(1)",
-                transition: "transform 120ms ease-out, background 120ms ease-out",
-              }}
-            >
-              <MarqueeText text={item.label} active={isFocused} style={{ minWidth: 0, flex: 1 }} />
-              {item.count !== undefined && (
-                <span style={{ fontSize: 14, opacity: 0.7, marginLeft: 8, flexShrink: 0 }}>{item.count}</span>
-              )}
-            </button>
-          </Focusable>
-        );
-      })}
+      {items.map((item) => (
+        <CategoryRow key={item.id} item={item} isActive={activeId === item.id} onSelect={handleItemSelect} />
+      ))}
     </div>
   );
 }
+
+/** One category row — subscribes to its own focused state, so a focus move re-renders only the rows it leaves and enters, not the whole list. */
+const CategoryRow = memo(function CategoryRow({
+  item,
+  isActive,
+  onSelect,
+}: {
+  item: CategorySidebarItem;
+  isActive: boolean;
+  onSelect: (id: string) => void;
+}): JSX.Element {
+  const isFocused = useFocusStore((state) => state.focusedId === item.id);
+
+  return (
+    <Focusable id={item.id} style={{ height: "auto" }}>
+      <button
+        type="button"
+        onClick={() => onSelect(item.id)}
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          width: "100%",
+          textAlign: "left",
+          padding: "14px 16px",
+          marginBottom: 6,
+          borderRadius: 8,
+          border: "none",
+          background: isFocused ? "var(--accent, #38bdf8)" : isActive ? "var(--surface-raised, #24242c)" : "transparent",
+          color: isFocused ? "#062028" : isActive ? "var(--text, #f4f4f6)" : "var(--text-dim, #9a9aa4)",
+          fontWeight: isActive || isFocused ? 700 : 500,
+          fontSize: 18,
+          transform: isFocused ? "scale(1.03)" : "scale(1)",
+          transition: "transform 120ms ease-out, background 120ms ease-out",
+        }}
+      >
+        <MarqueeText text={item.label} active={isFocused} style={{ minWidth: 0, flex: 1 }} />
+        {item.count !== undefined && <span style={{ fontSize: 14, opacity: 0.7, marginLeft: 8, flexShrink: 0 }}>{item.count}</span>}
+      </button>
+    </Focusable>
+  );
+});

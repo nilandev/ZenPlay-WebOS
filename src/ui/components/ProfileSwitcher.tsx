@@ -22,50 +22,38 @@ export const PROFILE_SWITCHER_FOCUS_ID = "profile-switcher";
 export function ProfileSwitcher({ profile, onOpen }: ProfileSwitcherProps): JSX.Element {
   const isFocused = useFocusStore((state) => state.focusedId === PROFILE_SWITCHER_FOCUS_ID);
 
+  // Same Apple TV-style focus language as Home's menu tiles (see
+  // HomeScreen's tileFaceStyle / LiftSurface): unfocused it's faint glass;
+  // focused it becomes brighter glass with white text and lifts with a soft
+  // shadow. No glow halo or accent ring, and only transform animates, so
+  // the change runs on the compositor.
   return (
-    <div style={{ position: "relative" }}>
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: "-1.25rem",
-          borderRadius: 999,
-          background: "radial-gradient(closest-side, rgba(130,190,255,0.7) 0%, rgba(130,190,255,0.25) 45%, rgba(130,190,255,0) 75%)",
-          filter: "blur(0.75rem)",
-          opacity: isFocused ? 1 : 0,
-          transform: isFocused ? "scale(1)" : "scale(0.8)",
-          transition: "opacity 260ms ease-out, transform 260ms ease-out",
-          pointerEvents: "none",
-        }}
-      />
-      <button
-        type="button"
-        onClick={onOpen}
-        style={{
-          position: "relative",
-          display: "flex",
-          alignItems: "center",
-          gap: "0.625rem",
-          border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.08)",
-          borderRadius: 999,
-          background: isFocused
-            ? "linear-gradient(160deg, rgba(52,54,60,0.7) 0%, rgba(20,21,25,0.75) 100%)"
-            : "linear-gradient(160deg, rgba(30,31,36,0.55) 0%, rgba(12,13,16,0.6) 100%)",
-          backdropFilter: "blur(20px) saturate(120%)",
-          WebkitBackdropFilter: "blur(20px) saturate(120%)",
-          boxShadow: isFocused
-            ? "inset 0 1px 0 rgba(255,255,255,0.4), 0 0 0 0.1875rem var(--accent), 0 0.75rem 1.75rem -0.625rem rgba(0,0,0,0.55)"
-            : "inset 0 1px 0 rgba(255,255,255,0.08), 0 0.25rem 0.75rem -0.375rem rgba(0,0,0,0.4)",
-          padding: "0.375rem 1.125rem 0.375rem 0.375rem",
-          transform: isFocused ? "scale(1.08)" : "scale(1)",
-          transition: "transform 180ms ease-out, box-shadow 180ms ease-out, border-color 180ms ease-out, background 180ms ease-out",
-          cursor: "pointer",
-        }}
-      >
-        <AvatarBadge avatarUrl={profile.avatarUrl} size="2.5rem" />
-        <span style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text)" }}>{profile.name}</span>
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={onOpen}
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.875rem",
+        border: "none",
+        borderRadius: 999,
+        background: isFocused
+          ? "linear-gradient(160deg, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0.17) 100%)"
+          : "linear-gradient(160deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.035) 100%)",
+        boxShadow: isFocused
+          ? "inset 0 1px 0 rgba(255,255,255,0.35), inset 0 0 0 1px rgba(255,255,255,0.14), 0 1rem 2rem -0.5rem rgba(0,0,0,0.6)"
+          : "inset 0 1px 0 rgba(255,255,255,0.12), inset 0 0 0 1px rgba(255,255,255,0.06)",
+        color: isFocused ? "#ffffff" : "rgba(235,236,242,0.85)",
+        padding: "0.5rem 1.5rem 0.5rem 0.5rem",
+        transform: isFocused ? "scale(1.08)" : "scale(1)",
+        transition: "transform 300ms cubic-bezier(0.2, 0.9, 0.3, 1)",
+        cursor: "pointer",
+      }}
+    >
+      <AvatarBadge avatarUrl={profile.avatarUrl} size="3.75rem" />
+      <span style={{ fontSize: "1.375rem", fontWeight: 600 }}>{profile.name}</span>
+    </button>
   );
 }
 

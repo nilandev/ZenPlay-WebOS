@@ -8,10 +8,13 @@ export interface ShimmerProps {
 }
 
 /**
- * Base skeleton-loading block: an animated gradient sweep, GPU-composited
- * (background-position only, no layout-triggering properties) so it stays
- * smooth on weak TV CPUs per PLAN.md's performance principles. Screens
- * compose this into layout-matching skeletons (see ChannelGridSkeleton,
+ * Base skeleton-loading block: a highlight band sweeping across a flat
+ * surface. The band is its own child layer moved with `transform`, which
+ * Chromium runs on the compositor thread — unlike the earlier
+ * background-position sweep, which repainted every shimmer block on the
+ * main thread every frame (a full skeleton screen is dozens of them, on
+ * exactly the screens that are also busy loading data). Screens compose
+ * this into layout-matching skeletons (see ChannelGridSkeleton,
  * ShelfRowSkeleton, EpgGridSkeleton) so the shimmer-to-content swap doesn't
  * visibly jump.
  *
@@ -28,15 +31,25 @@ export function Shimmer({ width = "100%", height = 16, borderRadius = 6, style }
   return (
     <div
       style={{
+        position: "relative",
+        overflow: "hidden",
         width,
         height,
         borderRadius,
-        background: "linear-gradient(100deg, var(--surface, #1a1a20) 30%, var(--shimmer-highlight, #4a4a58) 50%, var(--surface, #1a1a20) 70%)",
-        backgroundSize: "200% 100%",
-        animation: "iptv-shimmer 1.4s ease-in-out infinite",
+        background: "var(--surface, #1a1a20)",
         ...style,
       }}
-    />
+    >
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "linear-gradient(100deg, rgba(0,0,0,0) 20%, var(--shimmer-highlight, #4a4a58) 50%, rgba(0,0,0,0) 80%)",
+          animation: "iptv-shimmer 1.4s ease-in-out infinite",
+        }}
+      />
+    </div>
   );
 }
 
@@ -49,8 +62,8 @@ export function ShimmerStyles(): JSX.Element {
   return (
     <style>{`
       @keyframes iptv-shimmer {
-        0% { background-position: 200% 0; }
-        100% { background-position: -200% 0; }
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
       }
     `}</style>
   );

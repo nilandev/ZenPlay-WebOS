@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { glassBlur, LITE_EFFECTS } from "../perf-tier.js";
 
 export interface GlassPanelProps {
   children: ReactNode;
@@ -13,11 +14,10 @@ export interface GlassPanelProps {
  * slides on visibility toggle rather than mounting/unmounting instantly,
  * so dismissal reads as a deliberate motion rather than a hard cut.
  *
- * `backdrop-filter: blur` is supported on webOS TV's Chromium-based
- * runtime (Chromium 76+, so webOS TV 6.0+), though LG TV GPUs have
- * historically had inconsistent rendering/performance with it — the solid
- * `background` gradient underneath is a reasonable fallback (still reads
- * as a translucent panel) if it needs to be dropped on real hardware.
+ * Under LITE_EFFECTS (webOS TVs) the blur is dropped — blurring live video
+ * behind the panel is an extra full-panel render pass every video frame on
+ * TV GPUs — and the fill is made denser instead so text stays legible over
+ * the picture.
  */
 export function GlassPanel({ children, visible, style }: GlassPanelProps): JSX.Element {
   return (
@@ -28,9 +28,10 @@ export function GlassPanel({ children, visible, style }: GlassPanelProps): JSX.E
         right: 0,
         bottom: 0,
         padding: "20px 40px 28px",
-        background: "linear-gradient(180deg, rgba(30,30,36,0.35) 0%, rgba(20,20,26,0.55) 100%)",
-        backdropFilter: "blur(28px) saturate(160%)",
-        WebkitBackdropFilter: "blur(28px) saturate(160%)",
+        background: LITE_EFFECTS
+          ? "linear-gradient(180deg, rgba(24,24,30,0.82) 0%, rgba(16,16,20,0.9) 100%)"
+          : "linear-gradient(180deg, rgba(30,30,36,0.35) 0%, rgba(20,20,26,0.55) 100%)",
+        ...glassBlur("blur(28px) saturate(160%)"),
         borderTop: "1px solid rgba(255,255,255,0.18)",
         boxShadow: "0 -12px 40px rgba(0,0,0,0.4)",
         opacity: visible ? 1 : 0,

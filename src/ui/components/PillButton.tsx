@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { glassBlur } from "../perf-tier.js";
 
 export interface PillButtonProps {
   onClick: () => void;
@@ -26,8 +27,7 @@ export function PillButton({ onClick, isFocused, children }: PillButtonProps): J
         background: isFocused
           ? "linear-gradient(160deg, rgba(70,74,84,0.75) 0%, rgba(38,40,48,0.8) 100%)"
           : "linear-gradient(160deg, rgba(55,58,68,0.55) 0%, rgba(28,30,36,0.6) 100%)",
-        backdropFilter: "blur(16px) saturate(140%)",
-        WebkitBackdropFilter: "blur(16px) saturate(140%)",
+        ...glassBlur("blur(16px) saturate(140%)"),
         color: isFocused ? "var(--text)" : "var(--text-dim)",
         fontSize: 14,
         fontWeight: 600,

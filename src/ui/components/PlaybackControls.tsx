@@ -3,6 +3,7 @@ import { ArrowLeft, ChevronLeft, Pause, Play, SkipForward, Subtitles } from "luc
 import type { AudioTrackInfo, SubtitleTrackInfo } from "@player";
 import { buildShelfFocusGraph } from "../focus/build-shelf-graph.js";
 import { useFocusStore } from "../focus/focus-store.js";
+import { glassBlur } from "../perf-tier.js";
 
 const SCOPE = "player-controls";
 
@@ -598,8 +599,7 @@ function AudioSubtitlesMenu({
         padding: 16,
         borderRadius: 16,
         background: "linear-gradient(160deg, rgba(32,32,38,0.92) 0%, rgba(18,18,22,0.96) 100%)",
-        backdropFilter: "blur(24px) saturate(160%)",
-        WebkitBackdropFilter: "blur(24px) saturate(160%)",
+        ...glassBlur("blur(24px) saturate(160%)"),
         border: "1px solid rgba(255,255,255,0.16)",
         boxShadow: "0 20px 60px -12px rgba(0,0,0,0.7)",
         zIndex: 60,

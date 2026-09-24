@@ -4,6 +4,7 @@ import { resolveRemoteAction, type PlatformId } from "@core";
 import { Focusable } from "../focus/Focusable.js";
 import { useFocusStore } from "../focus/focus-store.js";
 import { URLImage } from "./URLImage.js";
+import { LITE_EFFECTS } from "../perf-tier.js";
 
 /** How long the active card's backdrop crossfades between candidates — see CrossfadeBackdrop. */
 const BACKDROP_CROSSFADE_MS = 500;
@@ -176,7 +177,9 @@ function PeekCard({ content, side, distance }: { content: HeroContent; side: "le
         borderRadius: "1.5rem",
         overflow: "hidden",
         opacity: isNear ? 0.55 : 0.3,
-        filter: isNear ? "brightness(0.55) saturate(0.9)" : "brightness(0.4) saturate(0.8)",
+        // Under LITE_EFFECTS the dimming comes from opacity alone — a CSS
+        // filter forces each peek card into its own offscreen render surface.
+        filter: LITE_EFFECTS ? undefined : isNear ? "brightness(0.55) saturate(0.9)" : "brightness(0.4) saturate(0.8)",
         transform: isNear ? "scale(0.94)" : "scale(0.86)",
         zIndex: isNear ? 0 : -1,
         pointerEvents: "none",

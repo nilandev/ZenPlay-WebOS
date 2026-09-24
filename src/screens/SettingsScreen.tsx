@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PlatformId } from "@core";
-import { Focusable, MeshBackground, useFocusStore, useRemoteInput, type FocusNode } from "@ui";
+import { Focusable, MeshBackground, useFocusStore, useRemoteInput, type FocusNode, glassBlur } from "@ui";
 import { loadSettings, updateSettings, type AppSettings, type PlaybackSpeed, type VideoQuality } from "../settings-store.js";
 
 const MANAGE_PLAYLISTS_ID = "settings-manage-playlists";
@@ -190,8 +190,7 @@ function rowStyle(isFocused: boolean): React.CSSProperties {
     background: isFocused
       ? "linear-gradient(160deg, rgba(70,74,84,0.75) 0%, rgba(38,40,48,0.8) 100%)"
       : "linear-gradient(160deg, rgba(55,58,68,0.5) 0%, rgba(28,30,36,0.55) 100%)",
-    backdropFilter: "blur(16px) saturate(140%)",
-    WebkitBackdropFilter: "blur(16px) saturate(140%)",
+    ...glassBlur("blur(16px) saturate(140%)"),
     boxShadow: isFocused ? "0 0 0 3px var(--accent), 0 12px 28px -8px rgba(0,0,0,0.5)" : "none",
     transform: isFocused ? "scale(1.015)" : "scale(1)",
     transition: "transform 160ms ease-out, box-shadow 160ms ease-out, background 160ms ease-out",
@@ -288,8 +287,7 @@ function PickerRow<T extends string | number>({
         borderRadius: 16,
         border: "1px solid rgba(255,255,255,0.12)",
         background: "linear-gradient(160deg, rgba(55,58,68,0.5) 0%, rgba(28,30,36,0.55) 100%)",
-        backdropFilter: "blur(16px) saturate(140%)",
-        WebkitBackdropFilter: "blur(16px) saturate(140%)",
+        ...glassBlur("blur(16px) saturate(140%)"),
         flexWrap: "wrap",
       }}
     >

@@ -116,14 +116,15 @@ export function App(): JSX.Element {
   // Scenario A's "data ready the millisecond Home renders": previously,
   // Home's own skeletons covered the wait, but the wait only started once
   // Home was already on screen. Firing it here means the fetches are
-  // in-flight during the login/profile-select transition instead, so by the
-  // time HomeScreen mounts (its own startBackgroundRevalidation call below
-  // is idempotent — same cache keys, deduped by xtream-client.ts's
-  // requestCache — so this doesn't double the work) there's a head start.
-  // A brand-new source's local VOD/series catalog tables aren't included
-  // here (see buildRevalidationTargets' doc comment on why they're excluded
-  // from this revalidator entirely) — those still start warming only once
-  // HomeScreen's startCatalogBackgroundSync effect runs.
+  // in-flight during the login/profile-select transition instead. This is
+  // now the only automatic revalidation: HomeScreen no longer runs its own
+  // background revalidator/prefetch/catalog-sync jobs (it's a static menu
+  // that does no data work — see its doc comment). A brand-new source's
+  // local VOD/series catalog tables aren't included here (see
+  // buildRevalidationTargets' doc comment on why they're excluded from this
+  // revalidator entirely), so with Home's startCatalogBackgroundSync gone
+  // nothing currently populates them — Movies/Series fall back to their
+  // legacy direct-fetch path.
   useEffect(() => {
     if (!activeSource || !activeProfile) return;
     void revalidateStaleTargets(buildRevalidationTargets(activeSource));
@@ -266,38 +267,19 @@ export function App(): JSX.Element {
   };
 
   if (activeTab === "home") {
+    // Home is a static menu with nothing playable on it, so unlike every
+    // other tab below it never hosts a PlayerScreen overlay.
     return (
-      <div style={{ minHeight: "100vh" }}>
-        <HomeScreen
-          source={activeSource}
-          platform={platform}
-          profile={activeProfile}
-          onSelectTile={(tileId) => {
-            setPendingSeriesId(null);
-            setActiveTab(tileId as TabId);
-          }}
-          onOpenProfiles={() => setActiveProfile(null)}
-          onPlayMovie={playMovie}
-          onPlayChannel={playLive}
-          onOpenSeries={(seriesId) => {
-            setPendingSeriesId(seriesId);
-            setActiveTab("series");
-          }}
-          continueWatchingVersion={playbackCloseVersion}
-        />
-        {playbackUrl && (
-          <PlayerScreen
-            streamUrl={playbackUrl}
-            platform={platform}
-            identity={playbackIdentity}
-            onClose={closePlayback}
-            title={playbackTitle}
-            subtitle={playbackSubtitle}
-            onNextEpisode={nextEpisode ? playNextEpisode : undefined}
-            isLive={isPlaybackLive}
-          />
-        )}
-      </div>
+      <HomeScreen
+        source={activeSource}
+        platform={platform}
+        profile={activeProfile}
+        onSelectTile={(tileId) => {
+          setPendingSeriesId(null);
+          setActiveTab(tileId as TabId);
+        }}
+        onOpenProfiles={() => setActiveProfile(null)}
+      />
     );
   }
 

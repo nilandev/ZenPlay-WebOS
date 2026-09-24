@@ -19,6 +19,14 @@ interface FocusState {
    * that scope on unmount.
    */
   scopes: Record<string, Record<string, FocusNode>>;
+  /**
+   * Every scope's nodes merged into one lookup — rebuilt only when a graph
+   * is set/cleared, never per key press, so move()/focus()/select() stay
+   * O(1) even with thousand-row channel lists registered. (Re-flattening
+   * inside move() used to allocate a full copy of every node on every
+   * D-pad press, which on TV-class CPUs showed up as input lag.)
+   */
+  nodes: Record<string, FocusNode>;
   focusedId: string | null;
 
   setGraph: (scope: string, nodes: FocusNode[], initialFocusId?: string) => void;
@@ -44,6 +52,7 @@ function flattenNodes(scopes: Record<string, Record<string, FocusNode>>): Record
  */
 export const useFocusStore = create<FocusState>((set, get) => ({
   scopes: {},
+  nodes: {},
   focusedId: null,
 
   setGraph: (scope, nodes, initialFocusId) => {
@@ -55,7 +64,7 @@ export const useFocusStore = create<FocusState>((set, get) => ({
       const flat = flattenNodes(scopes);
       const currentStillValid = state.focusedId && flat[state.focusedId];
       const initial = initialFocusId && byId[initialFocusId] ? initialFocusId : (nodes[0]?.id ?? null);
-      return { scopes, focusedId: currentStillValid ? state.focusedId : initial };
+      return { scopes, nodes: flat, focusedId: currentStillValid ? state.focusedId : initial };
     });
   },
 
@@ -65,30 +74,26 @@ export const useFocusStore = create<FocusState>((set, get) => ({
       delete scopes[scope];
       const flat = flattenNodes(scopes);
       const currentStillValid = state.focusedId && flat[state.focusedId];
-      return { scopes, focusedId: currentStillValid ? state.focusedId : null };
+      return { scopes, nodes: flat, focusedId: currentStillValid ? state.focusedId : null };
     });
   },
 
   move: (direction) => {
-    const { scopes, focusedId } = get();
+    const { nodes, focusedId } = get();
     if (!focusedId) return;
-    const flat = flattenNodes(scopes);
-    const current = flat[focusedId];
-    if (!current) return;
-    const nextId = current.neighbors[direction];
-    if (nextId && flat[nextId]) {
+    const nextId = nodes[focusedId]?.neighbors[direction];
+    if (nextId && nodes[nextId]) {
       set({ focusedId: nextId });
     }
   },
 
   focus: (id) => {
-    const flat = flattenNodes(get().scopes);
-    if (flat[id]) set({ focusedId: id });
+    if (get().nodes[id]) set({ focusedId: id });
   },
 
   select: () => {
-    const { scopes, focusedId } = get();
+    const { nodes, focusedId } = get();
     if (!focusedId) return;
-    flattenNodes(scopes)[focusedId]?.onSelect?.();
+    nodes[focusedId]?.onSelect?.();
   },
 }));

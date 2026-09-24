@@ -1,9 +1,9 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource, Profile } from "@core";
 import { clearAllCachedContent, getCachedContent } from "../content-cache.js";
 import { useFocusStore } from "../ui/focus/focus-store.js";
-import { HomeScreen } from "./HomeScreen.js";
+import { __resetHomeFocusMemoryForTests, HomeScreen } from "./HomeScreen.js";
 
 // jsdom doesn't implement scrollIntoView; Focusable calls it whenever a node becomes focused.
 beforeEach(() => {
@@ -30,20 +30,128 @@ const source: PlaylistSource = {
 
 const profile: Profile = { id: "profile-1", name: "Alex", avatarUrl: "avatar/toon_1.png" };
 
+const MENU_LABELS = ["Live TV", "Movies", "Series", "Guide", "My List", "Recently Watched", "Refresh Playlist", "App Settings"];
+
+function renderHome(onSelectTile: (id: string) => void = () => {}) {
+  return render(<HomeScreen source={source} platform="web" profile={profile} onSelectTile={onSelectTile} onOpenProfiles={() => {}} />);
+}
+
+function press(key: string): void {
+  act(() => {
+    fireEvent.keyDown(document, { key });
+    fireEvent.keyUp(document, { key });
+  });
+}
+
 describe("HomeScreen", () => {
   beforeEach(() => {
     clearAllCachedContent();
+    __resetHomeFocusMemoryForTests();
     useFocusStore.getState().clearGraph("home-grid");
-    useFocusStore.getState().clearGraph("home-shelves");
-    useFocusStore.getState().clearGraph("home-sidebar");
     vi.useFakeTimers();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     useFocusStore.getState().clearGraph("home-grid");
-    useFocusStore.getState().clearGraph("home-shelves");
-    useFocusStore.getState().clearGraph("home-sidebar");
+  });
+
+  it("renders a static tile for every destination, with focus starting on the first", () => {
+    renderHome();
+    for (const label of MENU_LABELS) {
+      expect(screen.getByRole("button", { name: label })).toBeTruthy();
+    }
+    expect(useFocusStore.getState().focusedId).toBe("live");
+  });
+
+  it("does no data work on mount — no fetches, no background timers", async () => {
+    const loader = await import("../content-loader.js");
+    vi.mocked(loader.loadPlaylistInfo).mockClear();
+    vi.mocked(loader.loadChannelsByKind).mockClear();
+
+    renderHome();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(loader.loadPlaylistInfo).not.toHaveBeenCalled();
+    expect(loader.loadChannelsByKind).not.toHaveBeenCalled();
+    // Only the header clock's once-a-minute tick is expected to remain.
+    expect(vi.getTimerCount()).toBeLessThanOrEqual(1);
+  });
+
+  it("navigates the grid with the D-pad and opens the focused tile on Select", () => {
+    const onSelectTile = vi.fn();
+    renderHome(onSelectTile);
+
+    press("ArrowRight");
+    expect(useFocusStore.getState().focusedId).toBe("movies");
+    press("ArrowDown");
+    expect(useFocusStore.getState().focusedId).toBe("history");
+    press("Enter");
+    expect(onSelectTile).toHaveBeenCalledWith("history");
+  });
+
+  it("wires Up from the top row to the profile switcher, and a ragged column's Down to the last tile", () => {
+    renderHome();
+
+    press("ArrowUp");
+    expect(useFocusStore.getState().focusedId).toBe("profile-switcher");
+    press("ArrowDown");
+    expect(useFocusStore.getState().focusedId).toBe("live");
+
+    act(() => useFocusStore.getState().focus("guide"));
+    press("ArrowDown");
+    expect(useFocusStore.getState().focusedId).toBe("settings");
+  });
+
+  it("puts Refresh Playlist in the second row below Series, with no Exit button", () => {
+    renderHome();
+    expect(screen.getAllByRole("button", { name: "Refresh Playlist" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Exit" })).toBeNull();
+
+    act(() => useFocusStore.getState().focus("series"));
+    press("ArrowDown");
+    expect(useFocusStore.getState().focusedId).toBe("refresh");
+    press("ArrowLeft");
+    expect(useFocusStore.getState().focusedId).toBe("history");
+    press("ArrowUp");
+    expect(useFocusStore.getState().focusedId).toBe("movies");
+  });
+
+  it("closes the app when Back is pressed on Home", () => {
+    const closeSpy = vi.spyOn(window, "close").mockImplementation(() => {});
+    renderHome();
+    act(() => vi.advanceTimersByTime(600));
+
+    press("Escape");
+
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+    closeSpy.mockRestore();
+  });
+
+  it("ignores Back right after Home appears, and held-Back auto-repeat, so arriving via Back never closes the app", () => {
+    const closeSpy = vi.spyOn(window, "close").mockImplementation(() => {});
+    renderHome();
+
+    press("Escape"); // the tail of the Back press that navigated here
+    act(() => vi.advanceTimersByTime(600));
+    act(() => {
+      fireEvent.keyDown(document, { key: "Escape", repeat: true });
+    });
+
+    expect(closeSpy).not.toHaveBeenCalled();
+    closeSpy.mockRestore();
+  });
+
+  it("restores focus to the last opened tile when Home remounts", () => {
+    const first = renderHome();
+    act(() => useFocusStore.getState().focus("series"));
+    press("Enter");
+    first.unmount();
+
+    renderHome();
+    expect(useFocusStore.getState().focusedId).toBe("series");
   });
 
   it("clicking Refresh revalidates the source's caches without reloading the page", async () => {
@@ -55,26 +163,9 @@ describe("HomeScreen", () => {
 
     const { loadChannelsByKind } = await import("../content-loader.js");
 
-    render(
-      <HomeScreen
-        source={source}
-        platform="web"
-        profile={profile}
-        onSelectTile={() => {}}
-        onOpenProfiles={() => {}}
-        onPlayMovie={() => {}}
-        onPlayChannel={() => {}}
-        onOpenSeries={() => {}}
-      />,
-    );
+    renderHome();
 
-    const refreshButton = screen.getByRole("button", { name: "Refresh" });
-    // Bounded advance rather than runAllTimersAsync — startBackgroundRevalidation's
-    // setInterval (also running once HomeScreen mounts) never stops on its
-    // own, so draining "all" timers here would spin forever. The refresh
-    // click itself only needs its in-flight promises to settle, and
-    // waitFor's real-timer polling doesn't work under fake timers, so this
-    // awaits the click's effects directly instead.
+    const refreshButton = screen.getByRole("button", { name: "Refresh Playlist" });
     await act(async () => {
       fireEvent.click(refreshButton);
       await vi.advanceTimersByTimeAsync(0);
@@ -83,102 +174,7 @@ describe("HomeScreen", () => {
     });
 
     expect(getCachedContent(`live:${source.id}`)).toEqual([]);
-
     expect(loadChannelsByKind).toHaveBeenCalled();
     expect(reloadSpy).not.toHaveBeenCalled();
-  });
-
-  it("does not call window.location.reload as part of normal mount/unmount", () => {
-    const reloadSpy = vi.fn();
-    Object.defineProperty(window, "location", {
-      value: { ...window.location, reload: reloadSpy },
-      writable: true,
-    });
-
-    const { unmount } = render(
-      <HomeScreen
-        source={source}
-        platform="web"
-        profile={profile}
-        onSelectTile={() => {}}
-        onOpenProfiles={() => {}}
-        onPlayMovie={() => {}}
-        onPlayChannel={() => {}}
-        onOpenSeries={() => {}}
-      />,
-    );
-    unmount();
-
-    expect(reloadSpy).not.toHaveBeenCalled();
-  });
-
-  it("renders the left sidebar with all six destinations", () => {
-    render(
-      <HomeScreen
-        source={source}
-        platform="web"
-        profile={profile}
-        onSelectTile={() => {}}
-        onOpenProfiles={() => {}}
-        onPlayMovie={() => {}}
-        onPlayChannel={() => {}}
-        onOpenSeries={() => {}}
-      />,
-    );
-
-    const sidebar = within(screen.getByRole("navigation"));
-    for (const label of ["Home", "Live TV", "Movies", "Series", "Guide", "Favorites", "History", "Settings"]) {
-      expect(sidebar.getByText(label)).toBeTruthy();
-    }
-  });
-
-  it("pressing Left from the header focuses the sidebar, and Right returns to it", () => {
-    render(
-      <HomeScreen
-        source={source}
-        platform="web"
-        profile={profile}
-        onSelectTile={() => {}}
-        onOpenProfiles={() => {}}
-        onPlayMovie={() => {}}
-        onPlayChannel={() => {}}
-        onOpenSeries={() => {}}
-      />,
-    );
-
-    // No hero and no shelves (no catalog data mocked in), so initial focus
-    // lands on the profile switcher in the header — see buildHomeFocusGraph.
-    expect(useFocusStore.getState().focusedId).toBe("profile-switcher");
-
-    act(() => {
-      useFocusStore.getState().move("left");
-    });
-    expect(useFocusStore.getState().focusedId).toBe("home");
-
-    act(() => {
-      useFocusStore.getState().move("right");
-    });
-    expect(useFocusStore.getState().focusedId).toBe("profile-switcher");
-  });
-
-  it("selecting a non-Home sidebar destination calls onSelectTile with its id", () => {
-    const onSelectTile = vi.fn();
-    render(
-      <HomeScreen
-        source={source}
-        platform="web"
-        profile={profile}
-        onSelectTile={onSelectTile}
-        onOpenProfiles={() => {}}
-        onPlayMovie={() => {}}
-        onPlayChannel={() => {}}
-        onOpenSeries={() => {}}
-      />,
-    );
-
-    const sidebar = within(screen.getByRole("navigation"));
-    fireEvent.click(sidebar.getByText("Movies"));
-
-    expect(onSelectTile).toHaveBeenCalledWith("movies");
   });
 });

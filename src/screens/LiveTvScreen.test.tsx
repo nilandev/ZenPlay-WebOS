@@ -20,10 +20,6 @@ vi.mock("../content-loader.js", () => ({
 }));
 
 vi.mock("@player", () => ({
-  ChannelPreloader: class {
-    warm(): void {}
-    dispose(): void {}
-  },
   HlsPlayerEngine: class {
     attach(): void {}
     load(): Promise<void> {
@@ -34,6 +30,7 @@ vi.mock("@player", () => ({
     }
     pause(): void {}
     seekTo(): void {}
+    unload(): void {}
     getAudioTracks(): unknown[] {
       return [];
     }

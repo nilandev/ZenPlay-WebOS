@@ -13,23 +13,30 @@ afterEach(() => {
 });
 
 describe("FocusCard", () => {
-  it("scales to 1.05 and transitions transform/border-color/box-shadow over 250ms with the spec'd easing on focus gain", () => {
+  it("lifts Apple TV-style on focus: scales to 1.1 and fades in its shadow and sheen, with no outline ring", () => {
     const { container } = render(<FocusCard id="card-1" title="Some Movie" />);
     act(() => {
       useFocusStore.getState().setGraph("test", [{ id: "card-1", neighbors: {} }], "card-1");
     });
 
     const card = container.querySelector('[role="button"]') as HTMLElement;
-    expect(card.style.transform).toBe("scale(1.05)");
-    expect(card.style.transition).toContain("transform 250ms cubic-bezier(0.25, 1, 0.5, 1)");
-    expect(card.style.transition).toContain("border-color 250ms cubic-bezier(0.25, 1, 0.5, 1)");
-    expect(card.style.transition).toContain("box-shadow 250ms cubic-bezier(0.25, 1, 0.5, 1)");
+    expect(card.style.transform).toBe("scale(1.1)");
+    expect(card.style.transition).toBe("transform 300ms cubic-bezier(0.2, 0.9, 0.3, 1)");
+    const shadow = container.querySelector('[data-testid="lift-shadow"]') as HTMLElement;
+    const sheen = container.querySelector('[data-testid="lift-sheen"]') as HTMLElement;
+    expect(shadow.style.opacity).toBe("1");
+    expect(sheen.style.opacity).toBe("1");
+    // Only compositor-friendly properties animate — no paint-triggering box-shadow/border transitions, no pinned layers.
+    expect(shadow.style.transition).toBe("opacity 300ms cubic-bezier(0.2, 0.9, 0.3, 1)");
+    expect(card.style.willChange).toBe("");
   });
 
-  it("renders no scale/border highlight when unfocused", () => {
+  it("sits flat when unfocused", () => {
     const { container } = render(<FocusCard id="card-2" title="Some Movie" />);
     const card = container.querySelector('[role="button"]') as HTMLElement;
     expect(card.style.transform).toBe("scale(1)");
+    expect((container.querySelector('[data-testid="lift-shadow"]') as HTMLElement).style.opacity).toBe("0");
+    expect((container.querySelector('[data-testid="lift-sheen"]') as HTMLElement).style.opacity).toBe("0");
   });
 
   it("renders a progress bar filled to the given fraction when progress is set", () => {

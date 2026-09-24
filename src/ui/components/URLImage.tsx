@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Clapperboard, Film } from "lucide-react";
+import { LITE_EFFECTS } from "../perf-tier.js";
 
 export interface URLImageProps {
   src?: string;
@@ -98,7 +99,7 @@ export function URLImage({ src, alt = "", seed, loading = "lazy", style, classNa
           transition: "opacity 550ms ease-out",
         }}
       >
-        <Icon size="34%" strokeWidth={1.25} color="rgba(255,255,255,0.28)" style={{ filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.4))" }} />
+        <Icon size="34%" strokeWidth={1.25} color="rgba(255,255,255,0.28)" style={{ filter: LITE_EFFECTS ? undefined : "drop-shadow(0 2px 6px rgba(0,0,0,0.4))" }} />
       </div>
       {src && (
         <img

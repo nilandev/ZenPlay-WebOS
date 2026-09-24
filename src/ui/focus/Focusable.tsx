@@ -1,5 +1,15 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useFocusStore } from "./focus-store.js";
+
+/**
+ * Set to true by a container that scrolls its own focused child into view
+ * (Shelf, ChannelSidebar's windowed list) so Focusable skips its own
+ * scrollIntoView. Two independent scroll requests per key press — the
+ * container's and Focusable's — used to fight each other (an instant
+ * "nearest" scroll cancelling an in-flight smooth one), and each one forces
+ * a synchronous layout, which is expensive on TV-class CPUs.
+ */
+export const FocusScrollManagedContext = createContext(false);
 
 export interface FocusableProps {
   id: string;
@@ -25,12 +35,13 @@ export interface FocusableProps {
 export function Focusable({ id, children, className, focusedClassName, style }: FocusableProps): JSX.Element {
   const isFocused = useFocusStore((state) => state.focusedId === id);
   const ref = useRef<HTMLDivElement>(null);
+  const isScrollManaged = useContext(FocusScrollManagedContext);
 
   useEffect(() => {
-    if (isFocused) {
+    if (isFocused && !isScrollManaged) {
       ref.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
-  }, [isFocused]);
+  }, [isFocused, isScrollManaged]);
 
   const classes = [className, isFocused ? (focusedClassName ?? "is-focused") : ""].filter(Boolean).join(" ");
 

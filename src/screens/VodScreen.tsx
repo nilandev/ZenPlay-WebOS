@@ -6,7 +6,7 @@ import {
   CategoryDropdown,
   FavoriteHeart,
   Focusable,
-  FocusBackdrop,
+  FocusTrackingBackdrop,
   FocusCard,
   Shelf,
   ShelfRowSkeleton,
@@ -14,6 +14,7 @@ import {
   buildShelfFocusGraph,
   useFocusStore,
   useRemoteInput,
+  glassBlur,
 } from "@ui";
 import { loadChannelsByKind, loadVodCategories } from "../content-loader.js";
 import { toggleFavorite, isFavorite as checkIsFavorite } from "../profile-store.js";
@@ -80,7 +81,6 @@ function groupByCategory(movies: Channel[], categoryNameById: Map<string, string
 export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybackOpen = false }: VodScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
-  const focusedId = useFocusStore((state) => state.focusedId);
   const [activeCategoryId, setActiveCategoryId] = useState(ALL_CATEGORIES_ID);
   const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -294,18 +294,31 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // for a concrete, finite id list (see use-catalog-page.ts's doc comment):
   // the graph only ever holds what's actually loaded, and grows a page at a
   // time just ahead of where the user is browsing.
+  //
+  // Subscribes to a boolean ("is focus in the trigger zone?") rather than
+  // focusedId itself, so this screen — and its whole grid/shelf tree — only
+  // re-renders when focus crosses into or out of the zone, not on every
+  // D-pad press. gridMovies is an effect dependency so a page that lands
+  // while focus is still in the zone immediately checks for the next one.
+  const gridEndZoneIds = useMemo(
+    () => (gridMovies ? new Set(gridMovies.slice(Math.max(0, gridMovies.length - gridColumns)).map((item) => gridItemId(item.id))) : null),
+    [gridMovies, gridColumns],
+  );
+  const isFocusInGridEndZone = useFocusStore((state) => state.focusedId !== null && (gridEndZoneIds?.has(state.focusedId) ?? false));
   useEffect(() => {
-    if (!gridMovies || !localGridHasMore || !focusedId) return;
-    const index = gridMovies.findIndex((item) => gridItemId(item.id) === focusedId);
-    if (index === -1) return;
-    if (index >= gridMovies.length - gridColumns) loadMoreLocalGrid();
-  }, [focusedId, gridMovies, localGridHasMore, gridColumns, loadMoreLocalGrid]);
+    if (isFocusInGridEndZone && localGridHasMore) loadMoreLocalGrid();
+  }, [isFocusInGridEndZone, gridMovies, localGridHasMore, loadMoreLocalGrid]);
 
   // Lookups (play/favourite/backdrop) need to search whichever list is
   // actually on screen — the local-table grid/shelves when synced, or the
   // legacy fallback's full catalog/category-scoped fetch otherwise (see
   // needsFullCatalog above).
-  const visibleMovies = gridMovies ?? shelves.flatMap((shelf) => shelf.items);
+  const visibleMovies = useMemo(() => gridMovies ?? shelves.flatMap((shelf) => shelf.items), [gridMovies, shelves]);
+  const logoUrlByMovieId = useMemo(() => new Map(visibleMovies.map((movie) => [movie.id, movie.logoUrl])), [visibleMovies]);
+  const getBackdropUrl = useCallback(
+    (focusedId: string | null) => (focusedId ? logoUrlByMovieId.get(resolveMovieIdFromFocusId(focusedId)) : undefined),
+    [logoUrlByMovieId, resolveMovieIdFromFocusId],
+  );
 
   useRemoteInput(
     platform,
@@ -330,8 +343,6 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     !isPlaybackOpen,
   );
 
-  const focusedMovieId = focusedId ? resolveMovieIdFromFocusId(focusedId) : undefined;
-  const focusedMovie = visibleMovies.find((m) => m.id === focusedMovieId);
 
   // Only a fetch failure with nothing to show at all is a hard error — a
   // failed background refresh with a good (possibly stale) cache hit
@@ -348,7 +359,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
 
   return (
     <div style={{ paddingTop: 24, paddingBottom: 40 }}>
-      <FocusBackdrop imageUrl={focusedMovie?.logoUrl} />
+      <FocusTrackingBackdrop getImageUrl={getBackdropUrl} />
 
       {/* Sticky so the category filter and search stay reachable/visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
       <div
@@ -474,8 +485,7 @@ const VodSearchInput = forwardRef<HTMLInputElement, VodSearchInputProps>(functio
           borderRadius: 999,
           border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.16)",
           background: "rgba(28,28,34,0.7)",
-          backdropFilter: "blur(16px) saturate(140%)",
-          WebkitBackdropFilter: "blur(16px) saturate(140%)",
+          ...glassBlur("blur(16px) saturate(140%)"),
           boxShadow: isFocused ? "0 0 0 3px var(--accent, #38bdf8)" : undefined,
           transition: "box-shadow 160ms ease-out, border-color 160ms ease-out",
         }}

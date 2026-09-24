@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Category, Channel, PlatformId, PlaylistSource, Profile } from "@core";
-import { ChannelPreloader } from "@player";
 import {
   CategorySidebar,
   ChannelGridSkeleton,
@@ -84,7 +83,6 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
   // same pattern as FavouritesScreen's own favoritesVersion.
   const [favoritesVersion, setFavoritesVersion] = useState(0);
 
-  const preloaderRef = useRef(new ChannelPreloader());
   const previewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focus = useFocusStore((state) => state.focus);
 
@@ -120,18 +118,12 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
   }, [visibleChannels]);
 
   useEffect(() => {
-    const preloader = preloaderRef.current;
-    return () => preloader.dispose();
-  }, []);
-
-  useEffect(() => {
     return () => {
       if (previewDebounceRef.current) clearTimeout(previewDebounceRef.current);
     };
   }, []);
 
   const handleHighlight = useCallback((channel: Channel) => {
-    preloaderRef.current.warm(channel.streamUrl);
     if (previewDebounceRef.current) clearTimeout(previewDebounceRef.current);
     previewDebounceRef.current = setTimeout(() => setPreviewChannel(channel), PREVIEW_DEBOUNCE_MS);
   }, []);
@@ -150,7 +142,11 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
     !isPlaybackOpen,
   );
 
-  const previewStreamUrl = previewChannel?.streamUrl ?? null;
+  // Suspended while PlayerScreen is open on top: this screen stays mounted
+  // underneath, and without this its preview would keep streaming and
+  // decoding the same channel in parallel with the fullscreen player —
+  // two MSE pipelines competing for the TV's few hardware decoders.
+  const previewStreamUrl = isPlaybackOpen ? null : (previewChannel?.streamUrl ?? null);
 
   const isInitialLoading = isChannelsLoading || isCategoriesLoading;
 

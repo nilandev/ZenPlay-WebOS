@@ -1,4 +1,5 @@
 import { Heart } from "lucide-react";
+import { glassBlur } from "../perf-tier.js";
 
 export interface FavoriteHeartProps {
   isFavorite: boolean;
@@ -27,8 +28,7 @@ export function FavoriteHeart({ isFavorite, size = 16 }: FavoriteHeartProps): JS
         height: size + 12,
         borderRadius: "50%",
         background: "rgba(0,0,0,0.55)",
-        backdropFilter: "blur(4px)",
-        WebkitBackdropFilter: "blur(4px)",
+        ...glassBlur("blur(4px)"),
       }}
     >
       <Heart size={size} strokeWidth={2} color="#ff6b6b" fill="#ff6b6b" />

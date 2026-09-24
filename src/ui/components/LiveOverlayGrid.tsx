@@ -4,6 +4,7 @@ import { useFocusStore } from "../focus/focus-store.js";
 import { buildGridFocusGraph } from "../focus/build-grid-graph.js";
 import { Focusable } from "../focus/Focusable.js";
 import { FavoriteHeart } from "./FavoriteHeart.js";
+import { glassBlur } from "../perf-tier.js";
 
 const VISIBLE_ROWS = 2;
 const CARD_HEIGHT_PX = 84;
@@ -118,7 +119,7 @@ function ChannelCard({
         borderRadius: 14,
         border: isFocused ? "1.5px solid rgba(255,255,255,0.9)" : "1px solid rgba(255,255,255,0.14)",
         background: isFocused ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.08)",
-        backdropFilter: "blur(6px)",
+        ...glassBlur("blur(6px)"),
         boxShadow: isFocused ? "0 8px 24px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.2)" : "none",
         transform: isFocused ? "scale(1.06)" : "scale(1)",
         transition: "transform 140ms ease-out, background 140ms ease-out, box-shadow 140ms ease-out",

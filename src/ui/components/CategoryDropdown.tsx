@@ -4,6 +4,7 @@ import type { FocusNode } from "../focus/focus-store.js";
 import { Focusable } from "../focus/Focusable.js";
 import { useFocusStore } from "../focus/focus-store.js";
 import { buildListFocusGraph } from "../focus/build-grid-graph.js";
+import { glassBlur } from "../perf-tier.js";
 
 export interface CategoryDropdownItem {
   id: string;
@@ -108,8 +109,7 @@ export function CategoryDropdown({
             background: isTriggerFocused
               ? "linear-gradient(160deg, rgba(70,74,84,0.85) 0%, rgba(38,40,48,0.9) 100%)"
               : "linear-gradient(160deg, rgba(55,58,68,0.6) 0%, rgba(28,30,36,0.65) 100%)",
-            backdropFilter: "blur(16px) saturate(140%)",
-            WebkitBackdropFilter: "blur(16px) saturate(140%)",
+            ...glassBlur("blur(16px) saturate(140%)"),
             color: "var(--text, #f4f4f6)",
             fontSize: 16,
             fontWeight: 700,
@@ -144,8 +144,7 @@ export function CategoryDropdown({
               borderRadius: 14,
               border: "1px solid rgba(255,255,255,0.14)",
               background: "rgba(24,24,30,0.96)",
-              backdropFilter: "blur(24px) saturate(160%)",
-              WebkitBackdropFilter: "blur(24px) saturate(160%)",
+              ...glassBlur("blur(24px) saturate(160%)"),
               boxShadow: "0 20px 48px rgba(0,0,0,0.55)",
               padding: 8,
             }}

@@ -44,7 +44,11 @@ export function LiveChannelPreview({
 }: LiveChannelPreviewProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
-  const focusedId = useFocusStore((state) => state.focusedId);
+  // Boolean selectors rather than the raw focusedId, so moving focus around
+  // the channel list (which never lands on these two nodes) doesn't
+  // re-render this panel and its VideoSurface on every press.
+  const isPreviewFocused = useFocusStore((state) => state.focusedId === focusId);
+  const isFavoriteButtonFocused = useFocusStore((state) => state.focusedId === favoriteButtonFocusId);
 
   // onEnterFullScreen/onToggleFavorite are recreated every render by the
   // owning screen (LiveTvScreen), which would otherwise force the graph
@@ -72,8 +76,6 @@ export function LiveChannelPreview({
     return () => clearGraph(SCOPE);
   }, [focusId, favoriteButtonFocusId, belowFocusId, setGraph, clearGraph]);
 
-  const isPreviewFocused = focusedId === focusId;
-  const isFavoriteButtonFocused = focusedId === favoriteButtonFocusId;
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>

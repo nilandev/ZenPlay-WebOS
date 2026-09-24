@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { FocusScrollManagedContext } from "../focus/Focusable.js";
 import { useFocusStore } from "../focus/focus-store.js";
 
 export interface ShelfProps<T> {
@@ -14,47 +15,74 @@ export interface ShelfProps<T> {
  * (left/right within the row, up/down across rows) is the caller's job via
  * buildShelfFocusGraph, since only the screen composing multiple shelves
  * knows the full cross-row layout.
+ *
+ * Follows focus via a store subscription rather than subscribing to
+ * focusedId as render state: a D-pad press then re-renders only the two
+ * cards whose focused state actually changed (each FocusCard subscribes to
+ * its own id), not every card in every shelf on screen. Scrolling is also
+ * owned entirely here (FocusScrollManagedContext switches off Focusable's
+ * own scrollIntoView for the cards inside), so there's exactly one scroll
+ * request per press instead of two competing ones.
  */
 export function Shelf<T>({ title, items, getId, renderItem }: ShelfProps<T>): JSX.Element {
-  const focusedId = useFocusStore((state) => state.focusedId);
+  const sectionRef = useRef<HTMLElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
 
-  const containsFocus = items.some((item) => getId(item) === focusedId);
+  // getId is typically an inline arrow from the caller — read through a ref
+  // so a parent re-render doesn't rebuild the id set and re-subscribe.
+  const getIdRef = useRef(getId);
+  getIdRef.current = getId;
+  const ids = useMemo(() => new Set(items.map((item) => getIdRef.current(item))), [items]);
 
   useEffect(() => {
-    if (!containsFocus || !trackRef.current) return;
-    const focusedEl = trackRef.current.querySelector<HTMLElement>(`[data-focus-id="${CSS.escape(focusedId ?? "")}"]`);
-    focusedEl?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
-  }, [focusedId, containsFocus]);
+    function scrollToFocused(focusedId: string | null): void {
+      const track = trackRef.current;
+      if (!focusedId || !ids.has(focusedId) || !track) return;
+      const focusedEl = Array.from(track.querySelectorAll<HTMLElement>("[data-focus-id]")).find((el) => el.dataset.focusId === focusedId);
+      if (!focusedEl) return;
+      // Centre the card horizontally. The track is position: relative, so
+      // offsetLeft is measured against it; setting scrollLeft picks up the
+      // track's own scroll-behavior: smooth.
+      track.scrollLeft = focusedEl.offsetLeft - (track.clientWidth - focusedEl.offsetWidth) / 2;
+      sectionRef.current?.scrollIntoView?.({ block: "nearest" });
+    }
+
+    scrollToFocused(useFocusStore.getState().focusedId);
+    return useFocusStore.subscribe((state, prev) => {
+      if (state.focusedId !== prev.focusedId) scrollToFocused(state.focusedId);
+    });
+  }, [ids]);
 
   if (items.length === 0) return <></>;
 
   return (
-    <section style={{ marginBottom: 32 }}>
+    <section ref={sectionRef} style={{ marginBottom: 32 }}>
       <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 -8px 40px" }}>{title}</h2>
       <div
         ref={trackRef}
         style={{
+          position: "relative",
           display: "flex",
           gap: 16,
           overflowX: "auto",
           // overflow-x: auto forces overflow-y to clip too (the two axes
-          // can't be independently visible/auto per spec), so top padding
-          // has to be generous enough to contain FocusCard's focused-state
-          // scale(1.05) growth — otherwise the focused card's top edge gets
-          // cut off by this track instead of just rendering outside its
-          // unpadded box. 32px covers that headroom for FocusCard's default
-          // 220x330 size with margin to spare.
-          padding: "32px 40px 24px",
+          // can't be independently visible/auto per spec), so the padding
+          // has to contain FocusCard's focused-state lift — otherwise it gets
+          // cut off by this track. Top: the scale(1.1) growth (~17px on the
+          // default 220x330 card). Bottom: that growth plus the lift shadow
+          // falling beneath the card (see FocusCard's shadow).
+          padding: "32px 40px 48px",
           scrollbarWidth: "none",
           scrollBehavior: "smooth",
         }}
       >
-        {items.map((item) => (
-          <div key={getId(item)} style={{ flex: "0 0 auto" }}>
-            {renderItem(item)}
-          </div>
-        ))}
+        <FocusScrollManagedContext.Provider value={true}>
+          {items.map((item) => (
+            <div key={getId(item)} style={{ flex: "0 0 auto" }}>
+              {renderItem(item)}
+            </div>
+          ))}
+        </FocusScrollManagedContext.Provider>
       </div>
     </section>
   );

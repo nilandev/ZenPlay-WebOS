@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PlatformId, PlaylistSource } from "@core";
-import { Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode } from "@ui";
+import { Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode, glassBlur } from "@ui";
 import { Check, DatabaseZap, Plus, Radio, RefreshCw, Trash2 } from "lucide-react";
 import { clearCachedContent, clearCachedContentForSource } from "../content-cache.js";
 import { loadPlaylistInfo } from "../content-loader.js";
@@ -351,8 +351,7 @@ function PlaylistCard({
             background: isCardFocused
               ? "linear-gradient(160deg, rgba(70,74,84,0.75) 0%, rgba(38,40,48,0.8) 100%)"
               : "linear-gradient(160deg, rgba(55,58,68,0.5) 0%, rgba(28,30,36,0.55) 100%)",
-            backdropFilter: "blur(16px) saturate(140%)",
-            WebkitBackdropFilter: "blur(16px) saturate(140%)",
+            ...glassBlur("blur(16px) saturate(140%)"),
             boxShadow: isCardFocused ? "0 0 0 3px var(--accent), 0 12px 28px -8px rgba(0,0,0,0.5)" : "none",
             transform: isCardFocused ? "scale(1.01)" : "scale(1)",
             transition: "transform 160ms ease-out, box-shadow 160ms ease-out, background 160ms ease-out",
@@ -564,8 +563,7 @@ function ConfirmButton({ id: _id, label, onClick, danger }: { id: string; label:
           : isFocused
             ? "linear-gradient(160deg, rgba(70,74,84,0.75) 0%, rgba(38,40,48,0.8) 100%)"
             : "linear-gradient(160deg, rgba(55,58,68,0.5) 0%, rgba(28,30,36,0.55) 100%)",
-        backdropFilter: danger ? undefined : "blur(16px) saturate(140%)",
-        WebkitBackdropFilter: danger ? undefined : "blur(16px) saturate(140%)",
+        ...glassBlur(danger ? undefined : "blur(16px) saturate(140%)"),
         color: danger ? "#2a0a0a" : "var(--text)",
         fontSize: 15,
         fontWeight: 700,

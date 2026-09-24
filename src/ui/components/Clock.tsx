@@ -14,8 +14,8 @@ export function Clock(): JSX.Element {
 
   return (
     <div style={{ textAlign: "center", lineHeight: 1.3 }}>
-      <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{time}</div>
-      <div style={{ fontSize: "1rem", fontWeight: 600, color: "var(--text-dim)", whiteSpace: "nowrap", marginTop: "0.25rem" }}>{date}</div>
+      <div style={{ fontSize: "2.75rem", fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{time}</div>
+      <div style={{ fontSize: "1.375rem", fontWeight: 600, color: "var(--text-dim)", whiteSpace: "nowrap", marginTop: "0.25rem" }}>{date}</div>
     </div>
   );
 }

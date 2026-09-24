@@ -6,6 +6,7 @@ import {
   CategoryDropdown,
   FavoriteHeart,
   FocusBackdrop,
+  FocusTrackingBackdrop,
   FocusCard,
   Focusable,
   PillButton,
@@ -17,6 +18,7 @@ import {
   buildShelfFocusGraph,
   useFocusStore,
   useRemoteInput,
+  glassBlur,
 } from "@ui";
 import { loadSeriesCategories, loadSeriesDetails, loadSeriesList } from "../content-loader.js";
 import { toggleFavorite, isFavorite as checkIsFavorite, loadContinueWatching } from "../profile-store.js";
@@ -112,7 +114,6 @@ export function SeriesScreen({
 }: SeriesScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
-  const focusedId = useFocusStore((state) => state.focusedId);
   const [selected, setSelectedState] = useState<string | null>(initialSelectedId ?? null);
   const [activeSeason, setActiveSeason] = useState<number | null>(null);
   const [activeCategoryId, setActiveCategoryId] = useState(ALL_CATEGORIES_ID);
@@ -288,7 +289,7 @@ export function SeriesScreen({
   // is actually on screen — the local-table grid/shelves when synced, or
   // the legacy fallback's full catalog/category-scoped fetch otherwise (see
   // needsFullCatalog above).
-  const visibleSeries = gridSeries ?? shelves.flatMap((shelf) => shelf.items);
+  const visibleSeries = useMemo(() => gridSeries ?? shelves.flatMap((shelf) => shelf.items), [gridSeries, shelves]);
 
   const series = visibleSeries.find((s) => s.id === selected);
   const continueEntry = useMemo(
@@ -393,12 +394,23 @@ export function SeriesScreen({
   // VodScreen's identical effect for the full rationale (spatial navigation
   // needs a concrete, finite id list, so this is what keeps a paginated
   // grid compatible with it).
+  //
+  // Like VodScreen, this subscribes to a trigger-zone boolean rather than
+  // focusedId so the screen doesn't re-render on every D-pad press.
+  const gridEndZoneIds = useMemo(
+    () => (gridSeries ? new Set(gridSeries.slice(Math.max(0, gridSeries.length - gridColumns)).map((item) => gridItemId(item.id))) : null),
+    [gridSeries, gridColumns],
+  );
+  const isFocusInGridEndZone = useFocusStore((state) => state.focusedId !== null && (gridEndZoneIds?.has(state.focusedId) ?? false));
   useEffect(() => {
-    if (!gridSeries || !localGridHasMore || !focusedId) return;
-    const index = gridSeries.findIndex((item) => gridItemId(item.id) === focusedId);
-    if (index === -1) return;
-    if (index >= gridSeries.length - gridColumns) loadMoreLocalGrid();
-  }, [focusedId, gridSeries, localGridHasMore, gridColumns, loadMoreLocalGrid]);
+    if (isFocusInGridEndZone && localGridHasMore) loadMoreLocalGrid();
+  }, [isFocusInGridEndZone, gridSeries, localGridHasMore, loadMoreLocalGrid]);
+
+  const posterUrlBySeriesId = useMemo(() => new Map(visibleSeries.map((s) => [s.id, s.posterUrl])), [visibleSeries]);
+  const getBackdropUrl = useCallback(
+    (focusedId: string | null) => (focusedId ? posterUrlBySeriesId.get(resolveSeriesIdFromFocusId(focusedId)) : undefined),
+    [posterUrlBySeriesId, resolveSeriesIdFromFocusId],
+  );
 
   useRemoteInput(
     platform,
@@ -486,13 +498,11 @@ export function SeriesScreen({
 
   if (showFullScreenBrowseSkeleton) return <ShelfRowSkeleton />;
 
-  const focusedSeriesId = focusedId ? resolveSeriesIdFromFocusId(focusedId) : undefined;
-  const focusedSeries = visibleSeries.find((s) => s.id === focusedSeriesId);
   const firstContentId = gridSeries ? (gridSeries[0] ? gridItemId(gridSeries[0].id) : undefined) : shelves[0]?.items[0]?.id;
 
   return (
     <div style={{ paddingTop: 24, paddingBottom: 40 }}>
-      <FocusBackdrop imageUrl={focusedSeries?.posterUrl} />
+      <FocusTrackingBackdrop getImageUrl={getBackdropUrl} />
 
       {/* Sticky so the category filter and search stay reachable/visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
       <div
@@ -914,8 +924,7 @@ const SeriesSearchInput = forwardRef<HTMLInputElement, SeriesSearchInputProps>(f
           borderRadius: 999,
           border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.16)",
           background: "rgba(28,28,34,0.7)",
-          backdropFilter: "blur(16px) saturate(140%)",
-          WebkitBackdropFilter: "blur(16px) saturate(140%)",
+          ...glassBlur("blur(16px) saturate(140%)"),
           boxShadow: isFocused ? "0 0 0 3px var(--accent, #38bdf8)" : undefined,
           transition: "box-shadow 160ms ease-out, border-color 160ms ease-out",
         }}

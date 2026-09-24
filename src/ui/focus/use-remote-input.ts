@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { resolveRemoteAction, type PlatformId } from "@core";
-import { useFocusStore } from "./focus-store.js";
+import { useFocusStore, type FocusDirection } from "./focus-store.js";
 
 /** Holding Select this long counts as a long-press instead of a tap — see onLongSelect below. */
 const LONG_PRESS_MS = 500;
@@ -29,11 +29,22 @@ export interface RemoteInputHandlers {
  * went off. Browsers/TVs auto-repeat keydown while a key is held (each
  * repeat has event.repeat === true), so the timer is only armed on the
  * initial, non-repeat keydown.
+ *
+ * Auto-repeat arrow presses (holding a D-pad direction) are capped at one
+ * focus move per animation frame: a TV remote repeats every ~30-50ms, faster
+ * than a weak TV CPU can render a focus change, so uncapped repeats queue
+ * up and focus keeps sliding after the button is released. A first
+ * (non-repeat) press always moves immediately.
+ *
+ * The listeners are registered once per platform/enabled change — the
+ * current focusedId and handlers are read at event time (store getState() /
+ * a ref) instead of being effect dependencies, which previously tore down
+ * and re-added both document listeners on every render of the owning
+ * screen, i.e. on every focus move.
  */
 export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandlers = {}, enabled = true): void {
-  const move = useFocusStore((state) => state.move);
-  const select = useFocusStore((state) => state.select);
-  const focusedId = useFocusStore((state) => state.focusedId);
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFiredRef = useRef(false);
 
@@ -46,6 +57,17 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
     // `enabled={!isPlaybackOpen}` so only the overlay's own useRemoteInput
     // call is live while it's covering the screen.
     if (!enabled) return;
+
+    let repeatFrame = 0;
+    let queuedRepeatMove: FocusDirection | null = null;
+
+    function flushRepeatMove(): void {
+      repeatFrame = 0;
+      if (queuedRepeatMove === null) return;
+      const direction = queuedRepeatMove;
+      queuedRepeatMove = null;
+      useFocusStore.getState().move(direction);
+    }
 
     function clearLongPressTimer(): void {
       if (longPressTimerRef.current !== null) {
@@ -71,38 +93,57 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
 
       if (action !== "back" && isTypingIntoTextField()) return;
 
+      const currentHandlers = handlersRef.current;
+
       switch (action) {
         case "up":
         case "down":
         case "left":
         case "right":
           event.preventDefault();
-          move(action);
+          if (!event.repeat) {
+            // A deliberate press always lands immediately and supersedes
+            // anything still queued from a previous hold.
+            queuedRepeatMove = null;
+            useFocusStore.getState().move(action);
+            break;
+          }
+          if (repeatFrame !== 0) {
+            // Already moved once this frame — keep only the latest direction.
+            queuedRepeatMove = action;
+            break;
+          }
+          useFocusStore.getState().move(action);
+          repeatFrame = requestAnimationFrame(flushRepeatMove);
           break;
         case "select":
           event.preventDefault();
           if (event.repeat) return; // auto-repeat while held — the timer below already covers "held"
           longPressFiredRef.current = false;
-          if (handlers.onLongSelect) {
+          if (currentHandlers.onLongSelect) {
+            const focusedAtPress = useFocusStore.getState().focusedId;
             clearLongPressTimer();
             longPressTimerRef.current = setTimeout(() => {
               longPressFiredRef.current = true;
-              handlers.onLongSelect?.(focusedId);
+              handlersRef.current.onLongSelect?.(focusedAtPress);
             }, LONG_PRESS_MS);
           }
           break;
         case "back":
           event.preventDefault();
-          handlers.onBack?.();
+          // Holding Back would otherwise walk up several levels at once (and
+          // on Home, close the app) — one press is one step back.
+          if (event.repeat) break;
+          currentHandlers.onBack?.();
           break;
         case "play-pause":
-          handlers.onPlayPause?.();
+          currentHandlers.onPlayPause?.();
           break;
         case "channel-up":
-          handlers.onChannelUp?.();
+          currentHandlers.onChannelUp?.();
           break;
         case "channel-down":
-          handlers.onChannelDown?.();
+          currentHandlers.onChannelDown?.();
           break;
         case "unknown":
           break;
@@ -114,11 +155,14 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
       if (isTypingIntoTextField()) return;
       clearLongPressTimer();
       if (longPressFiredRef.current) return; // onLongSelect already fired — don't also fire the tap action
+      // Captured before select() runs, since a per-node onSelect may itself
+      // move focus — the screen-level handler should see what was selected.
+      const { focusedId, select } = useFocusStore.getState();
       // Per-node onSelect (e.g. TopNav tabs) fires first; screens that
       // instead inspect focusedId themselves (e.g. VodScreen) still work
       // via the onSelect handler below.
       select();
-      handlers.onSelect?.(focusedId);
+      handlersRef.current.onSelect?.(focusedId);
     }
 
     document.addEventListener("keydown", onKeyDown);
@@ -126,7 +170,8 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("keyup", onKeyUp);
+      if (repeatFrame !== 0) cancelAnimationFrame(repeatFrame);
       clearLongPressTimer();
     };
-  }, [platform, move, select, focusedId, handlers, enabled]);
+  }, [platform, enabled]);
 }

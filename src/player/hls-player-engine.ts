@@ -15,8 +15,14 @@ import type {
  * spec-strict defaults.
  */
 const IPTV_TUNED_CONFIG: Partial<HlsConfig> = {
-  maxBufferLength: 30,
-  maxMaxBufferLength: 60,
+  maxBufferLength: 20,
+  maxMaxBufferLength: 30,
+  // hls.js defaults backBufferLength to Infinity, so a live channel left
+  // playing keeps every already-played segment in its SourceBuffer until the
+  // browser's MSE quota is hit. TV quotas are far smaller than desktop
+  // Chromium's, and hitting them means eviction churn and stalls.
+  backBufferLength: 10,
+  maxBufferSize: 30 * 1000 * 1000,
   liveSyncDurationCount: 3,
   manifestLoadingMaxRetry: 4,
   levelLoadingMaxRetry: 4,
@@ -38,7 +44,34 @@ function isHlsStream(streamUrl: string): boolean {
   return path.toLowerCase().endsWith(".m3u8");
 }
 
+/**
+ * True inside the webOS runtime, which injects a global `webOS` object (see
+ * src/platform.ts's detectPlatform — duplicated here rather than imported
+ * so the player package doesn't depend on the app shell).
+ */
+function isWebOsRuntime(): boolean {
+  return typeof window !== "undefined" && Boolean((window as unknown as { webOS?: unknown }).webOS);
+}
+
+/** The subset of the (non-standard-in-lib.dom) HTMLMediaElement.audioTracks API the native-HLS path needs. */
+interface NativeAudioTrackList {
+  readonly length: number;
+  [index: number]: { id: string; label: string; language: string; enabled: boolean };
+}
+
+export interface HlsPlayerEngineOptions {
+  /**
+   * Play HLS through the <video> element's own pipeline instead of hls.js
+   * when the platform can. On webOS that's LG's native media pipeline,
+   * which demuxes MPEG-TS in the platform player rather than transmuxing
+   * TS→fMP4 in JavaScript on the TV's weak ARM cores. Defaults to true on
+   * webOS, false elsewhere (desktop Chromium has no native HLS).
+   */
+  preferNativeHls?: boolean;
+}
+
 export class HlsPlayerEngine implements PlayerEngine {
+  private readonly preferNativeHls: boolean;
   private hls: Hls | null = null;
   private video: HTMLVideoElement | null = null;
   private errorCallbacks = new Set<(error: PlayerError) => void>();
@@ -49,6 +82,10 @@ export class HlsPlayerEngine implements PlayerEngine {
     const progress: PlaybackProgress = { positionSeconds: this.video.currentTime, durationSeconds: this.video.duration };
     for (const cb of this.timeUpdateCallbacks) cb(progress);
   };
+
+  constructor(options: HlsPlayerEngineOptions = {}) {
+    this.preferNativeHls = options.preferNativeHls ?? isWebOsRuntime();
+  }
 
   attach(videoElement: HTMLVideoElement): void {
     this.video = videoElement;
@@ -71,6 +108,15 @@ export class HlsPlayerEngine implements PlayerEngine {
       // The <video> element's own native decoding (Chromium's MSE/demuxer
       // pipeline on webOS) is what actually plays these, same as the
       // Hls.isSupported()-false fallback below already does for HLS itself.
+      this.video.src = streamUrl;
+      return;
+    }
+
+    // Hls.isSupported() is always true on webOS (it has MSE), so without
+    // this check every live channel would go through hls.js's JavaScript
+    // transmuxer even though the platform player can take the manifest
+    // directly.
+    if (this.preferNativeHls && this.video.canPlayType("application/vnd.apple.mpegurl") !== "") {
       this.video.src = streamUrl;
       return;
     }
@@ -116,8 +162,18 @@ export class HlsPlayerEngine implements PlayerEngine {
     if (this.video) this.video.currentTime = seconds;
   }
 
-  destroy(): void {
+  unload(): void {
     this.destroyHlsInstance();
+    if (!this.video) return;
+    this.video.pause();
+    // Clearing src alone doesn't release the decoder — load() on an
+    // element with no source is what actually tears the pipeline down.
+    this.video.removeAttribute("src");
+    this.video.load();
+  }
+
+  destroy(): void {
+    this.unload();
     this.video?.removeEventListener("timeupdate", this.handleTimeUpdate);
     this.errorCallbacks.clear();
     this.timeUpdateCallbacks.clear();
@@ -125,7 +181,18 @@ export class HlsPlayerEngine implements PlayerEngine {
   }
 
   getAudioTracks(): AudioTrackInfo[] {
-    if (!this.hls) return [];
+    if (!this.hls) {
+      // Native-HLS/direct-play path: the platform player exposes the
+      // stream's audio renditions via the media element's own track list
+      // (supported by webOS's runtime, absent from TS's lib.dom).
+      const tracks = this.getNativeAudioTracks();
+      if (!tracks) return [];
+      return Array.from({ length: tracks.length }, (_, index) => ({
+        id: index,
+        label: tracks[index].label || tracks[index].language || `Track ${index + 1}`,
+        language: tracks[index].language || undefined,
+      }));
+    }
     return this.hls.audioTracks.map((track) => ({
       id: track.id,
       label: track.name || track.lang || `Track ${track.id}`,
@@ -134,7 +201,17 @@ export class HlsPlayerEngine implements PlayerEngine {
   }
 
   setAudioTrack(id: number): void {
-    if (this.hls) this.hls.audioTrack = id;
+    if (this.hls) {
+      this.hls.audioTrack = id;
+      return;
+    }
+    const tracks = this.getNativeAudioTracks();
+    if (!tracks) return;
+    for (let i = 0; i < tracks.length; i++) tracks[i].enabled = i === id;
+  }
+
+  private getNativeAudioTracks(): NativeAudioTrackList | undefined {
+    return (this.video as unknown as { audioTracks?: NativeAudioTrackList } | null)?.audioTracks;
   }
 
   getSubtitleTracks(): SubtitleTrackInfo[] {

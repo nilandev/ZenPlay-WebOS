@@ -189,3 +189,55 @@ describe("HlsPlayerEngine subtitle/volume controls", () => {
     expect(video.muted).toBe(false);
   });
 });
+
+describe("HlsPlayerEngine native HLS (webOS)", () => {
+  beforeEach(() => {
+    hlsInstances.length = 0;
+    (Hls.isSupported as ReturnType<typeof vi.fn>).mockReturnValue(true);
+  });
+
+  it("hands an .m3u8 URL straight to <video> when native HLS is preferred and playable", async () => {
+    const engine = new HlsPlayerEngine({ preferNativeHls: true });
+    const video = makeVideoElement();
+    video.canPlayType = vi.fn(() => "maybe" as CanPlayTypeResult);
+    engine.attach(video);
+
+    await engine.load("http://example.com/live/u/p/1.m3u8");
+
+    expect(hlsInstances).toHaveLength(0);
+    expect(video.src).toBe("http://example.com/live/u/p/1.m3u8");
+  });
+
+  it("falls back to hls.js when the platform can't play HLS natively", async () => {
+    const engine = new HlsPlayerEngine({ preferNativeHls: true });
+    const video = makeVideoElement();
+    video.canPlayType = vi.fn(() => "" as CanPlayTypeResult);
+    engine.attach(video);
+
+    await engine.load("http://example.com/live/u/p/1.m3u8");
+
+    expect(hlsInstances).toHaveLength(1);
+  });
+});
+
+describe("HlsPlayerEngine.unload", () => {
+  beforeEach(() => {
+    hlsInstances.length = 0;
+    (Hls.isSupported as ReturnType<typeof vi.fn>).mockReturnValue(true);
+  });
+
+  it("destroys the hls.js instance and clears the video source so the decoder is released", async () => {
+    const engine = new HlsPlayerEngine({ preferNativeHls: false });
+    const video = makeVideoElement();
+    video.pause = vi.fn();
+    video.load = vi.fn();
+    engine.attach(video);
+    await engine.load("http://example.com/live/u/p/1.m3u8");
+
+    engine.unload();
+
+    expect(hlsInstances[0].destroy).toHaveBeenCalled();
+    expect(video.hasAttribute("src")).toBe(false);
+    expect(video.load).toHaveBeenCalled();
+  });
+});

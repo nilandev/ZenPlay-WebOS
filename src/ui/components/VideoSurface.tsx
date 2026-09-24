@@ -78,7 +78,15 @@ export function VideoSurface({
 
   useEffect(() => {
     const engine = engineRef.current;
-    if (!engine || !streamUrl) return;
+    if (!engine) return;
+    if (!streamUrl) {
+      // A null URL means "nothing should be playing here" (e.g. LiveTvScreen
+      // suspending its preview under a fullscreen player) — release the
+      // decoder rather than leaving the previous stream running unseen.
+      engine.unload();
+      setIsBuffering(false);
+      return;
+    }
 
     let cancelled = false;
     setIsBuffering(true);

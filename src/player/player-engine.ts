@@ -42,6 +42,14 @@ export interface PlayerEngine {
   play(): Promise<void>;
   pause(): void;
   seekTo(seconds: number): void;
+  /**
+   * Stops the current stream and releases its decoder/MSE resources while
+   * keeping the engine attached for a later load() — e.g. a preview player
+   * suspended while a fullscreen player is open on top of it. webOS TVs
+   * have very few hardware decoders, so an idle-but-loaded <video> still
+   * competes with whichever one is actually on screen.
+   */
+  unload(): void;
   destroy(): void;
 
   getAudioTracks(): AudioTrackInfo[];
