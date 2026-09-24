@@ -7,7 +7,7 @@ import {
   categoryRailItemId,
   SeeAllCard,
   FavoriteHeart,
-  FocusTrackingBackdrop,
+  MeshBackground,
   FocusCard,
   Focusable,
   LiftSurface,
@@ -527,11 +527,6 @@ export function SeriesScreen({
     if (isFocusInGridEndZone && gridHasMore) loadMoreGrid?.();
   }, [isFocusInGridEndZone, gridSeries, gridHasMore, loadMoreGrid]);
 
-  const posterUrlBySeriesId = useMemo(() => new Map(visibleSeries.map((s) => [s.id, s.posterUrl])), [visibleSeries]);
-  const getBackdropUrl = useCallback(
-    (focusedId: string | null) => (focusedId ? posterUrlBySeriesId.get(resolveSeriesIdFromFocusId(focusedId)) : undefined),
-    [posterUrlBySeriesId, resolveSeriesIdFromFocusId],
-  );
 
   useRemoteInput(
     platform,
@@ -686,12 +681,21 @@ export function SeriesScreen({
     );
   }
 
-  if (showFullScreenBrowseSkeleton) return <ShelfRowSkeleton />;
+  if (showFullScreenBrowseSkeleton) {
+    return (
+      <MeshBackground>
+        <ShelfRowSkeleton />
+      </MeshBackground>
+    );
+  }
 
 
   return (
-    <div style={{ paddingTop: 24, paddingBottom: 40 }}>
-      <FocusTrackingBackdrop getImageUrl={getBackdropUrl} />
+    // Same backdrop as Live TV and the Program Guide (static on TVs — see
+    // MeshBackground), so every browse section reads as one app.
+    <MeshBackground>
+    {/* No top padding: the sticky bar's fade must start at the very top, or a strip of brighter background shows above it. */}
+    <div style={{ paddingBottom: 40 }}>
       <CategoryRail
         title="Series"
         items={categoryItems}
@@ -712,7 +716,9 @@ export function SeriesScreen({
           gap: BROWSE_GAP,
           padding: `1.5rem ${BROWSE_SIDE_PADDING} 1.5rem ${BROWSE_CONTENT_LEFT}`,
           marginBottom: "0.5rem",
-          background: "linear-gradient(180deg, var(--bg, #0b0b0f) 70%, rgba(11,11,15,0) 100%)",
+          // A soft fade (not a solid band) so posters scrolling under the
+          // bar stay out of the title/search while the mesh still shows.
+          background: "linear-gradient(180deg, rgba(8,9,11,0.85) 0%, rgba(8,9,11,0.6) 65%, rgba(8,9,11,0) 100%)",
         }}
       >
         <div style={{ minWidth: 0 }}>
@@ -730,6 +736,7 @@ export function SeriesScreen({
 
       {browseContent}
     </div>
+    </MeshBackground>
   );
 }
 

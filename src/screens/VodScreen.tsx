@@ -7,7 +7,7 @@ import {
   SeeAllCard,
   FavoriteHeart,
   Focusable,
-  FocusTrackingBackdrop,
+  MeshBackground,
   FocusCard,
   Shelf,
   ShelfRowSkeleton,
@@ -425,11 +425,6 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // legacy fallback's full catalog/category-scoped fetch otherwise (see
   // needsFullCatalog above).
   const visibleMovies = useMemo(() => gridMovies ?? shelves.flatMap((shelf) => shelf.items), [gridMovies, shelves]);
-  const logoUrlByMovieId = useMemo(() => new Map(visibleMovies.map((movie) => [movie.id, movie.logoUrl])), [visibleMovies]);
-  const getBackdropUrl = useCallback(
-    (focusedId: string | null) => (focusedId ? logoUrlByMovieId.get(resolveMovieIdFromFocusId(focusedId)) : undefined),
-    [logoUrlByMovieId, resolveMovieIdFromFocusId],
-  );
 
   useRemoteInput(
     platform,
@@ -526,15 +521,32 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // discarding a perfectly good screen (see useCachedContent's isStale doc
   // comment). isStale is available here if a "couldn't refresh" affordance
   // is wanted later; for now this just stops the false-positive hard error.
-  if (error && isInitialLoading) return <div role="alert">Failed to load movies: {error}</div>;
+  if (error && isInitialLoading) {
+    return (
+      <MeshBackground>
+        <div role="alert" style={{ padding: "3rem 3.5rem", fontSize: TV_TEXT, color: "var(--text)" }}>
+          Failed to load movies: {error}
+        </div>
+      </MeshBackground>
+    );
+  }
   void isStale;
 
-  if (showFullScreenSkeleton) return <ShelfRowSkeleton />;
+  if (showFullScreenSkeleton) {
+    return (
+      <MeshBackground>
+        <ShelfRowSkeleton />
+      </MeshBackground>
+    );
+  }
 
 
   return (
-    <div style={{ paddingTop: 24, paddingBottom: 40 }}>
-      <FocusTrackingBackdrop getImageUrl={getBackdropUrl} />
+    // Same backdrop as Live TV and the Program Guide (static on TVs — see
+    // MeshBackground), so every browse section reads as one app.
+    <MeshBackground>
+    {/* No top padding: the sticky bar's fade must start at the very top, or a strip of brighter background shows above it. */}
+    <div style={{ paddingBottom: 40 }}>
       <CategoryRail
         title="Movies"
         items={categoryItems}
@@ -555,7 +567,9 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
           gap: BROWSE_GAP,
           padding: `1.5rem ${BROWSE_SIDE_PADDING} 1.5rem ${BROWSE_CONTENT_LEFT}`,
           marginBottom: "0.5rem",
-          background: "linear-gradient(180deg, var(--bg, #0b0b0f) 70%, rgba(11,11,15,0) 100%)",
+          // A soft fade (not a solid band) so posters scrolling under the
+          // bar stay out of the title/search while the mesh still shows.
+          background: "linear-gradient(180deg, rgba(8,9,11,0.85) 0%, rgba(8,9,11,0.6) 65%, rgba(8,9,11,0) 100%)",
         }}
       >
         <div style={{ minWidth: 0 }}>
@@ -573,6 +587,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
 
       {browseContent}
     </div>
+    </MeshBackground>
   );
 }
 

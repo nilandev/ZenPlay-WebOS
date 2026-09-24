@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PlatformId, Profile } from "@core";
-import { buildGridFocusGraph, Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode, useIsFocused } from "@ui";
-import { Pencil } from "lucide-react";
+import { MeshBackground, ProfileAvatarTile, TvButton, useFocusStore, useRemoteInput } from "@ui";
+import { Check } from "lucide-react";
 import { ProfileForm } from "./ProfileForm.js";
+import { buildProfileGridGraph, ProfileGridLayout } from "./ProfileGridLayout.js";
 
-const BACK_ID = "manage-profiles-back";
+const DONE_ID = "manage-profiles-done";
 
 export interface ManageProfilesScreenProps {
   profiles: Profile[];
@@ -35,7 +36,7 @@ export function ManageProfilesScreen({ profiles, platform, onBack, onUpdateProfi
       <ProfileForm
         platform={platform}
         profile={editingProfile}
-        title="Edit profile"
+        title="Edit Profile"
         saveLabel="Save"
         canDelete={profiles.length > 1}
         onSave={(fields) => {
@@ -68,100 +69,45 @@ function ManageProfilesGrid({
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
 
+  // Callbacks via a ref so the graph is only rebuilt (in place) when the set of profiles changes.
+  const latestRef = useRef({ onBack, onSelectProfile });
+  latestRef.current = { onBack, onSelectProfile };
   const tileIds = profiles.map((p) => p.id);
+  const profileIdsKey = tileIds.join("|");
 
   useEffect(() => {
-    const tileNodes: FocusNode[] = buildGridFocusGraph(tileIds, tileIds.length).map((node) => ({
-      ...node,
-      neighbors: { ...node.neighbors, down: BACK_ID },
-      onSelect: () => onSelectProfile(node.id),
-    }));
-    const backNode: FocusNode = { id: BACK_ID, neighbors: { up: tileIds[0] }, onSelect: onBack };
-    setGraph("manage-grid", [...tileNodes, backNode], tileIds[0] ?? BACK_ID);
-    return () => clearGraph("manage-grid");
-    // tileIds is derived fresh each render from profiles; only re-run when the actual profile set changes.
+    const nodes = buildProfileGridGraph(tileIds, (id) => latestRef.current.onSelectProfile(id), {
+      id: DONE_ID,
+      onSelect: () => latestRef.current.onBack(),
+    });
+    setGraph("manage-grid", nodes, tileIds[0] ?? DONE_ID);
+    // tileIds is fresh each render; profileIdsKey tracks its contents.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profiles.length, setGraph, clearGraph, onBack, onSelectProfile]);
+  }, [profileIdsKey, setGraph]);
+
+  useEffect(() => () => clearGraph("manage-grid"), [clearGraph]);
 
   useRemoteInput(platform, { onBack });
 
   return (
     <MeshBackground>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", gap: 4 }}>
-        <h1 style={{ fontSize: 32, fontWeight: 700, marginBottom: 4, color: "var(--text)" }}>Manage Profiles</h1>
-        <p style={{ marginBottom: 44, color: "var(--text-dim)" }}>Select a profile to edit or delete.</p>
-
-        <div style={{ display: "flex", gap: 40, marginBottom: 40 }}>
-          {profiles.map((profile) => (
-            <Focusable key={profile.id} id={profile.id}>
-              <EditableProfileTile id={profile.id} avatarUrl={profile.avatarUrl} label={profile.name} onClick={() => onSelectProfile(profile.id)} />
-            </Focusable>
-          ))}
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <Focusable id={BACK_ID}>
-            <BackButton onClick={onBack} />
-          </Focusable>
-        </div>
-      </div>
+      <ProfileGridLayout
+        title="Manage Profiles"
+        subtitle="Choose a profile to edit or delete"
+        tileCount={profiles.length}
+        action={<TvButton id={DONE_ID} label="Done" icon={Check} onSelect={onBack} />}
+      >
+        {profiles.map((profile) => (
+          <ProfileAvatarTile
+            key={profile.id}
+            id={profile.id}
+            label={profile.name}
+            avatarUrl={profile.avatarUrl}
+            variant="edit"
+            onSelect={() => onSelectProfile(profile.id)}
+          />
+        ))}
+      </ProfileGridLayout>
     </MeshBackground>
-  );
-}
-
-function EditableProfileTile({ id, avatarUrl, label, onClick }: { id: string; avatarUrl: string; label: string; onClick: () => void }): JSX.Element {
-  const isFocused = useIsFocused(id);
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, background: "transparent", border: "none", outline: "none" }}
-    >
-      <div style={{ position: "relative" }}>
-        <div
-          style={{
-            width: 128,
-            height: 128,
-            borderRadius: "50%",
-            overflow: "hidden",
-            background: "linear-gradient(160deg, var(--surface-raised), var(--surface))",
-            border: "1px solid var(--border)",
-            transform: isFocused ? "scale(1.1)" : "scale(1)",
-            boxShadow: isFocused ? "0 0 0 4px var(--accent), 0 12px 28px rgba(0,0,0,0.5)" : "none",
-            transition: "transform 160ms ease-out, box-shadow 160ms ease-out",
-          }}
-        >
-          <img src={avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        </div>
-        <div
-          style={{
-            position: "absolute",
-            bottom: 4,
-            right: 4,
-            width: 32,
-            height: 32,
-            borderRadius: "50%",
-            background: "var(--surface-raised)",
-            border: "1px solid var(--border)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Pencil size={15} strokeWidth={2} color="var(--text)" />
-        </div>
-      </div>
-      <span style={{ fontSize: 16, fontWeight: isFocused ? 700 : 500, color: isFocused ? "var(--text)" : "var(--text-dim)" }}>{label}</span>
-    </button>
-  );
-}
-
-function BackButton({ onClick }: { onClick: () => void }): JSX.Element {
-  const isFocused = useIsFocused(BACK_ID);
-  return (
-    <PillButton onClick={onClick} isFocused={isFocused}>
-      Back
-    </PillButton>
   );
 }

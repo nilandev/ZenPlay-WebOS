@@ -91,7 +91,7 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
     function onKeyDown(event: KeyboardEvent): void {
       const action = resolveRemoteAction(platform, event);
 
-      if (action !== "back" && isTypingIntoTextField()) return;
+      if (isTypingIntoTextField() && (action !== "back" || event.key === "Backspace")) return; // Backspace deletes a character, it doesn't go back
 
       const currentHandlers = handlersRef.current;
 

@@ -1,18 +1,13 @@
 import { useEffect, useState } from "react";
 import { ChannelGuide, type Channel, type EpgProgramme, type NowNext, type PlaylistSource } from "@core";
-import { getCachedContent } from "./content-cache.js";
-import { loadStreamEpg } from "./content-loader.js";
+import { __resetEpgCacheForTests, loadChannelGuide, peekChannelGuide } from "./epg-cache.js";
 
-/** How long a channel's fetched guide is reused before asking the provider again. */
-const GUIDE_TTL_MS = 10 * 60 * 1000;
 /** How often "now" is re-evaluated, so the progress bar moves and a finished programme rolls over to the next. */
 const TICK_MS = 30 * 1000;
 
-const guideCache = new Map<string, { programmes: EpgProgramme[]; fetchedAt: number }>();
-
-/** Test-only: forgets fetched guides. */
+/** Test-only: forgets fetched guides (they live in epg-cache.ts, shared with the Program Guide). */
 export function __resetNowNextCacheForTests(): void {
-  guideCache.clear();
+  __resetEpgCacheForTests();
 }
 
 export interface NowNextState {
@@ -24,12 +19,11 @@ export interface NowNextState {
  * What's on now and next for one channel — the Live TV preview's info
  * panel. Pass the channel the preview is actually showing (already
  * debounced while the user scrolls), not every highlighted row, so this
- * makes at most one request per settled channel.
+ * makes at most one request per settled channel. Guides come from
+ * epg-cache.ts, shared with the Program Guide grid.
  *
- * Uses the bulk XMLTV guide if Program Guide has already cached one for this
- * source (never fetches it — it can be tens of MB), otherwise the provider's
- * per-channel short EPG (Xtream only). Returns null when there's no guide
- * data at all, which callers treat as "show the channel line only".
+ * Returns null when there's no guide data at all, which callers treat as
+ * "show the channel line only".
  */
 export function useNowNext(source: PlaylistSource, channel: Channel | null): NowNextState {
   const [programmes, setProgrammes] = useState<EpgProgramme[] | null>(null);
@@ -47,27 +41,9 @@ export function useNowNext(source: PlaylistSource, channel: Channel | null): Now
       setIsLoading(false);
       return;
     }
-
-    const key = `${source.id}:${channel.id}`;
-    const cached = guideCache.get(key);
-    if (cached && Date.now() - cached.fetchedAt < GUIDE_TTL_MS) {
-      setProgrammes(cached.programmes);
-      setIsLoading(false);
-      return;
-    }
-
-    const bulk = getCachedContent<EpgProgramme[]>(`guide-epg:${source.id}`);
-    if (bulk && bulk.length > 0) {
-      const epgId = channel.epgChannelId ?? channel.id;
-      const forChannel = bulk.filter((p) => p.channelId === epgId);
-      guideCache.set(key, { programmes: forChannel, fetchedAt: Date.now() });
-      setProgrammes(forChannel);
-      setIsLoading(false);
-      return;
-    }
-
-    if (source.kind !== "xtream") {
-      setProgrammes([]);
+    const known = peekChannelGuide(source, channel);
+    if (known) {
+      setProgrammes(known);
       setIsLoading(false);
       return;
     }
@@ -75,17 +51,11 @@ export function useNowNext(source: PlaylistSource, channel: Channel | null): Now
     let cancelled = false;
     setProgrammes(null);
     setIsLoading(true);
-    loadStreamEpg(source, channel.id)
-      .then((result) => {
-        guideCache.set(key, { programmes: result, fetchedAt: Date.now() });
-        if (!cancelled) setProgrammes(result);
-      })
-      .catch(() => {
-        if (!cancelled) setProgrammes([]);
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
+    loadChannelGuide(source, channel).then((result) => {
+      if (cancelled) return;
+      setProgrammes(result);
+      setIsLoading(false);
+    });
     return () => {
       cancelled = true;
     };

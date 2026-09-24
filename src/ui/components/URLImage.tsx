@@ -31,7 +31,7 @@ export interface URLImageProps {
  * accent icon), cycled by `seed` so a grid of missing artwork reads as
  * varied tiles rather than the same flat box repeated dozens of times.
  * Colors are deliberately in the same dark/desaturated family as the rest
- * of the chrome (FocusCard's own #1c1c22 fallback, PillButton, etc.) so a
+ * of the chrome (FocusCard's own #1c1c22 fallback, TvButton, etc.) so a
  * placeholder never sticks out as an error state — it should read as
  * "content with no art yet", not "something broke".
  */

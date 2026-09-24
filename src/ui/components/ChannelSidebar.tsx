@@ -3,6 +3,7 @@ import type { Channel } from "@core";
 import { Focusable, FocusScrollManagedContext } from "../focus/Focusable.js";
 import { buildListFocusGraph } from "../focus/build-grid-graph.js";
 import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
+import { readRemPx } from "../rem.js";
 import { SECTION_ICONS } from "../section-icons.js";
 import { TV_TEXT } from "../tv-metrics.js";
 import { MarqueeText } from "./MarqueeText.js";
@@ -33,12 +34,6 @@ const LIST_PADDING_REM = 0.75;
 const OVERSCAN_ROWS = 6;
 /** Used until the list has been laid out (and in jsdom, which never lays out) — a full 1080p screen's worth of rows. */
 const FALLBACK_VIEWPORT_PX = 1080;
-
-function readRemPx(): number {
-  if (typeof document === "undefined") return 16;
-  const value = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
-  return Number.isFinite(value) && value > 0 ? value : 16;
-}
 
 /**
  * Vertical channel list (Live TV, Program Guide), sized for the 10-foot view:

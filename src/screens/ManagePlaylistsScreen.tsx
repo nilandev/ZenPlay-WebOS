@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PlatformId, PlaylistSource } from "@core";
-import { Focusable, MeshBackground, PillButton, useFocusStore, useRemoteInput, type FocusNode, glassBlur, useIsFocused } from "@ui";
-import { Check, DatabaseZap, Plus, Radio, RefreshCw, Trash2 } from "lucide-react";
+import { BROWSE_SIDE_PADDING, Focusable, MeshBackground, TV_TEXT, TvButton, useFocusStore, useIsFocused, useRemoteInput, type FocusNode } from "@ui";
+import { Check, DatabaseZap, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { clearCachedContent, clearCachedContentForSource } from "../content-cache.js";
 import { loadPlaylistInfo } from "../content-loader.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { AddSourceScreen } from "./AddSourceScreen.js";
 
-const GRID_COLUMNS = 2;
+const SCOPE = "manage-playlists";
+const CONFIRM_SCOPE = "manage-playlists-confirm";
 const ADD_ID = "manage-playlists-add";
-const BACK_ID = "manage-playlists-back";
+/** How long "Refreshed" / "Cache cleared" stays on a row. */
+const STATUS_MS = 3000;
 const CONFIRM_KEEP_ID = "manage-playlists-confirm-keep";
 const CONFIRM_DELETE_ID = "manage-playlists-confirm-delete";
 const cardId = (sourceId: string) => `manage-playlists-card:${sourceId}`;
@@ -48,7 +50,7 @@ export interface ManagePlaylistsScreenProps {
 }
 
 /**
- * Playlist source grid, reached from Settings → Manage Playlists. Delegates
+ * Playlist management, reached from App Settings → Manage Playlists. Delegates
  * entirely to either AddSourceScreen or the grid view — same
  * single-input-owner split as ManageProfilesScreen, since a parent and
  * child screen both calling useRemoteInput at once double-fires every
@@ -91,6 +93,13 @@ export function ManagePlaylistsScreen({
   );
 }
 
+/**
+ * Playlist list for TV: one wide row per playlist — name, Active badge, and
+ * type · server · username · expiry — with Refresh / Clear Cache / Delete
+ * buttons on the same row (Right from the row). OK on the row makes that
+ * playlist active; "+ Add Playlist" sits in the header. Up/Down between
+ * rows keep the same column (row → row, Refresh → Refresh, …).
+ */
 function ManagePlaylistsGrid({
   sources,
   activeSourceId,
@@ -112,97 +121,105 @@ function ManagePlaylistsGrid({
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focus = useFocusStore((state) => state.focus);
 
-  // Delete always asks for confirmation (see conversation history) — same
-  // confirm-dialog pattern as ProfileForm's "Delete profile": a separate
-  // focus scope forced into focus via focus(), since the grid scope
-  // underneath still holds a valid focused id and wouldn't otherwise cede
-  // focus to a newly-registered scope.
+  // Delete always asks for confirmation, in its own focus scope.
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const confirmingSource = sources.find((s) => s.id === confirmingDeleteId) ?? null;
 
-  // Per-source refresh-tick: bumping a source's counter changes the cache
-  // key useCachedContent keys off of, forcing that card's effect to re-run
-  // and re-fetch instead of serving the value already cached under the
-  // pre-bump key (clearing the cache alone doesn't re-trigger a mounted
-  // useCachedContent call).
+  // Per-source refresh tick: bumping it changes the playlist-info cache key,
+  // forcing that row's lookup to re-run (clearing the cache alone doesn't
+  // re-trigger an already-mounted useCachedContent).
   const [refreshTick, setRefreshTick] = useState<Record<string, number>>({});
-
-  const handleRefresh = useCallback((sourceId: string) => {
-    clearCachedContent(`playlist-info:${sourceId}`);
-    setRefreshTick((prev) => ({ ...prev, [sourceId]: (prev[sourceId] ?? 0) + 1 }));
+  // Short confirmation shown on a row after an action.
+  const [statusBySource, setStatusBySource] = useState<Record<string, string>>({});
+  const statusTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  useEffect(() => {
+    const timers = statusTimers.current;
+    return () => timers.forEach((timer) => clearTimeout(timer));
   }, []);
+  const flashStatus = useCallback((sourceId: string, message: string) => {
+    setStatusBySource((prev) => ({ ...prev, [sourceId]: message }));
+    const timers = statusTimers.current;
+    const existing = timers.get(sourceId);
+    if (existing) clearTimeout(existing);
+    timers.set(
+      sourceId,
+      setTimeout(() => setStatusBySource((prev) => ({ ...prev, [sourceId]: "" })), STATUS_MS),
+    );
+  }, []);
+
+  const handleRefresh = useCallback(
+    (sourceId: string) => {
+      clearCachedContent(`playlist-info:${sourceId}`);
+      setRefreshTick((prev) => ({ ...prev, [sourceId]: (prev[sourceId] ?? 0) + 1 }));
+      flashStatus(sourceId, "Refreshed");
+    },
+    [flashStatus],
+  );
 
   const handleClearCache = useCallback(
     (sourceId: string) => {
       clearCachedContentForSource(sourceId);
-      handleRefresh(sourceId);
+      clearCachedContent(`playlist-info:${sourceId}`);
+      setRefreshTick((prev) => ({ ...prev, [sourceId]: (prev[sourceId] ?? 0) + 1 }));
+      flashStatus(sourceId, "Cache cleared — content reloads next time you open it");
     },
-    [handleRefresh],
+    [flashStatus],
   );
 
-  const rowIds = sources.map((s) => s.id);
-  const columns = Math.max(1, Math.min(GRID_COLUMNS, rowIds.length + 1));
+  const canDelete = sources.length > 1;
+  // Where focus returns after the delete dialog closes.
+  const pendingFocusRef = useRef<string | null>(null);
+  const latest = useRef({ onSetActiveSource, onAdd, handleRefresh, handleClearCache });
+  latest.current = { onSetActiveSource, onAdd, handleRefresh, handleClearCache };
+  const sourceIdsKey = sources.map((s) => s.id).join("|");
 
   useEffect(() => {
-    if (confirmingDeleteId) return;
+    if (confirmingDeleteId) {
+      setGraph(SCOPE, []);
+      return;
+    }
+    const ids = sources.map((s) => s.id);
+    const columns = (sourceId: string) => [cardId(sourceId), refreshId(sourceId), clearCacheId(sourceId), ...(canDelete ? [deleteId(sourceId)] : [])];
+    const nodes: FocusNode[] = [{ id: ADD_ID, neighbors: { down: ids[0] ? cardId(ids[0]) : undefined }, onSelect: () => latest.current.onAdd() }];
 
-    const nodes: FocusNode[] = [];
-    const allIds = [...rowIds, ADD_ID];
-    // Each source tile occupies one grid cell but is really two focus rows
-    // internally (the card body, then its Refresh/Delete Cache/Delete
-    // strip) — up/down between grid cells has to land on the matching
-    // internal row (card→card, actions→actions) for vertical movement to
-    // stay visually aligned, not just "the tile above/below."
-    const aboveTileId = (index: number): string | undefined => (index - columns >= 0 ? allIds[index - columns] : undefined);
-    const belowTileId = (index: number): string | undefined => (index + columns < allIds.length ? allIds[index + columns] : undefined);
-    const cardOrAdd = (id: string | undefined) => (id === undefined ? undefined : id === ADD_ID ? ADD_ID : cardId(id));
-    const actionsOrAdd = (id: string | undefined) => (id === undefined ? undefined : id === ADD_ID ? ADD_ID : refreshId(id));
-
-    allIds.forEach((id, index) => {
-      const isAddTile = id === ADD_ID;
-      const col = index % columns;
-      const above = aboveTileId(index);
-      const below = belowTileId(index);
-      const left = col > 0 ? allIds[index - 1] : undefined;
-      const right = col < columns - 1 && index + 1 < allIds.length ? allIds[index + 1] : undefined;
-
-      if (isAddTile) {
-        nodes.push({ id: ADD_ID, neighbors: { up: cardOrAdd(above), left }, onSelect: onAdd });
-        return;
-      }
-
-      const sourceId = id;
-      nodes.push({
-        id: cardId(sourceId),
-        neighbors: { up: cardOrAdd(above), down: refreshId(sourceId), left: cardOrAdd(left), right: cardOrAdd(right) },
-        onSelect: () => onSetActiveSource(sourceId),
-      });
-      nodes.push({
-        id: refreshId(sourceId),
-        neighbors: { up: cardId(sourceId), down: actionsOrAdd(below), right: clearCacheId(sourceId) },
-        onSelect: () => handleRefresh(sourceId),
-      });
-      nodes.push({
-        id: clearCacheId(sourceId),
-        neighbors: { up: cardId(sourceId), down: actionsOrAdd(below), left: refreshId(sourceId), right: deleteId(sourceId) },
-        onSelect: () => handleClearCache(sourceId),
-      });
-      nodes.push({
-        id: deleteId(sourceId),
-        neighbors: { up: cardId(sourceId), down: actionsOrAdd(below), left: clearCacheId(sourceId) },
-        onSelect: () => setConfirmingDeleteId(sourceId),
+    ids.forEach((sourceId, row) => {
+      const cols = columns(sourceId);
+      const above = row > 0 ? columns(ids[row - 1]) : null;
+      const below = row < ids.length - 1 ? columns(ids[row + 1]) : null;
+      const actions = [
+        () => latest.current.onSetActiveSource(sourceId),
+        () => latest.current.handleRefresh(sourceId),
+        () => latest.current.handleClearCache(sourceId),
+        () => {
+          pendingFocusRef.current = deleteId(sourceId);
+          setConfirmingDeleteId(sourceId);
+        },
+      ];
+      cols.forEach((id, col) => {
+        nodes.push({
+          id,
+          neighbors: {
+            left: cols[col - 1],
+            right: cols[col + 1],
+            up: above ? above[Math.min(col, above.length - 1)] : ADD_ID,
+            down: below ? below[Math.min(col, below.length - 1)] : undefined,
+          },
+          onSelect: actions[col],
+        });
       });
     });
 
-    const lastRowFirstIndex = Math.floor((allIds.length - 1) / columns) * columns;
-    const lastRowFirstId = allIds[lastRowFirstIndex];
-    nodes.push({ id: BACK_ID, neighbors: { up: actionsOrAdd(lastRowFirstId) }, onSelect: onBack });
-
-    setGraph("manage-playlists", nodes, rowIds[0] ? cardId(rowIds[0]) : ADD_ID);
-    return () => clearGraph("manage-playlists");
-    // rowIds is derived fresh each render from sources; only re-run when the actual source set changes.
+    const activeCard = activeSourceId && ids.includes(activeSourceId) ? cardId(activeSourceId) : ids[0] ? cardId(ids[0]) : ADD_ID;
+    const pending = pendingFocusRef.current;
+    pendingFocusRef.current = null;
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    setGraph(SCOPE, nodes, pending && nodeIds.has(pending) ? pending : activeCard);
+    if (pending) focus(nodeIds.has(pending) ? pending : activeCard);
+    // latest.current carries the callbacks; rebuild only when the rows change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources.length, columns, confirmingDeleteId, setGraph, clearGraph, onAdd, onBack, onSetActiveSource, handleRefresh, handleClearCache]);
+  }, [sourceIdsKey, canDelete, confirmingDeleteId, setGraph]);
+
+  useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
   useEffect(() => {
     if (!confirmingDeleteId) return;
@@ -212,14 +229,15 @@ function ManagePlaylistsGrid({
         id: CONFIRM_DELETE_ID,
         neighbors: { left: CONFIRM_KEEP_ID },
         onSelect: () => {
+          pendingFocusRef.current = null;
           onRemoveSource(confirmingDeleteId);
           setConfirmingDeleteId(null);
         },
       },
     ];
-    setGraph("manage-playlists-confirm", nodes, CONFIRM_KEEP_ID);
+    setGraph(CONFIRM_SCOPE, nodes, CONFIRM_KEEP_ID);
     focus(CONFIRM_KEEP_ID);
-    return () => clearGraph("manage-playlists-confirm");
+    return () => clearGraph(CONFIRM_SCOPE);
   }, [confirmingDeleteId, setGraph, clearGraph, focus, onRemoveSource]);
 
   useRemoteInput(platform, {
@@ -232,27 +250,35 @@ function ManagePlaylistsGrid({
   if (confirmingSource) {
     return (
       <MeshBackground>
-        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 48 }}>
-          <div style={{ textAlign: "center", maxWidth: 560 }}>
-            <h1 style={{ fontSize: 32, fontWeight: 700, color: "var(--text)", marginBottom: 16 }}>Delete "{confirmingSource.name}"?</h1>
-            <p style={{ fontSize: 16, color: "var(--text-dim)", marginBottom: 40, lineHeight: 1.5 }}>
-              This removes the playlist and its cached content. This can't be undone.
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: `3rem ${BROWSE_SIDE_PADDING}` }}>
+          <div
+            style={{
+              textAlign: "center",
+              maxWidth: "56rem",
+              padding: "3.5rem 4rem",
+              borderRadius: "1.75rem",
+              background: "rgba(16,17,23,0.92)",
+              boxShadow: "0 2rem 4rem rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.08)",
+            }}
+          >
+            <Trash2 size="3.5rem" strokeWidth={1.75} color="#ff8a8a" />
+            <h1 style={{ fontSize: "2.5rem", fontWeight: 800, color: "#fff", margin: "1.25rem 0 1rem" }}>Delete “{confirmingSource.name}”?</h1>
+            <p style={{ fontSize: TV_TEXT, color: "var(--text-dim)", margin: "0 0 2.5rem", lineHeight: 1.5 }}>
+              This removes the playlist and everything cached for it. You can add it again later.
             </p>
-            <div style={{ display: "flex", gap: 16, justifyContent: "center" }}>
-              <Focusable id={CONFIRM_KEEP_ID}>
-                <ConfirmButton id={CONFIRM_KEEP_ID} label="Keep playlist" onClick={() => setConfirmingDeleteId(null)} />
-              </Focusable>
-              <Focusable id={CONFIRM_DELETE_ID}>
-                <ConfirmButton
-                  id={CONFIRM_DELETE_ID}
-                  label="Delete"
-                  danger
-                  onClick={() => {
-                    onRemoveSource(confirmingSource.id);
-                    setConfirmingDeleteId(null);
-                  }}
-                />
-              </Focusable>
+            <div style={{ display: "flex", gap: "1.25rem", justifyContent: "center" }}>
+              <TvButton id={CONFIRM_KEEP_ID} label="Keep Playlist" onSelect={() => setConfirmingDeleteId(null)} />
+              <TvButton
+                id={CONFIRM_DELETE_ID}
+                label="Delete"
+                icon={Trash2}
+                variant="danger"
+                onSelect={() => {
+                  pendingFocusRef.current = null;
+                  onRemoveSource(confirmingSource.id);
+                  setConfirmingDeleteId(null);
+                }}
+              />
             </div>
           </div>
         </div>
@@ -262,45 +288,47 @@ function ManagePlaylistsGrid({
 
   return (
     <MeshBackground>
-      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", padding: "56px 64px", gap: 8 }}>
-        <h1 style={{ fontSize: 32, fontWeight: 700, color: "var(--text)" }}>Manage Playlists</h1>
-        <p style={{ marginBottom: 36, color: "var(--text-dim)" }}>Set your active playlist, refresh its details, or remove one you no longer use.</p>
+      <div style={{ minHeight: "100vh", padding: `3rem ${BROWSE_SIDE_PADDING} 4rem`, boxSizing: "border-box" }}>
+        <header style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "2rem", marginBottom: "2.5rem" }}>
+          <div>
+            <h1 style={{ fontSize: "3rem", fontWeight: 800, color: "#fff", margin: 0 }}>Manage Playlists</h1>
+            <p style={{ fontSize: TV_TEXT, color: "var(--text-dim)", margin: "0.5rem 0 0" }}>
+              OK on a playlist to make it active · Right for refresh and delete
+            </p>
+          </div>
+          <TvButton id={ADD_ID} label="Add Playlist" icon={Plus} onSelect={onAdd} />
+        </header>
 
-        <div style={{ width: "100%", maxWidth: 760, display: "grid", gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: 20 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           {sources.map((source) => (
-            <PlaylistCard
+            <PlaylistRow
               key={source.id}
               source={source}
               isActive={source.id === activeSourceId}
-              canDelete={sources.length > 1}
+              canDelete={canDelete}
               refreshTick={refreshTick[source.id] ?? 0}
+              status={statusBySource[source.id] ?? ""}
               onActivate={() => onSetActiveSource(source.id)}
               onRefresh={() => handleRefresh(source.id)}
               onClearCache={() => handleClearCache(source.id)}
-              onRequestDelete={() => setConfirmingDeleteId(source.id)}
+              onRequestDelete={() => {
+                pendingFocusRef.current = deleteId(source.id);
+                setConfirmingDeleteId(source.id);
+              }}
             />
           ))}
-
-          <Focusable id={ADD_ID}>
-            <AddPlaylistCard onClick={onAdd} />
-          </Focusable>
-        </div>
-
-        <div style={{ marginTop: 32 }}>
-          <Focusable id={BACK_ID}>
-            <BackButton onClick={onBack} />
-          </Focusable>
         </div>
       </div>
     </MeshBackground>
   );
 }
 
-function PlaylistCard({
+function PlaylistRow({
   source,
   isActive,
   canDelete,
   refreshTick,
+  status,
   onActivate,
   onRefresh,
   onClearCache,
@@ -310,17 +338,16 @@ function PlaylistCard({
   isActive: boolean;
   canDelete: boolean;
   refreshTick: number;
+  status: string;
   onActivate: () => void;
   onRefresh: () => void;
   onClearCache: () => void;
   onRequestDelete: () => void;
 }): JSX.Element {
-  const isCardFocused = useIsFocused(cardId(source.id));
+  const isFocused = useIsFocused(cardId(source.id));
 
-  // Only Xtream accounts expose expiry via the provider API (see
-  // content-loader.ts). refreshTick is appended to the cache key so the
-  // Refresh action (which clears this key) also forces this effect to
-  // re-run instead of being a no-op once the key is already registered.
+  // Only Xtream accounts expose expiry via the provider API. refreshTick is
+  // part of the key so Refresh re-runs the lookup.
   const loadInfo = useCallback(() => loadPlaylistInfo(source), [source]);
   const { data: playlistInfo, isInitialLoading } = useCachedContent(
     `playlist-info:${source.id}:${refreshTick}`,
@@ -329,150 +356,66 @@ function PlaylistCard({
     EMPTY_PLAYLIST_INFO,
   );
 
+  const details = [
+    kindLabel(source.kind),
+    serverDetail(source),
+    source.kind === "xtream" ? `User ${source.username}` : null,
+    source.kind === "xtream" ? `Expires ${isInitialLoading ? "…" : formatExpiry(playlistInfo.expiresAt)}` : null,
+  ].filter(Boolean);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <Focusable id={cardId(source.id)}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "1.25rem",
+        padding: "0.75rem",
+        borderRadius: "1.5rem",
+        background: isActive ? "rgba(74,222,128,0.06)" : "rgba(255,255,255,0.04)",
+        boxShadow: isActive ? "inset 0 0 0 1px rgba(74,222,128,0.25)" : "inset 0 0 0 1px rgba(255,255,255,0.06)",
+      }}
+    >
+      <Focusable id={cardId(source.id)} style={{ flex: 1, minWidth: 0, width: "auto", height: "auto" }}>
         <button
           type="button"
           onClick={onActivate}
           style={{
-            width: "100%",
-            height: "100%",
             display: "flex",
             flexDirection: "column",
-            gap: 12,
-            padding: "20px 22px",
-            borderRadius: 16,
-            border: isCardFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.12)",
-            background: isCardFocused
-              ? "linear-gradient(160deg, rgba(70,74,84,0.75) 0%, rgba(38,40,48,0.8) 100%)"
-              : "linear-gradient(160deg, rgba(55,58,68,0.5) 0%, rgba(28,30,36,0.55) 100%)",
-            ...glassBlur("blur(16px) saturate(140%)"),
-            boxShadow: isCardFocused ? "0 0 0 3px var(--accent), 0 12px 28px -8px rgba(0,0,0,0.5)" : "none",
-            transform: isCardFocused ? "scale(1.01)" : "scale(1)",
-            transition: "transform 160ms ease-out, box-shadow 160ms ease-out, background 160ms ease-out",
-            cursor: "pointer",
+            gap: "0.375rem",
+            width: "100%",
+            padding: "1.125rem 1.5rem",
+            border: "none",
+            borderRadius: "1.125rem",
             textAlign: "left",
+            background: isFocused ? "rgba(255,255,255,0.95)" : "transparent",
+            color: isFocused ? "#0b0c10" : "#ffffff",
+            boxShadow: isFocused ? "0 1rem 2rem -0.75rem rgba(0,0,0,0.6)" : undefined,
+            cursor: "pointer",
           }}
         >
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-            <Radio size={22} strokeWidth={1.75} color={isActive ? "var(--accent)" : "var(--text-dim)"} style={{ flexShrink: 0, marginTop: 2 }} />
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span
-                  style={{ fontSize: 16, fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                >
-                  {source.name}
-                </span>
-                {isActive && <ActivePill />}
-              </div>
-              <KindBadge kind={source.kind} />
-              <span style={{ fontSize: 13, color: "var(--text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {serverDetail(source)}
-              </span>
-              {source.kind === "xtream" && (
-                <span style={{ fontSize: 13, color: "var(--text-dim)" }}>
-                  Username: <span style={{ color: "var(--text)" }}>{source.username}</span>
-                </span>
-              )}
-              {source.kind === "xtream" && (
-                <span style={{ fontSize: 13, color: "var(--text-dim)" }}>
-                  Expires: <span style={{ color: "var(--text)", fontWeight: 600 }}>{isInitialLoading ? "Checking…" : formatExpiry(playlistInfo.expiresAt)}</span>
-                </span>
-              )}
-            </div>
-          </div>
+          <span style={{ display: "flex", alignItems: "center", gap: "1rem", minWidth: 0 }}>
+            <span style={{ fontSize: "1.75rem", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{source.name}</span>
+            {isActive && <ActivePill />}
+          </span>
+          <span
+            style={{
+              fontSize: "1.125rem",
+              color: isFocused ? "rgba(11,12,16,0.65)" : "rgba(235,236,242,0.6)",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {details.join("  ·  ")}
+          </span>
+          {status && <span style={{ fontSize: "1.125rem", fontWeight: 700, color: isFocused ? "#15803d" : "#4ade80" }}>✓ {status}</span>}
         </button>
       </Focusable>
-
-      <div style={{ display: "flex", gap: 8 }}>
-        <Focusable id={refreshId(source.id)}>
-          <RowActionButton id={refreshId(source.id)} icon={RefreshCw} label="Refresh" onClick={onRefresh} />
-        </Focusable>
-        <Focusable id={clearCacheId(source.id)}>
-          <RowActionButton id={clearCacheId(source.id)} icon={DatabaseZap} label="Delete Cache" onClick={onClearCache} />
-        </Focusable>
-        <Focusable id={deleteId(source.id)}>
-          <RowActionButton id={deleteId(source.id)} icon={Trash2} label="Delete" danger disabled={!canDelete} onClick={onRequestDelete} />
-        </Focusable>
-      </div>
+      <TvButton id={refreshId(source.id)} label="Refresh" icon={RefreshCw} onSelect={onRefresh} />
+      <TvButton id={clearCacheId(source.id)} label="Clear Cache" icon={DatabaseZap} onSelect={onClearCache} />
+      <TvButton id={deleteId(source.id)} label="Delete" icon={Trash2} variant="danger" disabled={!canDelete} onSelect={onRequestDelete} />
     </div>
-  );
-}
-
-function RowActionButton({
-  id,
-  icon: Icon,
-  label,
-  danger,
-  disabled,
-  onClick,
-}: {
-  id: string;
-  icon: typeof RefreshCw;
-  label: string;
-  danger?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}): JSX.Element {
-  const isFocused = useIsFocused(id);
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      style={{
-        flex: 1,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 6,
-        padding: "10px 8px",
-        borderRadius: 12,
-        border: isFocused
-          ? `1px solid ${danger ? "rgba(255,107,107,0.7)" : "rgba(255,255,255,0.6)"}`
-          : `1px solid ${danger ? "rgba(255,107,107,0.22)" : "rgba(255,255,255,0.1)"}`,
-        background: danger
-          ? isFocused
-            ? "rgba(255,107,107,0.18)"
-            : "rgba(255,107,107,0.08)"
-          : isFocused
-            ? "linear-gradient(160deg, rgba(70,74,84,0.75) 0%, rgba(38,40,48,0.8) 100%)"
-            : "linear-gradient(160deg, rgba(30,31,36,0.5) 0%, rgba(12,13,16,0.55) 100%)",
-        boxShadow: isFocused ? `0 0 0 3px ${danger ? "rgba(255,107,107,0.4)" : "var(--accent)"}` : "none",
-        transform: isFocused ? "scale(1.04)" : "scale(1)",
-        transition: "transform 160ms ease-out, box-shadow 160ms ease-out, background 160ms ease-out",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-      }}
-    >
-      <Icon size={15} strokeWidth={2} color={danger ? "var(--danger)" : "var(--text)"} />
-      <span style={{ fontSize: 11, fontWeight: 600, color: danger ? "var(--danger)" : "var(--text)", whiteSpace: "nowrap" }}>{label}</span>
-    </button>
-  );
-}
-
-function KindBadge({ kind }: { kind: PlaylistSource["kind"] }): JSX.Element {
-  return (
-    <span
-      style={{
-        alignSelf: "flex-start",
-        padding: "2px 9px",
-        borderRadius: 999,
-        border: "1px solid rgba(255,255,255,0.14)",
-        color: "var(--text-dim)",
-        fontSize: 11,
-        fontWeight: 700,
-        textTransform: "uppercase",
-        letterSpacing: 0.4,
-      }}
-    >
-      {kindLabel(kind)}
-    </span>
   );
 }
 
@@ -482,94 +425,18 @@ function ActivePill(): JSX.Element {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 6,
-        padding: "4px 10px",
+        gap: "0.375rem",
+        padding: "0.25rem 0.75rem",
         borderRadius: 999,
-        background: "rgba(74,222,128,0.15)",
-        border: "1px solid rgba(74,222,128,0.4)",
-        color: "#4ade80",
-        fontSize: 11,
-        fontWeight: 700,
+        background: "#16a34a",
+        color: "#ffffff",
+        fontSize: "1rem",
+        fontWeight: 800,
         flexShrink: 0,
       }}
     >
-      <Check size={12} strokeWidth={2.5} />
+      <Check size="1rem" strokeWidth={3} />
       Active
     </span>
-  );
-}
-
-function AddPlaylistCard({ onClick }: { onClick: () => void }): JSX.Element {
-  const isFocused = useIsFocused(ADD_ID);
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        width: "100%",
-        height: "100%",
-        minHeight: 140,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 10,
-        padding: "20px 22px",
-        borderRadius: 16,
-        border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px dashed rgba(255,255,255,0.2)",
-        background: isFocused ? "linear-gradient(160deg, rgba(70,74,84,0.75) 0%, rgba(38,40,48,0.8) 100%)" : "transparent",
-        boxShadow: isFocused ? "0 0 0 3px var(--accent), 0 12px 28px -8px rgba(0,0,0,0.5)" : "none",
-        transform: isFocused ? "scale(1.01)" : "scale(1)",
-        transition: "transform 160ms ease-out, box-shadow 160ms ease-out, background 160ms ease-out",
-        color: isFocused ? "var(--text)" : "var(--text-dim)",
-        fontSize: 15,
-        fontWeight: 600,
-        cursor: "pointer",
-      }}
-    >
-      <Plus size={18} strokeWidth={2.25} />
-      Add playlist
-    </button>
-  );
-}
-
-function BackButton({ onClick }: { onClick: () => void }): JSX.Element {
-  const isFocused = useIsFocused(BACK_ID);
-  return (
-    <PillButton onClick={onClick} isFocused={isFocused}>
-      Back
-    </PillButton>
-  );
-}
-
-function ConfirmButton({ id: _id, label, onClick, danger }: { id: string; label: string; onClick: () => void; danger?: boolean }): JSX.Element {
-  const isFocused = useIsFocused(_id);
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        minWidth: 160,
-        padding: "14px 28px",
-        borderRadius: 999,
-        border: danger ? "none" : isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.16)",
-        background: danger
-          ? "var(--danger)"
-          : isFocused
-            ? "linear-gradient(160deg, rgba(70,74,84,0.75) 0%, rgba(38,40,48,0.8) 100%)"
-            : "linear-gradient(160deg, rgba(55,58,68,0.5) 0%, rgba(28,30,36,0.55) 100%)",
-        ...glassBlur(danger ? undefined : "blur(16px) saturate(140%)"),
-        color: danger ? "#2a0a0a" : "var(--text)",
-        fontSize: 15,
-        fontWeight: 700,
-        boxShadow: isFocused ? "0 0 0 3px var(--accent)" : "none",
-        transform: isFocused ? "scale(1.05)" : "scale(1)",
-        transition: "transform 160ms ease-out, box-shadow 160ms ease-out, background 160ms ease-out",
-        cursor: "pointer",
-      }}
-    >
-      {label}
-    </button>
   );
 }

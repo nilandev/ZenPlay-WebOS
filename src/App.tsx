@@ -303,6 +303,7 @@ export function App(): JSX.Element {
         <GuideScreen
           source={activeSource}
           platform={platform}
+          profile={activeProfile}
           onPlay={playWithoutIdentity}
           onBack={goHome}
           isPlaybackOpen={Boolean(playbackUrl)}

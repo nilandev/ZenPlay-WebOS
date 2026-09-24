@@ -1,25 +1,36 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Channel, FavoriteEntry, FavoriteKind, PlatformId, PlaylistSource, SeriesInfo } from "@core";
-import { buildGridFocusGraph, FavoriteHeart, Focusable, FocusCard, MeshBackground, useFocusStore, useRemoteInput, type FocusNode, useIsFocused, SECTION_ICONS } from "@ui";
-import { Heart } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Channel, FavoriteEntry, PlatformId, PlaylistSource, SeriesInfo } from "@core";
+import {
+  BROWSE_SIDE_PADDING,
+  buildShelfFocusGraph,
+  Focusable,
+  FocusCard,
+  LiftSurface,
+  MeshBackground,
+  POSTER_WIDTH,
+  SECTION_ICONS,
+  Shelf,
+  TV_TEXT,
+  URLImage,
+  useFocusStore,
+  useIsFocused,
+  useRemoteInput,
+  type FocusNode,
+} from "@ui";
+import { Check, Heart, Pencil, X } from "lucide-react";
+import { getRecordsByIds } from "../catalog-store.js";
 import { loadChannelsByKind, loadSeriesList } from "../content-loader.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
+import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 
-const GRID_COLUMNS = 5;
-
-const FILTERS: { value: FavoriteKind | "all"; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "live", label: "Live TV" },
-  { value: "movie", label: "Movies" },
-  { value: "series", label: "Series" },
-];
-
-const filterId = (value: FavoriteKind | "all") => `favourites-filter:${value}`;
+const SCOPE = "favourites";
+const EDIT_BUTTON_ID = "favourites-edit";
 const itemId = (entry: FavoriteEntry) => `favourites-item:${entry.contentKind}:${entry.contentId}`;
 
 const EMPTY_CHANNELS: Channel[] = [];
 const EMPTY_SERIES: SeriesInfo[] = [];
+type SeriesSummary = Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle">;
 
 export interface FavouritesScreenProps {
   source: PlaylistSource;
@@ -33,13 +44,65 @@ export interface FavouritesScreenProps {
   isPlaybackOpen?: boolean;
 }
 
+interface ListItem {
+  entry: FavoriteEntry;
+  title: string;
+  imageUrl?: string;
+  channel?: Channel;
+  movie?: Channel;
+}
+
 /**
- * My Favourite: a pill-tab filter (All/Live TV/Movies/Series) over whatever
- * the active profile has favourited on the active playlist source. Loads
- * the same full live/movie/series lists the main tabs already load (and
- * shares their cache keys via useCachedContent) since favourites only store
- * an id + kind — there's no "get content by id" lookup, so the full lists
- * are loaded and filtered down to favourited ids client-side.
+ * Resolves saved movie/series ids to titles and artwork. Uses the local
+ * catalog table (an indexed lookup of just these ids) once it has synced;
+ * only a source that has never synced falls back to the full provider list
+ * — and only for a type that actually has saved items.
+ */
+function useSavedRecords<T>(
+  source: PlaylistSource,
+  kind: "vod" | "series",
+  ids: string[],
+  loadFull: () => Promise<T[]>,
+  empty: T[],
+): T[] {
+  const status = useLocalCatalogReady(source.id, kind);
+  const [local, setLocal] = useState<T[] | null>(null);
+  const idsKey = ids.join("|");
+
+  useEffect(() => {
+    if (status !== "ready" || ids.length === 0) {
+      setLocal(null);
+      return;
+    }
+    let cancelled = false;
+    (getRecordsByIds(source.id, kind as "vod", ids) as Promise<unknown> as Promise<T[]>)
+      .then((records) => {
+        if (!cancelled) setLocal(records);
+      })
+      .catch(() => {
+        if (!cancelled) setLocal(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // idsKey stands in for ids.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, source.id, kind, idsKey]);
+
+  const { data: full } = useCachedContent(`${kind === "vod" ? "vod" : "series-list"}:${source.id}`, "catalog", loadFull, empty, {
+    enabled: status === "not-synced" && ids.length > 0,
+  });
+  return local ?? full;
+}
+
+/**
+ * My List, sized for TV: one row per type — Channels (logo tiles), Movies
+ * and Series (posters) — newest first, with each row's count. Types with
+ * nothing saved don't show, so there's nothing to switch between.
+ *
+ * Removing: "Edit My List" puts every card in remove mode (a red ✕); OK
+ * then removes the focused item and focus moves to its neighbour. "Done" or
+ * Back leaves edit mode. Long-press OK removes an item at any time.
  */
 export function FavouritesScreen({
   source,
@@ -51,141 +114,194 @@ export function FavouritesScreen({
   onOpenSeries,
   isPlaybackOpen = false,
 }: FavouritesScreenProps): JSX.Element {
-  const [filter, setFilter] = useState<FavoriteKind | "all">("all");
-
-  // Bumped whenever a favourite is removed from this screen so the list
-  // re-filters immediately instead of showing a now-stale entry.
+  // Bumped whenever an item is removed so the list re-reads localStorage.
   const [favoritesVersion, setFavoritesVersion] = useState(0);
+  const [isEditing, setIsEditing] = useState(false);
+
   const favorites = useMemo(() => {
     void favoritesVersion;
-    return loadFavorites(profileId).filter((f) => f.sourceId === source.id);
+    // Newest first.
+    return loadFavorites(profileId)
+      .filter((f) => f.sourceId === source.id)
+      .reverse();
   }, [profileId, source.id, favoritesVersion]);
 
+  const liveIds = favorites.filter((f) => f.contentKind === "live");
+  const movieIds = useMemo(() => favorites.filter((f) => f.contentKind === "movie").map((f) => f.contentId), [favorites]);
+  const seriesIds = useMemo(() => favorites.filter((f) => f.contentKind === "series").map((f) => f.contentId), [favorites]);
+
   const loadLive = useCallback(() => loadChannelsByKind(source, "live"), [source]);
-  const { data: liveChannels } = useCachedContent(`live:${source.id}`, "catalog", loadLive, EMPTY_CHANNELS);
-
+  const { data: liveChannels } = useCachedContent(`live:${source.id}`, "catalog", loadLive, EMPTY_CHANNELS, { enabled: liveIds.length > 0 });
   const loadMovies = useCallback(() => loadChannelsByKind(source, "movie"), [source]);
-  const { data: movies } = useCachedContent(`vod:${source.id}`, "catalog", loadMovies, EMPTY_CHANNELS);
-
+  const movies = useSavedRecords(source, "vod", movieIds, loadMovies, EMPTY_CHANNELS);
   const loadSeries = useCallback(() => loadSeriesList(source), [source]);
-  const { data: series } = useCachedContent(`series-list:${source.id}`, "catalog", loadSeries, EMPTY_SERIES);
+  const series = useSavedRecords<SeriesSummary>(source, "series", seriesIds, loadSeries, EMPTY_SERIES);
 
-  const items = useMemo(() => {
+  const rows = useMemo(() => {
     const liveById = new Map(liveChannels.map((c) => [c.id, c]));
     const movieById = new Map(movies.map((c) => [c.id, c]));
     const seriesById = new Map(series.map((s) => [s.id, s]));
+    const channels: ListItem[] = [];
+    const movieItems: ListItem[] = [];
+    const seriesItems: ListItem[] = [];
+    for (const entry of favorites) {
+      if (entry.contentKind === "live") {
+        const channel = liveById.get(entry.contentId);
+        if (channel) channels.push({ entry, title: channel.name, imageUrl: channel.logoUrl, channel });
+      } else if (entry.contentKind === "movie") {
+        const movie = movieById.get(entry.contentId);
+        if (movie) movieItems.push({ entry, title: movie.name, imageUrl: movie.logoUrl, movie });
+      } else {
+        const info = seriesById.get(entry.contentId);
+        if (info) seriesItems.push({ entry, title: info.name, imageUrl: info.posterUrl });
+      }
+    }
+    return [
+      { key: "live", title: "Channels", items: channels },
+      { key: "movie", title: "Movies", items: movieItems },
+      { key: "series", title: "Series", items: seriesItems },
+    ].filter((row) => row.items.length > 0);
+  }, [favorites, liveChannels, movies, series]);
 
-    return favorites
-      .filter((f) => filter === "all" || f.contentKind === filter)
-      .map((entry) => {
-        if (entry.contentKind === "live") {
-          const channel = liveById.get(entry.contentId);
-          return channel ? { entry, title: channel.name, imageUrl: channel.logoUrl, aspectRatio: "1 / 1" } : null;
-        }
-        if (entry.contentKind === "movie") {
-          const movie = movieById.get(entry.contentId);
-          return movie ? { entry, title: movie.name, imageUrl: movie.logoUrl, aspectRatio: "2 / 3" } : null;
-        }
-        const seriesInfo = seriesById.get(entry.contentId);
-        return seriesInfo ? { entry, title: seriesInfo.name, imageUrl: seriesInfo.posterUrl, aspectRatio: "2 / 3" } : null;
-      })
-      .filter((item): item is NonNullable<typeof item> => item !== null);
-  }, [favorites, filter, liveChannels, movies, series]);
+  const itemCount = rows.reduce((sum, row) => sum + row.items.length, 0);
+
+  // Leave edit mode once there's nothing left to remove.
+  useEffect(() => {
+    if (itemCount === 0) setIsEditing(false);
+  }, [itemCount]);
+
+  const open = useCallback(
+    (item: ListItem) => {
+      if (item.channel) onPlayChannel(item.channel);
+      else if (item.movie) onPlayMovie(item.movie);
+      else onOpenSeries(item.entry.contentId);
+    },
+    [onPlayChannel, onPlayMovie, onOpenSeries],
+  );
+
+  // Where focus goes after a removal — the removed card's neighbour — applied
+  // by the graph effect below once the list has re-rendered without it.
+  const pendingFocusRef = useRef<string | null>(null);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+
+  const remove = useCallback(
+    (entry: FavoriteEntry) => {
+      const id = itemId(entry);
+      const currentRows = rowsRef.current;
+      const rowIndex = currentRows.findIndex((row) => row.items.some((item) => itemId(item.entry) === id));
+      const row = currentRows[rowIndex];
+      if (row) {
+        const index = row.items.findIndex((item) => itemId(item.entry) === id);
+        const neighbour = row.items[index + 1] ?? row.items[index - 1];
+        const otherRow = currentRows[rowIndex + 1] ?? currentRows[rowIndex - 1];
+        pendingFocusRef.current = neighbour ? itemId(neighbour.entry) : otherRow ? itemId(otherRow.items[0].entry) : EDIT_BUTTON_ID;
+      }
+      toggleFavorite(profileId, entry.sourceId, entry.contentKind, entry.contentId);
+      setFavoritesVersion((v) => v + 1);
+    },
+    [profileId],
+  );
+
+  const isEditingRef = useRef(isEditing);
+  isEditingRef.current = isEditing;
+  const activate = useCallback((item: ListItem) => (isEditingRef.current ? remove(item.entry) : open(item)), [remove, open]);
 
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
 
   useEffect(() => {
-    const filterIds = FILTERS.map((f) => filterId(f.value));
-    const itemIds = items.map((item) => itemId(item.entry));
+    // Nothing to navigate (still loading, or the list is empty — the Edit
+    // button isn't shown then either). Registering the Edit node alone would
+    // let it take the screen's initial focus ahead of the first item.
+    if (rows.length === 0) {
+      setGraph(SCOPE, []);
+      return;
+    }
+    const idRows = rows.map((row) => row.items.map((item) => itemId(item.entry)));
+    const itemById = new Map(rows.flatMap((row) => row.items.map((item) => [itemId(item.entry), item] as const)));
+    const firstItemId = idRows[0]?.[0];
+    const shelfNodes: FocusNode[] = idRows.length
+      ? buildShelfFocusGraph(idRows).map((node, index) => ({
+          ...node,
+          neighbors: { ...node.neighbors, up: index < idRows[0].length ? EDIT_BUTTON_ID : node.neighbors.up },
+          onSelect: () => {
+            const item = itemById.get(node.id);
+            if (item) activate(item);
+          },
+        }))
+      : [];
+    const editNode: FocusNode = {
+      id: EDIT_BUTTON_ID,
+      neighbors: { down: firstItemId },
+      onSelect: () => setIsEditing((editing) => !editing),
+    };
+    const initial = pendingFocusRef.current ?? firstItemId ?? EDIT_BUTTON_ID;
+    pendingFocusRef.current = null;
+    setGraph(SCOPE, [editNode, ...shelfNodes], initial);
+  }, [rows, activate, setGraph]);
 
-    const filterNodes: FocusNode[] = filterIds.map((id, index) => ({
-      id,
-      neighbors: {
-        left: index > 0 ? filterIds[index - 1] : undefined,
-        right: index < filterIds.length - 1 ? filterIds[index + 1] : undefined,
-        down: itemIds[0],
-      },
-      onSelect: () => setFilter(FILTERS[index].value),
-    }));
-
-    const itemNodes: FocusNode[] = buildGridFocusGraph(itemIds, GRID_COLUMNS).map((node, index) => ({
-      ...node,
-      neighbors: { ...node.neighbors, up: node.neighbors.up ?? filterIds[0] },
-      onSelect: () => {
-        const item = items[index];
-        if (!item) return;
-        if (item.entry.contentKind === "live") {
-          const channel = liveChannels.find((c) => c.id === item.entry.contentId);
-          if (channel) onPlayChannel(channel);
-        } else if (item.entry.contentKind === "movie") {
-          const movie = movies.find((c) => c.id === item.entry.contentId);
-          if (movie) onPlayMovie(movie);
-        } else {
-          onOpenSeries(item.entry.contentId);
-        }
-      },
-    }));
-
-    setGraph("favourites", [...filterNodes, ...itemNodes], filterIds[0]);
-    return () => clearGraph("favourites");
-    // items/favorites are derived fresh each render; only rebuild when the actual visible set changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.length, filter, setGraph, clearGraph, onPlayChannel, onPlayMovie, onOpenSeries]);
+  // Rebuilds replace the scope in place; clear it only when leaving the screen.
+  useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
   useRemoteInput(
     platform,
     {
       onLongSelect: (focusedId) => {
-        const entry = items.find((item) => itemId(item.entry) === focusedId)?.entry;
-        if (!entry) return;
-        toggleFavorite(profileId, entry.sourceId, entry.contentKind, entry.contentId);
-        setFavoritesVersion((v) => v + 1);
+        const item = rows.flatMap((row) => row.items).find((candidate) => itemId(candidate.entry) === focusedId);
+        if (item) remove(item.entry);
       },
-      onBack,
+      onBack: () => {
+        if (isEditingRef.current) setIsEditing(false);
+        else onBack();
+      },
     },
     !isPlaybackOpen,
   );
 
   return (
     <MeshBackground>
-      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", padding: "48px 56px 64px" }}>
-        <h1 style={{ fontSize: 32, fontWeight: 700, color: "var(--text)", marginBottom: 24 }}>My Favourite</h1>
+      <div style={{ minHeight: "100vh", paddingBottom: "3rem" }}>
+        <header style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "2rem", padding: `3rem ${BROWSE_SIDE_PADDING} 0` }}>
+          <div>
+            <h1 style={{ fontSize: "3rem", fontWeight: 800, color: "#fff", margin: 0 }}>My List</h1>
+            <p style={{ fontSize: TV_TEXT, color: isEditing ? "#ff8a8a" : "var(--text-dim)", margin: "0.5rem 0 0" }}>
+              {isEditing
+                ? "Select an item to remove it"
+                : itemCount > 0
+                  ? `${itemCount} ${itemCount === 1 ? "item" : "items"} · long-press OK on any item to remove it`
+                  : "Nothing saved yet"}
+            </p>
+          </div>
+          {itemCount > 0 && <EditButton isEditing={isEditing} onClick={() => setIsEditing((editing) => !editing)} />}
+        </header>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 36 }}>
-          {FILTERS.map((f) => (
-            <Focusable key={f.value} id={filterId(f.value)}>
-              <FilterPill id={filterId(f.value)} label={f.label} isSelected={filter === f.value} onClick={() => setFilter(f.value)} />
-            </Focusable>
-          ))}
-        </div>
-
-        {items.length === 0 ? (
-          <EmptyFavouritesState />
+        {itemCount === 0 ? (
+          <EmptyState />
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${GRID_COLUMNS}, 1fr)`, gap: 24 }}>
-            {items.map((item) => (
-              <FocusCard
-                key={itemId(item.entry)}
-                id={itemId(item.entry)}
-                title={item.title}
-                imageUrl={item.imageUrl}
-                aspectRatio={item.aspectRatio}
-                placeholderIcon={
-                  item.entry.contentKind === "live" ? SECTION_ICONS.live : item.entry.contentKind === "movie" ? SECTION_ICONS.movies : SECTION_ICONS.series
+          <div style={{ marginTop: "1.5rem" }}>
+            {rows.map((row) => (
+              <Shelf
+                key={row.key}
+                title={`${row.title} · ${row.items.length}`}
+                items={row.items}
+                getId={(item) => itemId(item.entry)}
+                leftInset={BROWSE_SIDE_PADDING}
+                renderItem={(item) =>
+                  item.entry.contentKind === "live" ? (
+                    <ChannelTile item={item} isEditing={isEditing} onSelect={() => activate(item)} />
+                  ) : (
+                    <FocusCard
+                      id={itemId(item.entry)}
+                      title={item.title}
+                      imageUrl={item.imageUrl}
+                      width={POSTER_WIDTH}
+                      placeholderIcon={item.entry.contentKind === "movie" ? SECTION_ICONS.movies : SECTION_ICONS.series}
+                      badge={isEditing ? <RemoveBadge /> : undefined}
+                      onSelect={() => activate(item)}
+                    />
+                  )
                 }
-                onSelect={() => {
-                  if (item.entry.contentKind === "live") {
-                    const channel = liveChannels.find((c) => c.id === item.entry.contentId);
-                    if (channel) onPlayChannel(channel);
-                  } else if (item.entry.contentKind === "movie") {
-                    const movie = movies.find((c) => c.id === item.entry.contentId);
-                    if (movie) onPlayMovie(movie);
-                  } else {
-                    onOpenSeries(item.entry.contentId);
-                  }
-                }}
-                badge={<FavoriteHeart isFavorite />}
               />
             ))}
           </div>
@@ -195,39 +311,105 @@ export function FavouritesScreen({
   );
 }
 
-function FilterPill({ id, label, isSelected, onClick }: { id: string; label: string; isSelected: boolean; onClick: () => void }): JSX.Element {
-  const isFocused = useIsFocused(id);
-
+/** "Edit My List" / "Done" — same pill style as the app's other primary action buttons. */
+function EditButton({ isEditing, onClick }: { isEditing: boolean; onClick: () => void }): JSX.Element {
+  const isFocused = useIsFocused(EDIT_BUTTON_ID);
+  const Icon = isEditing ? Check : Pencil;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "10px 22px",
-        borderRadius: 999,
-        border: isSelected ? "1px solid var(--accent)" : isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.14)",
-        background: isSelected ? "rgba(56,189,248,0.18)" : isFocused ? "rgba(255,255,255,0.1)" : "transparent",
-        color: isSelected ? "var(--accent)" : isFocused ? "var(--text)" : "var(--text-dim)",
-        fontSize: 15,
-        fontWeight: 600,
-        boxShadow: isFocused ? "0 0 0 3px var(--accent)" : "none",
-        transform: isFocused ? "scale(1.06)" : "scale(1)",
-        transition: "transform 160ms ease-out, box-shadow 160ms ease-out, background 160ms ease-out, border-color 160ms ease-out",
-        cursor: "pointer",
-      }}
-    >
-      {label}
-    </button>
+    <Focusable id={EDIT_BUTTON_ID} style={{ width: "auto", height: "auto" }}>
+      <button
+        type="button"
+        onClick={onClick}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+          padding: "1rem 2rem",
+          border: "none",
+          borderRadius: 999,
+          fontSize: TV_TEXT,
+          fontWeight: 700,
+          whiteSpace: "nowrap",
+          background: isFocused ? "#ffffff" : isEditing ? "rgba(224,51,47,0.25)" : "rgba(255,255,255,0.14)",
+          color: isFocused ? "#0b0c10" : "#ffffff",
+          boxShadow: isFocused ? "0 1rem 2rem -0.5rem rgba(0,0,0,0.6)" : "inset 0 0 0 1px rgba(255,255,255,0.1)",
+          transform: isFocused ? "scale(1.06)" : "scale(1)",
+          transition: "transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1)",
+          cursor: "pointer",
+        }}
+      >
+        <Icon size="1.5rem" strokeWidth={2.25} />
+        {isEditing ? "Done" : "Edit My List"}
+      </button>
+    </Focusable>
   );
 }
 
-function EmptyFavouritesState(): JSX.Element {
+/** Red ✕ shown on every card in edit mode. */
+function RemoveBadge(): JSX.Element {
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, minHeight: 360 }}>
-      <Heart size={48} strokeWidth={1.5} color="var(--text-dim)" />
-      <h2 style={{ fontSize: 24, fontWeight: 700, color: "var(--text)" }}>No Favourite</h2>
-      <p style={{ fontSize: 15, color: "var(--text-dim)", textAlign: "center", maxWidth: 420, lineHeight: 1.5 }}>
-        Press and hold Select on a channel, movie, or series to add it to your favourites — they'll show up here.
+    <span
+      aria-label="Remove"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "2.5rem",
+        height: "2.5rem",
+        borderRadius: 999,
+        background: "#e0332f",
+        color: "#fff",
+        boxShadow: "0 0.25rem 0.75rem rgba(0,0,0,0.5)",
+      }}
+    >
+      <X size="1.5rem" strokeWidth={3} />
+    </span>
+  );
+}
+
+/** A saved channel: a wide tile with the channel's logo and name, lifting on focus like every other card. */
+function ChannelTile({ item, isEditing, onSelect }: { item: ListItem; isEditing: boolean; onSelect: () => void }): JSX.Element {
+  const id = itemId(item.entry);
+  const isFocused = useIsFocused(id);
+  return (
+    <Focusable id={id}>
+      <LiftSurface
+        isFocused={isFocused}
+        radius="1rem"
+        width="24rem"
+        role="button"
+        tabIndex={-1}
+        onClick={onSelect}
+        faceStyle={{
+          aspectRatio: "16 / 9",
+          display: "flex",
+          flexDirection: "column",
+          background: isFocused ? "linear-gradient(160deg, #3a3d48 0%, #262830 100%)" : "linear-gradient(160deg, #23252d 0%, #17181d 100%)",
+        }}
+      >
+        <div style={{ flex: 1, minHeight: 0, padding: "1.25rem 2.5rem 0.5rem" }}>
+          <URLImage src={item.imageUrl} alt="" seed={item.entry.contentId} objectFit="contain" placeholderIcon={SECTION_ICONS.live} />
+        </div>
+        <div style={{ padding: "0 1.25rem 1rem", fontSize: TV_TEXT, fontWeight: 700, color: "#fff", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {item.title}
+        </div>
+        {isEditing && (
+          <div style={{ position: "absolute", top: "0.75rem", right: "0.75rem" }}>
+            <RemoveBadge />
+          </div>
+        )}
+      </LiftSurface>
+    </Focusable>
+  );
+}
+
+function EmptyState(): JSX.Element {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1.25rem", minHeight: "60vh", padding: `0 ${BROWSE_SIDE_PADDING}` }}>
+      <Heart size="5rem" strokeWidth={1.5} color="var(--text-dim)" />
+      <h2 style={{ fontSize: "2.25rem", fontWeight: 800, color: "#fff", margin: 0 }}>Your list is empty</h2>
+      <p style={{ fontSize: TV_TEXT, color: "var(--text-dim)", textAlign: "center", maxWidth: "48rem", lineHeight: 1.5, margin: 0 }}>
+        Add channels with + My List in Live TV, series with + My List on their page, or long-press OK on any movie or series poster.
       </p>
     </div>
   );
