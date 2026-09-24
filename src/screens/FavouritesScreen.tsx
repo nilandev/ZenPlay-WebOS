@@ -23,6 +23,7 @@ import { useCachedContent } from "../use-cached-content.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
 import { ChannelTile, RemoveBadge } from "./ListTiles.js";
+import { useFavoritesRevision } from "../use-favorites-revision.js";
 
 const SCOPE = "favourites";
 const EDIT_BUTTON_ID = "favourites-edit";
@@ -117,6 +118,7 @@ export function FavouritesScreen({
 }: FavouritesScreenProps): JSX.Element {
   // Bumped whenever an item is removed so the list re-reads localStorage.
   const [favoritesVersion, setFavoritesVersion] = useState(0);
+  const favoritesRevision = useFavoritesRevision(); // My List changed elsewhere (e.g. from the player)
   const [isEditing, setIsEditing] = useState(false);
 
   const favorites = useMemo(() => {
@@ -125,7 +127,7 @@ export function FavouritesScreen({
     return loadFavorites(profileId)
       .filter((f) => f.sourceId === source.id)
       .reverse();
-  }, [profileId, source.id, favoritesVersion]);
+  }, [profileId, source.id, favoritesVersion, favoritesRevision]);
 
   const liveIds = favorites.filter((f) => f.contentKind === "live");
   const movieIds = useMemo(() => favorites.filter((f) => f.contentKind === "movie").map((f) => f.contentId), [favorites]);

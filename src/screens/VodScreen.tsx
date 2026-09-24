@@ -36,6 +36,7 @@ import { startCatalogBackgroundSync } from "../catalog-sync.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { useCatalogShelves } from "../use-catalog-shelves.js";
 import { getCatalogPage } from "../catalog-store.js";
+import { useFavoritesRevision } from "../use-favorites-revision.js";
 
 export interface VodScreenProps {
   source: PlaylistSource;
@@ -190,6 +191,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // needed (toggleFavorite persists to localStorage but isn't itself
   // reactive state).
   const [favoritesVersion, setFavoritesVersion] = useState(0);
+  const favoritesRevision = useFavoritesRevision(); // My List changed elsewhere (e.g. from the player)
   // Read once per toggle rather than once per card per render (each lookup
   // parses the whole favourites list from localStorage).
   const favoriteMovieIds = useMemo(() => {
@@ -199,7 +201,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
         .filter((f) => f.sourceId === source.id && f.contentKind === "movie")
         .map((f) => f.contentId),
     );
-  }, [profile.id, source.id, favoritesVersion]);
+  }, [profile.id, source.id, favoritesVersion, favoritesRevision]);
 
   const categoryNameById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
 

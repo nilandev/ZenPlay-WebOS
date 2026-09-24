@@ -1,6 +1,7 @@
-import type { Channel, EpgProgramme } from "@core";
-import { BROWSE_SIDE_PADDING, OnNowTimeline, SECTION_ICONS, TV_TEXT, URLImage } from "@ui";
-import { Pause, Star } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { Channel, EpgProgramme, SeriesEpisode } from "@core";
+import { BROWSE_SIDE_PADDING, OnNowTimeline, SECTION_ICONS, TV_TEXT, TvButton, URLImage, useFocusStore } from "@ui";
+import { Pause, Play, Star } from "lucide-react";
 
 /** What the player knows about the title beyond its name — drives the loading and "You're watching" screens. All optional: providers fill these in unevenly. */
 export interface PlaybackInfo {
@@ -289,6 +290,131 @@ export function ChannelNumberEntry({ digits, notFound }: { digits: string; notFo
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+const NEXT_UP_SCOPE = "player-next-up";
+export const NEXT_UP_PLAY_ID = "player-next-up-play";
+export const NEXT_UP_CREDITS_ID = "player-next-up-credits";
+
+/**
+ * Netflix's end-of-episode card: the next episode's thumbnail, title and
+ * synopsis with "Next episode in 10s" counting down (a bar fills across
+ * the thumbnail), then it plays. "Play Now" skips the wait; "Watch
+ * Credits" dismisses the card and lets this episode finish. The countdown
+ * holds while playback is paused.
+ */
+export function NextUpCard({
+  episode,
+  seconds,
+  isPlaying,
+  onPlayNow,
+  onWatchCredits,
+}: {
+  episode: SeriesEpisode;
+  seconds: number;
+  isPlaying: boolean;
+  onPlayNow: () => void;
+  onWatchCredits: () => void;
+}): JSX.Element {
+  const [remainingMs, setRemainingMs] = useState(seconds * 1000);
+  const latestRef = useRef({ isPlaying, onPlayNow, onWatchCredits });
+  latestRef.current = { isPlaying, onPlayNow, onWatchCredits };
+
+  useEffect(() => {
+    const TICK_MS = 250;
+    const id = setInterval(() => {
+      if (!latestRef.current.isPlaying) return;
+      setRemainingMs((ms) => Math.max(0, ms - TICK_MS));
+    }, TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  const hasPlayed = useRef(false);
+  useEffect(() => {
+    if (remainingMs > 0 || hasPlayed.current) return;
+    hasPlayed.current = true;
+    latestRef.current.onPlayNow();
+  }, [remainingMs]);
+
+  const setGraph = useFocusStore((state) => state.setGraph);
+  const clearGraph = useFocusStore((state) => state.clearGraph);
+  const focus = useFocusStore((state) => state.focus);
+  useEffect(() => {
+    setGraph(NEXT_UP_SCOPE, [
+      { id: NEXT_UP_PLAY_ID, neighbors: { right: NEXT_UP_CREDITS_ID }, onSelect: () => latestRef.current.onPlayNow() },
+      { id: NEXT_UP_CREDITS_ID, neighbors: { left: NEXT_UP_PLAY_ID }, onSelect: () => latestRef.current.onWatchCredits() },
+    ]);
+    focus(NEXT_UP_PLAY_ID);
+    return () => clearGraph(NEXT_UP_SCOPE);
+  }, [setGraph, clearGraph, focus]);
+
+  const secondsLeft = Math.ceil(remainingMs / 1000);
+  const elapsed = 1 - remainingMs / (seconds * 1000);
+
+  return (
+    <div
+      role="dialog"
+      aria-label="Next episode"
+      style={{
+        position: "absolute",
+        right: BROWSE_SIDE_PADDING,
+        bottom: "3rem",
+        zIndex: 9,
+        width: "44rem",
+        padding: "1.5rem",
+        borderRadius: "1.5rem",
+        background: "rgba(10,11,15,0.92)",
+        boxShadow: "0 2rem 4rem -1rem rgba(0,0,0,0.8), inset 0 0 0 1px rgba(255,255,255,0.1)",
+        animation: "player-next-up-in 320ms cubic-bezier(0.2, 0.8, 0.3, 1)",
+      }}
+    >
+      <div style={{ display: "flex", gap: "1.5rem" }}>
+        <div style={{ position: "relative", width: "18rem", aspectRatio: "16 / 9", flexShrink: 0, borderRadius: "0.875rem", overflow: "hidden", background: "rgba(255,255,255,0.06)" }}>
+          <URLImage src={episode.posterUrl} alt="" seed={episode.id} loading="eager" placeholderIcon={SECTION_ICONS.series} />
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.25)" }}>
+            <Play size="3rem" fill="#fff" color="#fff" />
+          </div>
+          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "0.375rem", background: "rgba(255,255,255,0.25)" }}>
+            <div style={{ width: "100%", height: "100%", background: "var(--accent)", transformOrigin: "left", transform: `scaleX(${elapsed})`, transition: "transform 250ms linear" }} />
+          </div>
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div aria-live="polite" style={{ fontSize: "1.125rem", fontWeight: 700, color: "var(--accent)" }}>
+            Next episode in {secondsLeft}s
+          </div>
+          <div style={{ fontSize: "1.625rem", fontWeight: 800, color: "#fff", marginTop: "0.375rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            S{episode.season} E{episode.episode} · {episode.title}
+          </div>
+          {episode.plot && (
+            <p
+              style={{
+                margin: "0.5rem 0 0",
+                fontSize: "1.125rem",
+                lineHeight: 1.45,
+                color: "rgba(255,255,255,0.72)",
+                display: "-webkit-box",
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
+              {episode.plot}
+            </p>
+          )}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: "1rem", marginTop: "1.25rem" }}>
+        <TvButton id={NEXT_UP_PLAY_ID} label="Play Now" icon={Play} variant="primary" onSelect={onPlayNow} />
+        <TvButton id={NEXT_UP_CREDITS_ID} label="Watch Credits" onSelect={onWatchCredits} />
+      </div>
+      <style>{`
+        @keyframes player-next-up-in {
+          from { opacity: 0; transform: translateY(1.5rem); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }

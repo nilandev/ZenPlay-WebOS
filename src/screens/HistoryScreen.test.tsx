@@ -51,12 +51,14 @@ describe("HistoryScreen (Recently Watched)", () => {
     useFocusStore.getState().clearGraph("history-confirm");
   });
 
-  it("shows Continue Watching, Channels and Watched rows, newest first, with time left", () => {
+  it("shows Continue Watching, Recent Channels and You've Completed rows, newest first, with time left", () => {
     seed();
     renderScreen();
     expect(screen.getByText("Continue Watching · 2")).toBeDefined();
-    expect(screen.getByText("Channels · 2")).toBeDefined();
-    expect(screen.getByText("Watched · 1")).toBeDefined();
+    expect(screen.getByText("Recent Channels · 2")).toBeDefined();
+    expect(screen.getByText("You've Completed · 1")).toBeDefined();
+    expect(screen.getByText(/^Completed · /)).toBeDefined();
+    expect(screen.getByLabelText("Completed")).toBeDefined();
     expect(focusedId()).toBe("history-item:movie:film");
     expect(screen.getByText("1h 12m left")).toBeDefined();
     expect(screen.getByText("S1 E3 · Three · 30 min left")).toBeDefined();
@@ -113,5 +115,19 @@ describe("HistoryScreen (Recently Watched)", () => {
     press("Enter");
     expect(loadWatchHistory("p", "src")).toEqual([]);
     expect(screen.getByText("Nothing watched yet")).toBeDefined();
+  });
+
+  it("You've Completed lists finished films and fully watched series, most recently completed first", () => {
+    recordWatchHistory({ ...base, kind: "series", contentId: "done-show", title: "Done Show", subtitle: "S3 E10 · Finale", finished: true });
+    recordWatchHistory({ ...base, kind: "movie", contentId: "done-film", title: "Done Film", finished: true, positionSeconds: 7000, durationSeconds: 7100 });
+    recordWatchHistory({ ...base, kind: "series", contentId: "ongoing", title: "Ongoing", subtitle: "Up next: S1 E2 · Two", positionSeconds: 0 });
+    const props = renderScreen();
+    expect(screen.getByText("You've Completed · 2")).toBeDefined();
+    expect(screen.getByText("Continue Watching · 1")).toBeDefined();
+    expect(screen.getByText(/^Series completed · /)).toBeDefined();
+
+    act(() => useFocusStore.getState().focus("history-item:series:done-show"));
+    press("Enter");
+    expect(props.onOpenSeries).toHaveBeenCalledWith("done-show");
   });
 });

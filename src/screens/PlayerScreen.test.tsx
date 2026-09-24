@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LoadOptions, PlayerEngine, PlayerError } from "@player";
 import { useFocusStore } from "../ui/focus/focus-store.js";
+import { isFavorite } from "../profile-store.js";
 import { PlayerScreen } from "./PlayerScreen.js";
 
 const guide = vi.hoisted(() => ({ nowNext: null as unknown }));
@@ -58,7 +59,7 @@ describe("PlayerScreen", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
-    for (const scope of ["player-controls", "player-menu", "player-resume", "player-error", "player-episodes"]) useFocusStore.getState().clearGraph(scope);
+    for (const scope of ["player-controls", "player-menu", "player-resume", "player-error", "player-episodes", "player-next-up"]) useFocusStore.getState().clearGraph(scope);
   });
 
   it("starts on the seek bar; Left/Right presses collect into one seek", () => {
@@ -503,5 +504,96 @@ describe("PlayerScreen", () => {
     act(() => vi.advanceTimersByTime(0));
     expect(focusedId()).toBe("episode-card");
     useFocusStore.getState().clearGraph("underlying-page");
+  });
+
+  describe("next-episode countdown", () => {
+    const upNext = { id: "e5", seriesId: "s", season: 2, episode: 5, title: "The Tide", plot: "The storm reaches the town.", streamUrl: "u5", posterUrl: "thumb.jpg" };
+
+    async function renderEpisode(onNextEpisode = vi.fn()) {
+      const { engine, tick } = makeEngine(2700);
+      const view = render(
+        <PlayerScreen streamUrl="u4" platform="web" onClose={() => {}} title="Show" onNextEpisode={onNextEpisode} upNextEpisode={upNext} engineFactory={() => engine} />,
+      );
+      await act(async () => {});
+      return { view, engine, tick, onNextEpisode };
+    }
+
+    it("appears in the last 20 seconds with the next episode, and plays it after 10 seconds", async () => {
+      const { tick, onNextEpisode } = await renderEpisode();
+      tick(2600);
+      expect(screen.queryByRole("dialog", { name: "Next episode" })).toBeNull();
+      tick(2681);
+      const card = screen.getByRole("dialog", { name: "Next episode" });
+      expect(card.textContent).toContain("Next episode in 10s");
+      expect(card.textContent).toContain("S2 E5 · The Tide");
+      expect(card.textContent).toContain("The storm reaches the town.");
+      expect(focusedId()).toBe("player-next-up-play");
+
+      act(() => vi.advanceTimersByTime(4000));
+      expect(card.textContent).toContain("Next episode in 6s");
+      act(() => vi.advanceTimersByTime(6000));
+      expect(onNextEpisode).toHaveBeenCalledTimes(1);
+    });
+
+    it("holds the countdown while paused; Play Now skips it", async () => {
+      const { tick, onNextEpisode, view } = await renderEpisode();
+      tick(2690);
+      act(() => {
+        view.container.querySelector("video")!.dispatchEvent(new Event("pause"));
+      });
+      act(() => vi.advanceTimersByTime(15_000));
+      expect(onNextEpisode).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog", { name: "Next episode" }).textContent).toContain("Next episode in 10s");
+      press("Enter"); // Play Now
+      expect(onNextEpisode).toHaveBeenCalledTimes(1);
+    });
+
+    it("Watch Credits (or Back) dismisses it for this episode", async () => {
+      const { tick, onNextEpisode } = await renderEpisode();
+      tick(2685);
+      press("ArrowRight");
+      press("Enter"); // Watch Credits
+      expect(screen.queryByRole("dialog", { name: "Next episode" })).toBeNull();
+      tick(2690);
+      act(() => vi.advanceTimersByTime(15_000));
+      expect(screen.queryByRole("dialog", { name: "Next episode" })).toBeNull();
+      expect(onNextEpisode).not.toHaveBeenCalled();
+    });
+
+    it("Back dismisses it without leaving the player", async () => {
+      const onClose = vi.fn();
+      const { engine, tick } = makeEngine(2700);
+      render(<PlayerScreen streamUrl="u4" platform="web" onClose={onClose} title="Show" onNextEpisode={() => {}} upNextEpisode={upNext} engineFactory={() => engine} />);
+      await act(async () => {});
+      tick(2690);
+      press("Escape");
+      expect(screen.queryByRole("dialog", { name: "Next episode" })).toBeNull();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
+
+  it("My List in the controls adds and removes what's playing — a series as a whole", async () => {
+    localStorage.clear();
+    const { engine, tick } = makeEngine(2700);
+    render(
+      <PlayerScreen
+        streamUrl="u4"
+        platform="web"
+        onClose={() => {}}
+        title="Show"
+        watchTarget={{ profileId: "p", sourceId: "src", kind: "series", contentId: "show-1", title: "Show", episodeId: "e4" }}
+        engineFactory={() => engine}
+      />,
+    );
+    await act(async () => {});
+    tick(600);
+    press("ArrowDown");
+    press("ArrowRight");
+    press("ArrowRight");
+    expect(focusedId()).toBe("player-my-list");
+    press("Enter");
+    expect(isFavorite("p", "src", "series", "show-1")).toBe(true);
+    press("Enter");
+    expect(isFavorite("p", "src", "series", "show-1")).toBe(false);
   });
 });

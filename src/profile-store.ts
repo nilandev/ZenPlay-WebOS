@@ -112,7 +112,25 @@ export function toggleFavorite(profileId: string, sourceId: string, contentKind:
     : [...all, { profileId, sourceId, contentKind, contentId, addedAt: new Date().toISOString() }];
 
   localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+  favoritesRevision += 1;
+  for (const listener of favoriteListeners) listener();
   return !exists;
+}
+
+// Change notification for My List, so every screen that shows it (the
+// browse screens under the player, My List itself) re-reads after a change
+// made anywhere — e.g. the player's "My List" button.
+let favoritesRevision = 0;
+const favoriteListeners = new Set<() => void>();
+
+export function subscribeFavorites(listener: () => void): () => void {
+  favoriteListeners.add(listener);
+  return () => favoriteListeners.delete(listener);
+}
+
+/** Increments on every My List change — use as a memo dependency (see useFavoritesRevision). */
+export function getFavoritesRevision(): number {
+  return favoritesRevision;
 }
 
 function readWatchHistory(): WatchHistoryEntry[] {

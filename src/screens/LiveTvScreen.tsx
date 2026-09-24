@@ -19,6 +19,7 @@ import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useNowNext } from "../use-now-next.js";
 import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
+import { useFavoritesRevision } from "../use-favorites-revision.js";
 
 export interface LiveTvScreenProps {
   source: PlaylistSource;
@@ -101,6 +102,7 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
   // toggleFavorite persists synchronously but isn't itself reactive state,
   // same pattern as FavouritesScreen's own favoritesVersion.
   const [favoritesVersion, setFavoritesVersion] = useState(0);
+  const favoritesRevision = useFavoritesRevision(); // My List changed elsewhere (e.g. from the player)
 
   const previewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -111,7 +113,7 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
         .filter((f) => f.sourceId === source.id && f.contentKind === "live")
         .map((f) => f.contentId),
     );
-  }, [profile.id, source.id, favoritesVersion]);
+  }, [profile.id, source.id, favoritesVersion, favoritesRevision]);
   const favoriteChannels = useMemo(() => channels.filter((c) => favoriteIds.has(c.id)), [channels, favoriteIds]);
 
   // Rail rows: My List (the user's favourite channels) and All Channels first, then the provider's categories.

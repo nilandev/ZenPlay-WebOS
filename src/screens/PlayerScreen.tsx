@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resolveDigitKey, resolveRemoteAction, type Channel, type PlatformId, type PlaylistSource, type SeriesEpisode } from "@core";
 import type { AudioTrackInfo, PlaybackProgress, PlayerEngine, PlayerError, SubtitleTrackInfo } from "@player";
 import {
@@ -15,12 +15,13 @@ import {
   useRemoteInput,
 } from "@ui";
 import { ArrowLeft, Play, RotateCcw, TriangleAlert } from "lucide-react";
-import { upsertContinueWatching, type ResumePoint } from "../profile-store.js";
+import { isFavorite, toggleFavorite, upsertContinueWatching, type ResumePoint } from "../profile-store.js";
+import { useFavoritesRevision } from "../use-favorites-revision.js";
 import type { ChannelLineup } from "../channel-lineup.js";
 import { useNowNext } from "../use-now-next.js";
 import { useWatchHistoryRecorder, type WatchTarget } from "../use-watch-history-recorder.js";
 import { PlayerEpisodesPanel } from "./PlayerEpisodesPanel.js";
-import { ChannelBanner, ChannelNumberEntry, PausedInfoOverlay, PlayerLoadingScreen, type PlaybackInfo } from "./PlayerOverlays.js";
+import { ChannelBanner, ChannelNumberEntry, NextUpCard, PausedInfoOverlay, PlayerLoadingScreen, type PlaybackInfo } from "./PlayerOverlays.js";
 
 /** Identifies what's playing for Continue Watching persistence — omitted entirely for content that shouldn't be resumed (live TV, catch-up). */
 export interface PlaybackIdentity {
@@ -43,6 +44,8 @@ export interface PlayerScreenProps {
   subtitle?: string;
   /** Present only for series playback with another episode after this one — renders the Next Episode control and drives auto-advance on end-of-stream. */
   onNextEpisode?: () => void;
+  /** The episode onNextEpisode plays — shown on the end-of-episode countdown card. */
+  upNextEpisode?: SeriesEpisode | null;
   /** Live TV playback: no seek bar or scrubbing; the channel number and what's on now instead — see PlaybackControls' isLive prop. */
   isLive?: boolean;
   /** Live TV: the channel playing, and the source to read its guide from, for "On Now". */
@@ -92,7 +95,12 @@ const CHANNEL_NOT_FOUND_MS = 2000;
 /** Paused this long, the picture dims and "You're watching" takes over (Netflix's timing is similar). */
 const PAUSED_INFO_DELAY_MS = 10_000;
 
-type Panel = "none" | "menu" | "episodes";
+type Panel = "none" | "menu" | "episodes" | "next-up";
+
+/** The next-episode card appears with this much of the episode left… */
+const NEXT_UP_REMAINING_SECONDS = 20;
+/** …and counts down this long before playing it. */
+const NEXT_UP_COUNTDOWN_SECONDS = 10;
 
 const RESUME_SCOPE = "player-resume";
 const RESUME_ID = "player-resume-continue";
@@ -158,6 +166,7 @@ export function PlayerScreen({
   title,
   subtitle,
   onNextEpisode,
+  upNextEpisode,
   isLive = false,
   liveChannel,
   guideSource,
@@ -249,12 +258,65 @@ export function PlayerScreen({
 
   useWatchHistoryRecorder(watchTarget, { hasStarted, isPlaying, positionSeconds, durationSeconds });
 
+  // "My List" in the controls: the channel, film or series that's playing
+  // (a series is saved as a whole, as on its page). The revision re-reads
+  // it after any change, here or elsewhere.
+  const favoritesRevision = useFavoritesRevision();
+  const myListItem = watchTarget
+    ? { profileId: watchTarget.profileId, sourceId: watchTarget.sourceId, kind: watchTarget.kind, contentId: watchTarget.contentId }
+    : null;
+  const isInMyList = useMemo(
+    () => (myListItem ? isFavorite(myListItem.profileId, myListItem.sourceId, myListItem.kind, myListItem.contentId) : false),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [myListItem?.profileId, myListItem?.sourceId, myListItem?.kind, myListItem?.contentId, favoritesRevision],
+  );
+  const myList = myListItem
+    ? {
+        isAdded: isInMyList,
+        onToggle: () => {
+          toggleFavorite(myListItem.profileId, myListItem.sourceId, myListItem.kind, myListItem.contentId);
+          showControls();
+        },
+      }
+    : undefined;
+
+  // End-of-episode countdown card: shown once per episode in its last
+  // NEXT_UP_REMAINING_SECONDS, unless the viewer chose Watch Credits.
+  const [nextUpDismissedFor, setNextUpDismissedFor] = useState<string | null>(null);
+  const remainingSeconds = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds - positionSeconds : Infinity;
+  const isNextUpDue =
+    Boolean(upNextEpisode && onNextEpisode) &&
+    hasStarted &&
+    failure === null &&
+    remainingSeconds <= NEXT_UP_REMAINING_SECONDS &&
+    pendingSeekSeconds === null &&
+    nextUpDismissedFor !== streamUrl;
+  useEffect(() => {
+    if (!isNextUpDue || panelRef.current !== "none") return; // don't pull the viewer out of a menu
+    setReturnFocusId(useFocusStore.getState().focusedId);
+    setPanel("next-up");
+  }, [isNextUpDue]);
+
+  function closeNextUp(): void {
+    setNextUpDismissedFor(streamUrl);
+    setPanel("none");
+    showControls();
+  }
+
+  function playNextNow(): void {
+    setNextUpDismissedFor(streamUrl);
+    setPanel("none");
+    onNextEpisode?.();
+  }
+
   const isMenuOpen = panel === "menu";
   const isShowingVideo = !isChoosingResume && failure === null;
   const hasEpisodes = Boolean(onPlayEpisode && episodes && episodes.length > 1);
 
   // Mirrors of state for the key handler and timers, which live outside React's render cycle.
   const isPanelOpen = panel !== "none";
+  const panelRef = useRef(panel);
+  panelRef.current = panel;
   const stateRef = useRef({ isPlaying, isPanelOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo, isPausedInfoShown, hasEpisodes });
   stateRef.current = { isPlaying, isPanelOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo, isPausedInfoShown, hasEpisodes };
 
@@ -589,7 +651,8 @@ export function PlayerScreen({
 
   useRemoteInput(platform, {
     onBack: () => {
-      if (stateRef.current.isPanelOpen) setPanel("none");
+      if (panelRef.current === "next-up") closeNextUp();
+      else if (stateRef.current.isPanelOpen) setPanel("none");
       else onClose();
     },
     onPlayPause: togglePlayPause,
@@ -644,6 +707,9 @@ export function PlayerScreen({
       {failure === null && (
         <PlayerLoadingScreen title={title} subtitle={subtitle} info={info} isLive={isLive} isVisible={!hasStarted && !isChangingChannel} />
       )}
+      {failure === null && panel === "next-up" && upNextEpisode && (
+        <NextUpCard episode={upNextEpisode} seconds={NEXT_UP_COUNTDOWN_SECONDS} isPlaying={isPlaying} onPlayNow={playNextNow} onWatchCredits={closeNextUp} />
+      )}
       {failure === null && isBannerShown && liveChannel && <ChannelBanner channel={liveChannel} programme={nowNext?.now} />}
       {typedDigits && <ChannelNumberEntry digits={typedDigits} notFound={isNumberNotFound} />}
       {failure === null && isPausedInfoShown && <PausedInfoOverlay title={title} subtitle={pausedSubtitle} info={pausedInfo} />}
@@ -677,6 +743,7 @@ export function PlayerScreen({
             returnFocusId={returnFocusId}
             onOpenMenu={() => openPanel("menu")}
             onOpenEpisodes={hasEpisodes ? () => openPanel("episodes") : undefined}
+            myList={myList}
             onTogglePlayPause={togglePlayPause}
             onSelectAudioTrack={selectAudioTrack}
             onSelectSubtitleTrack={selectSubtitleTrack}

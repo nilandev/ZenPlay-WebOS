@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Check, FastForward, ListVideo, Pause, Play, Rewind, SkipForward, Subtitles } from "lucide-react";
+import { Check, FastForward, ListVideo, Pause, Play, Plus, Rewind, SkipForward, Subtitles } from "lucide-react";
 import type { NowNext } from "@core";
 import type { AudioTrackInfo, SubtitleTrackInfo } from "@player";
 import { buildShelfFocusGraph } from "../focus/build-shelf-graph.js";
@@ -17,6 +17,7 @@ export const PLAYER_PLAY_PAUSE_ID = "play-pause";
 export const PLAYER_AUDIO_SUBTITLES_ID = "audio-subtitles";
 export const PLAYER_NEXT_EPISODE_ID = "next-episode";
 export const PLAYER_EPISODES_ID = "player-episodes-button";
+export const PLAYER_MY_LIST_ID = "player-my-list";
 
 /** Seconds jumped per Left/Right press — the 10s convention of Netflix and most streaming apps. Holding the key speeds this up (see PlayerScreen). */
 export const SEEK_STEP_SECONDS = 10;
@@ -60,6 +61,8 @@ export interface PlaybackControlsProps {
   onOpenMenu: () => void;
   /** Series only — adds an Episodes button. */
   onOpenEpisodes?: () => void;
+  /** Adds a My List button (+ / ✓) for what's playing — the channel, film or series. */
+  myList?: { isAdded: boolean; onToggle: () => void };
   onTogglePlayPause: () => void;
   onSelectAudioTrack: (id: number) => void;
   onSelectSubtitleTrack: (id: number | null) => void;
@@ -118,15 +121,17 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
   latestRef.current = props;
   const wasPanelOpenRef = useRef(false);
   const hasEpisodes = Boolean(onOpenEpisodes);
+  const hasMyList = Boolean(props.myList);
 
   const buttonRow = useMemo(
     () => [
       PLAYER_PLAY_PAUSE_ID,
       PLAYER_AUDIO_SUBTITLES_ID,
       ...(hasEpisodes ? [PLAYER_EPISODES_ID] : []),
+      ...(hasMyList ? [PLAYER_MY_LIST_ID] : []),
       ...(isNextEpisodeDue ? [PLAYER_NEXT_EPISODE_ID] : []),
     ],
-    [isNextEpisodeDue, hasEpisodes],
+    [isNextEpisodeDue, hasEpisodes, hasMyList],
   );
 
   useEffect(() => {
@@ -143,6 +148,7 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
         if (node.id === PLAYER_SEEK_ID || node.id === PLAYER_PLAY_PAUSE_ID) current.onTogglePlayPause();
         else if (node.id === PLAYER_AUDIO_SUBTITLES_ID) current.onOpenMenu();
         else if (node.id === PLAYER_EPISODES_ID) current.onOpenEpisodes?.();
+        else if (node.id === PLAYER_MY_LIST_ID) current.myList?.onToggle();
         else if (node.id === PLAYER_NEXT_EPISODE_ID) current.onNextEpisode();
       },
     }));
@@ -233,6 +239,9 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
           <TvButton id={PLAYER_PLAY_PAUSE_ID} label={isPlaying ? "Pause" : "Play"} icon={isPlaying ? Pause : Play} onSelect={onTogglePlayPause} />
           <TvButton id={PLAYER_AUDIO_SUBTITLES_ID} label="Audio & Subtitles" icon={Subtitles} onSelect={onOpenMenu} />
           {onOpenEpisodes && <TvButton id={PLAYER_EPISODES_ID} label="Episodes" icon={ListVideo} onSelect={onOpenEpisodes} />}
+          {props.myList && (
+            <TvButton id={PLAYER_MY_LIST_ID} label="My List" icon={props.myList.isAdded ? Check : Plus} onSelect={props.myList.onToggle} />
+          )}
           <div style={{ flex: 1 }} />
           {isNextEpisodeDue && (
             <div style={{ animation: "player-next-episode-in 320ms cubic-bezier(0.2, 0.8, 0.3, 1)" }}>

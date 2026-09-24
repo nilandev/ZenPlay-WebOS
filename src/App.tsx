@@ -515,6 +515,7 @@ export function App(): JSX.Element {
             title={playbackTitle}
             subtitle={playbackSubtitle}
             onNextEpisode={nextEpisode ? playNextEpisode : undefined}
+            upNextEpisode={nextEpisode}
             isLive={isPlaybackLive}
             liveChannel={playbackChannel}
             guideSource={activeSource}

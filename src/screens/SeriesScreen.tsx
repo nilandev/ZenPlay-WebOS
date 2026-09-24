@@ -43,6 +43,7 @@ import { startCatalogBackgroundSync } from "../catalog-sync.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { useCatalogShelves } from "../use-catalog-shelves.js";
 import { getCatalogPage } from "../catalog-store.js";
+import { useFavoritesRevision } from "../use-favorites-revision.js";
 
 /** The series around an episode being played — the player's title, artwork and "You're watching" details. */
 export interface EpisodePlayContext {
@@ -249,6 +250,7 @@ export function SeriesScreen({
   // needed (toggleFavorite persists to localStorage but isn't itself
   // reactive state).
   const [favoritesVersion, setFavoritesVersion] = useState(0);
+  const favoritesRevision = useFavoritesRevision(); // My List changed elsewhere (e.g. from the player)
   // Read once per toggle rather than once per card per render (each lookup
   // parses the whole favourites list from localStorage).
   const favoriteSeriesIds = useMemo(() => {
@@ -258,7 +260,7 @@ export function SeriesScreen({
         .filter((f) => f.sourceId === source.id && f.contentKind === "series")
         .map((f) => f.contentId),
     );
-  }, [profile.id, source.id, favoritesVersion]);
+  }, [profile.id, source.id, favoritesVersion, favoritesRevision]);
 
   const loadDetails = useCallback(
     () => (selected ? loadSeriesDetails(source, selected) : Promise.resolve(EMPTY_SERIES_DETAILS)),

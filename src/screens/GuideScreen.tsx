@@ -18,6 +18,7 @@ import { loadChannelsByKind, loadEpg, loadLiveCategories } from "../content-load
 import { loadFavorites } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useGuideProgrammes } from "../use-guide-programmes.js";
+import { useFavoritesRevision } from "../use-favorites-revision.js";
 
 export interface GuideScreenProps {
   source: PlaylistSource;
@@ -105,6 +106,7 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
   );
   const numberById = useMemo(() => new Map(channels.map((channel, index) => [channel.id, channel.number ?? index + 1])), [channels]);
 
+  const favoritesRevision = useFavoritesRevision(); // My List changed elsewhere (e.g. from the player)
   const favoriteChannels = useMemo(() => {
     if (!profile) return EMPTY_CHANNELS;
     const ids = new Set(
@@ -113,7 +115,7 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
         .map((f) => f.contentId),
     );
     return channels.filter((c) => ids.has(c.id));
-  }, [profile, source.id, channels]);
+  }, [profile, source.id, channels, favoritesRevision]);
 
   const categoryItems = useMemo(
     () => [

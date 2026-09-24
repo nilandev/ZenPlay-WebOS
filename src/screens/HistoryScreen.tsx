@@ -85,7 +85,8 @@ function asChannel(entry: WatchHistoryEntry): Channel {
  *   episode), with a progress bar and time left. OK continues straight away.
  * - Channels — recently watched live channels. OK tunes; CH+/CH− in the
  *   player move between these.
- * - Watched — finished titles. OK plays a film from the start or opens the series.
+ * - You've Completed — films watched to the end and series whose last
+ *   episode was, with a ✓. OK plays a film from the start or opens the series.
  *
  * Removing works like My List: Edit mode, or long-press OK. Clear History
  * asks first. Everything shown comes from the saved history, so the page
@@ -116,11 +117,12 @@ export function HistoryScreen({
   const rows = useMemo<Row[]>(() => {
     const inProgress = history.filter((e) => e.kind !== "live" && !e.finished);
     const channels = history.filter((e) => e.kind === "live");
-    const watched = history.filter((e) => e.kind !== "live" && e.finished);
+    // Films watched to the end, and series whose last episode was — most recently completed first.
+    const completed = history.filter((e) => e.kind !== "live" && e.finished);
     return [
       { key: "continue", title: "Continue Watching", items: inProgress },
-      { key: "channels", title: "Channels", items: channels },
-      { key: "watched", title: "Watched", items: watched },
+      { key: "channels", title: "Recent Channels", items: channels },
+      { key: "completed", title: "You've Completed", items: completed },
     ].filter((row) => row.items.length > 0);
   }, [history]);
   const itemCount = history.length;
@@ -317,7 +319,7 @@ export function HistoryScreen({
                       width={POSTER_WIDTH}
                       progress={entry.finished ? undefined : progressOf(entry)}
                       placeholderIcon={entry.kind === "movie" ? SECTION_ICONS.movies : SECTION_ICONS.series}
-                      badge={isEditing ? <RemoveBadge /> : undefined}
+                      badge={isEditing ? <RemoveBadge /> : entry.finished ? <CompletedBadge /> : undefined}
                       onSelect={() => activate(entry)}
                     />
                   )
@@ -332,10 +334,32 @@ export function HistoryScreen({
 }
 
 function cardSubtitle(entry: WatchHistoryEntry): string | undefined {
-  if (entry.finished) return `Watched · ${formatWatchedAgo(entry.updatedAt)}`;
+  if (entry.finished) return `${entry.kind === "series" ? "Series completed" : "Completed"} · ${formatWatchedAgo(entry.updatedAt)}`;
   const left = entry.durationSeconds && entry.positionSeconds !== undefined ? formatTimeLeft(entry.durationSeconds - entry.positionSeconds) : null;
   if (entry.kind === "series") return [entry.subtitle, entry.positionSeconds ? left : null].filter(Boolean).join(" · ") || undefined;
   return left ?? undefined;
+}
+
+/** Green ✓ on completed titles. */
+function CompletedBadge(): JSX.Element {
+  return (
+    <span
+      aria-label="Completed"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "2.25rem",
+        height: "2.25rem",
+        borderRadius: 999,
+        background: "#22a55a",
+        color: "#fff",
+        boxShadow: "0 0.25rem 0.75rem rgba(0,0,0,0.5)",
+      }}
+    >
+      <Check size="1.375rem" strokeWidth={3} />
+    </span>
+  );
 }
 
 function EmptyState(): JSX.Element {
