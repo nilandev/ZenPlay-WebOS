@@ -53,7 +53,7 @@ describe("PlayerScreen", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
-    for (const scope of ["player-controls", "player-menu", "player-resume", "player-error"]) useFocusStore.getState().clearGraph(scope);
+    for (const scope of ["player-controls", "player-menu", "player-resume", "player-error", "player-episodes"]) useFocusStore.getState().clearGraph(scope);
   });
 
   it("starts on the seek bar; Left/Right presses collect into one seek", () => {
@@ -86,9 +86,10 @@ describe("PlayerScreen", () => {
     expect(engine.seekTo).not.toHaveBeenCalled();
   });
 
-  it("while the controls are hidden, OK only brings them back — it doesn't pause", () => {
+  it("while the controls are hidden, OK only brings them back — it doesn't pause", async () => {
     const { engine, tick } = makeEngine(3600);
     const { container } = render(<PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="Film" engineFactory={() => engine} />);
+    await act(async () => {});
     tick(600);
     const overlay = () => (container.querySelector("[role=slider]")!.closest("div[style*='opacity']") as HTMLElement).style.opacity;
     act(() => vi.advanceTimersByTime(5000));
@@ -223,5 +224,125 @@ describe("PlayerScreen", () => {
     expect(engine.play).toHaveBeenCalledTimes(playsBefore + 1);
     press("MediaStop");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a loading screen with the artwork until the stream starts, then fades it out", async () => {
+    const { engine } = makeEngine(3600);
+    render(<PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="Film" info={{ posterUrl: "poster.jpg" }} engineFactory={() => engine} />);
+    const loading = screen.getByTestId("player-loading");
+    expect(loading.style.opacity).toBe("1");
+    expect(screen.getByText("Starting…")).toBeDefined();
+    await act(async () => {});
+    expect(loading.style.opacity).toBe("0");
+  });
+
+  it("keeps the loading screen up while a stream hasn't started", async () => {
+    const { engine } = makeEngine(NaN, { hangOnLoad: true });
+    render(<PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="News" isLive info={{ logoUrl: "logo.png" }} engineFactory={() => engine} />);
+    await act(async () => {});
+    expect(screen.getByTestId("player-loading").style.opacity).toBe("1");
+    expect(screen.getByText("Tuning in…")).toBeDefined();
+  });
+
+  it("shows \"You're watching\" after 10s paused; any key brings the controls back, OK resumes", async () => {
+    const { engine, tick } = makeEngine(3600);
+    const { container } = render(
+      <PlayerScreen
+        streamUrl="s"
+        platform="web"
+        onClose={() => {}}
+        title="The Night Shift"
+        subtitle="S2 E4 · Ghosts"
+        info={{ plot: "A shift goes wrong.", rating: 8.1, year: 2016 }}
+        engineFactory={() => engine}
+      />,
+    );
+    await act(async () => {});
+    tick(600);
+    act(() => {
+      container.querySelector("video")!.dispatchEvent(new Event("pause"));
+    });
+    act(() => vi.advanceTimersByTime(9_000));
+    expect(screen.queryByRole("status", { name: "You're watching" })).toBeNull();
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(screen.getByRole("status", { name: "You're watching" }).textContent).toContain("A shift goes wrong.");
+    expect(screen.getByText("2016")).toBeDefined();
+
+    press("ArrowDown"); // just brings the controls back
+    expect(screen.queryByRole("status", { name: "You're watching" })).toBeNull();
+    expect(focusedId()).toBe("seek-bar");
+    const playsBefore = engine.play.mock.calls.length;
+
+    act(() => vi.advanceTimersByTime(10_000)); // still paused: it returns
+    expect(screen.getByRole("status", { name: "You're watching" })).toBeDefined();
+    press("Enter");
+    expect(engine.play).toHaveBeenCalledTimes(playsBefore + 1);
+    expect(engine.pause).not.toHaveBeenCalled();
+  });
+
+  it("series: Up from the seek bar opens the Episodes panel on the current episode; OK plays another", async () => {
+    const episodes = [1, 2, 3].map((n) => ({ id: `e${n}`, seriesId: "s", season: 1, episode: n, title: `Ep ${n}`, streamUrl: `u${n}` }));
+    episodes.push({ id: "e4", seriesId: "s", season: 2, episode: 1, title: "S2 opener", streamUrl: "u4" });
+    const onPlayEpisode = vi.fn();
+    const { engine, tick } = makeEngine(3600);
+    render(
+      <PlayerScreen
+        streamUrl="u2"
+        platform="web"
+        onClose={() => {}}
+        title="Show"
+        episodes={episodes}
+        currentEpisodeId="e2"
+        onPlayEpisode={onPlayEpisode}
+        engineFactory={() => engine}
+      />,
+    );
+    await act(async () => {});
+    tick(600);
+    press("ArrowUp");
+    expect(screen.getByRole("dialog", { name: "Episodes" })).toBeDefined();
+    expect(screen.getByText("Now playing")).toBeDefined();
+    expect(focusedId()).toBe("player-episode:e2");
+
+    press("ArrowUp"); // season chips
+    expect(focusedId()).toBe("player-season:1");
+    press("ArrowRight");
+    press("Enter"); // switch to season 2
+    expect(screen.getByText("1. S2 opener")).toBeDefined();
+    press("ArrowDown");
+    press("Enter");
+    expect(onPlayEpisode).toHaveBeenCalledWith(episodes[3]);
+    expect(screen.queryByRole("dialog", { name: "Episodes" })).toBeNull();
+  });
+
+  it("Back closes the Episodes panel and returns focus to where it was opened", async () => {
+    const episodes = [1, 2].map((n) => ({ id: `e${n}`, seriesId: "s", season: 1, episode: n, title: `Ep ${n}`, streamUrl: `u${n}` }));
+    const onClose = vi.fn();
+    const { engine, tick } = makeEngine(3600);
+    render(
+      <PlayerScreen streamUrl="u1" platform="web" onClose={onClose} title="Show" episodes={episodes} currentEpisodeId="e1" onPlayEpisode={() => {}} engineFactory={() => engine} />,
+    );
+    await act(async () => {});
+    tick(600);
+    press("ArrowDown");
+    press("ArrowRight");
+    press("ArrowRight");
+    expect(focusedId()).toBe("player-episodes-button");
+    press("Enter");
+    expect(screen.getByRole("dialog", { name: "Episodes" })).toBeDefined();
+    press("Escape");
+    expect(screen.queryByRole("dialog", { name: "Episodes" })).toBeNull();
+    expect(focusedId()).toBe("player-episodes-button");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("autoResume starts at the saved position without asking", async () => {
+    const { engine } = makeEngine(3600);
+    render(
+      <PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="Film" resumeFrom={{ positionSeconds: 900, durationSeconds: 3600 }} autoResume engineFactory={() => engine} />,
+    );
+    await act(async () => {});
+    expect(screen.queryByRole("button", { name: /Resume from/ })).toBeNull();
+    expect(engine.load).toHaveBeenCalledWith("s", { startPositionSeconds: 900 });
   });
 });

@@ -10,3 +10,6 @@ webos-dist/
 .env
 .env.local
 coverage/
+
+# Stray headless-Chrome profile from local screenshot tooling
+undefined/

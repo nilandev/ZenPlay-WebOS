@@ -1,4 +1,4 @@
-import type { Category, Channel, SeriesDetails, SeriesEpisode, SeriesInfo } from "../models/channel.js";
+import type { Category, Channel, MovieDetails, SeriesDetails, SeriesEpisode, SeriesInfo } from "../models/channel.js";
 import type { EpgProgramme } from "../models/epg.js";
 import type { XtreamCredentials } from "../models/playlist-source.js";
 import {
@@ -68,6 +68,20 @@ interface XtreamSeriesInfoResponse {
       info?: { movie_image?: string; duration_secs?: number; plot?: string; releasedate?: string; rating?: string | number };
     }>
   >;
+}
+
+interface XtreamVodInfoResponse {
+  info?: {
+    plot?: string;
+    description?: string;
+    genre?: string;
+    releasedate?: string;
+    release_date?: string;
+    rating?: string | number;
+    /** Usually an array; some panels send a bare string. */
+    backdrop_path?: string[] | string;
+    duration_secs?: number;
+  };
 }
 
 /** Splits a provider's comma-separated field (cast, genre, director) into trimmed, non-empty entries. */
@@ -303,6 +317,21 @@ export class XtreamClient {
     };
 
     return { details, episodes };
+  }
+
+  /** A film's plot, rating, release date and backdrop (get_vod_info). Missing fields stay undefined. */
+  async getVodDetails(vodId: string): Promise<MovieDetails> {
+    const raw = await this.fetchJson<XtreamVodInfoResponse>({ action: "get_vod_info", vod_id: vodId });
+    const info = raw.info;
+    const backdrop = Array.isArray(info?.backdrop_path) ? info.backdrop_path[0] : info?.backdrop_path;
+    return {
+      plot: info?.plot || info?.description || undefined,
+      genre: splitList(info?.genre),
+      releaseDate: info?.releasedate || info?.release_date || undefined,
+      rating: parseRating(info?.rating),
+      backdropUrl: backdrop || undefined,
+      durationSeconds: info?.duration_secs || undefined,
+    };
   }
 
   /** @deprecated Use getSeriesDetails, which also returns series-level metadata from the same response. Kept for any caller that only wants the flat episode list. */

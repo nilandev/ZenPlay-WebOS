@@ -5,6 +5,7 @@ import {
   type Category,
   type Channel,
   type EpgProgramme,
+  type MovieDetails,
   type PlaylistSource,
   type SeriesDetails,
   type SeriesEpisode,
@@ -123,6 +124,23 @@ export async function loadSeriesDetails(source: PlaylistSource, seriesId: string
   if (source.kind !== "xtream") return EMPTY_SERIES_DETAILS;
   const client = new XtreamClient(source, proxyFetch);
   return client.getSeriesDetails(seriesId);
+}
+
+const movieDetailsCache = new Map<string, Promise<MovieDetails>>();
+
+/** A film's plot/rating/year/backdrop for the player — Xtream only, cached per source+film for the session; {} on failure. */
+export function loadMovieDetails(source: PlaylistSource, movieId: string): Promise<MovieDetails> {
+  if (source.kind !== "xtream") return Promise.resolve({});
+  const key = `${source.id}:${movieId}`;
+  let pending = movieDetailsCache.get(key);
+  if (!pending) {
+    pending = new XtreamClient(source, proxyFetch).getVodDetails(movieId).catch(() => {
+      movieDetailsCache.delete(key); // don't pin a failure for the whole session
+      return {};
+    });
+    movieDetailsCache.set(key, pending);
+  }
+  return pending;
 }
 
 export async function loadEpg(source: PlaylistSource): Promise<EpgProgramme[]> {

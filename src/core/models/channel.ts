@@ -56,6 +56,18 @@ export interface SeriesDetails {
   trailerUrl?: string;
 }
 
+/** A film's metadata from Xtream's get_vod_info — all optional, since providers fill it in unevenly and M3U has none. */
+export interface MovieDetails {
+  plot?: string;
+  genre?: string[];
+  /** e.g. "2014-11-07" — kept as a string, like SeriesDetails.releaseDate. */
+  releaseDate?: string;
+  /** 0-10, when the provider includes one. */
+  rating?: number;
+  backdropUrl?: string;
+  durationSeconds?: number;
+}
+
 export interface SeriesInfo {
   id: string;
   name: string;

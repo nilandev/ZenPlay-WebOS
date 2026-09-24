@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Channel, PlaylistSource, Profile, SeriesEpisode } from "@core";
 import {
   addPlaylistSource,
@@ -19,11 +19,13 @@ import {
   type ResumePoint,
 } from "./profile-store.js";
 import { buildRevalidationTargets, revalidateStaleTargets } from "./cache-revalidator.js";
+import { loadMovieDetails } from "./content-loader.js";
 import { AddSourceScreen } from "./screens/AddSourceScreen.js";
 import { HomeScreen } from "./screens/HomeScreen.js";
 import { LiveTvScreen } from "./screens/LiveTvScreen.js";
 import { VodScreen } from "./screens/VodScreen.js";
-import { SeriesScreen } from "./screens/SeriesScreen.js";
+import { SeriesScreen, type EpisodePlayContext } from "./screens/SeriesScreen.js";
+import { yearFromDate, type PlaybackInfo } from "./screens/PlayerOverlays.js";
 import { GuideScreen } from "./screens/GuideScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
 import { ManagePlaylistsScreen } from "./screens/ManagePlaylistsScreen.js";
@@ -72,10 +74,18 @@ export function App(): JSX.Element {
   const [isManagingProfiles, setIsManagingProfiles] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("home");
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const playbackUrlRef = useRef(playbackUrl);
+  playbackUrlRef.current = playbackUrl;
   const [playbackIdentity, setPlaybackIdentity] = useState<PlaybackIdentity | undefined>(undefined);
   const [playbackTitle, setPlaybackTitle] = useState<string | undefined>(undefined);
   const [playbackSubtitle, setPlaybackSubtitle] = useState<string | undefined>(undefined);
   const [playbackResume, setPlaybackResume] = useState<ResumePoint | null>(null);
+  const [playbackAutoResume, setPlaybackAutoResume] = useState(false);
+  const [playbackInfo, setPlaybackInfo] = useState<PlaybackInfo | undefined>(undefined);
+  const [playbackEpisodeId, setPlaybackEpisodeId] = useState<string | undefined>(undefined);
+  // The series around the episode playing — kept so Next Episode and the
+  // player's Episodes panel can start another episode with the same context.
+  const [seriesContext, setSeriesContext] = useState<EpisodePlayContext>({});
   // The episode after the one currently playing, computed when a series
   // episode starts (see playEpisode) — null when there isn't one (last
   // episode of the last season, or a movie), which is what tells
@@ -213,6 +223,22 @@ export function App(): JSX.Element {
   const playMovie = (movie: Channel): void => {
     setPlaybackIdentity({ profileId: activeProfile.id, contentId: movie.id, contentKind: "movie" });
     setPlaybackResume(getResumePoint(activeProfile.id, movie.id));
+    setPlaybackAutoResume(false);
+    setPlaybackEpisodeId(undefined);
+    setPlaybackInfo({ posterUrl: movie.logoUrl });
+    // Plot/rating/year/backdrop arrive a moment later (Xtream get_vod_info);
+    // only applied if this film is still the one playing.
+    const streamUrl = movie.streamUrl;
+    void loadMovieDetails(activeSource, movie.id).then((details) => {
+      if (playbackUrlRef.current !== streamUrl) return;
+      setPlaybackInfo({
+        posterUrl: movie.logoUrl,
+        backdropUrl: details.backdropUrl,
+        plot: details.plot,
+        rating: details.rating,
+        year: yearFromDate(details.releaseDate),
+      });
+    });
     setPlaybackTitle(movie.name);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
@@ -223,7 +249,7 @@ export function App(): JSX.Element {
   // SeriesScreen's onPlayEpisode) — used to find the episode immediately
   // after this one for the player's Next Episode control, without this
   // component needing its own copy of season/episode-ordering logic.
-  const playEpisode = (episode: SeriesEpisode, allEpisodes: SeriesEpisode[]): void => {
+  const playEpisode = (episode: SeriesEpisode, allEpisodes: SeriesEpisode[], context: EpisodePlayContext = seriesContext): void => {
     setPlaybackIdentity({
       profileId: activeProfile.id,
       contentId: episode.seriesId,
@@ -231,8 +257,19 @@ export function App(): JSX.Element {
       episodeId: episode.id,
     });
     setPlaybackResume(getResumePoint(activeProfile.id, episode.seriesId, episode.id));
-    setPlaybackTitle(episode.title);
-    setPlaybackSubtitle(`S${episode.season} E${episode.episode}`);
+    setPlaybackAutoResume(Boolean(context.resume));
+    setSeriesContext({ ...context, resume: false });
+    setPlaybackEpisodeId(episode.id);
+    // Netflix-style: the series is the title, the episode goes underneath.
+    setPlaybackTitle(context.seriesName ?? episode.title);
+    setPlaybackSubtitle(context.seriesName ? `S${episode.season} E${episode.episode} · ${episode.title}` : `S${episode.season} E${episode.episode}`);
+    setPlaybackInfo({
+      posterUrl: context.posterUrl ?? episode.posterUrl,
+      backdropUrl: context.details?.backdropUrl ?? episode.posterUrl,
+      plot: episode.plot ?? context.details?.plot,
+      rating: episode.rating ?? context.details?.rating,
+      year: yearFromDate(episode.releaseDate ?? context.details?.releaseDate),
+    });
     setNextEpisode(findNextEpisode(episode, allEpisodes));
     setSeriesEpisodes(allEpisodes);
     setIsPlaybackLive(false);
@@ -241,6 +278,9 @@ export function App(): JSX.Element {
   const playWithoutIdentity = (streamUrl: string): void => {
     setPlaybackIdentity(undefined);
     setPlaybackResume(null);
+    setPlaybackAutoResume(false);
+    setPlaybackEpisodeId(undefined);
+    setPlaybackInfo(undefined);
     setPlaybackTitle(undefined);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
@@ -250,6 +290,9 @@ export function App(): JSX.Element {
   const playLive = (channel: Channel): void => {
     setPlaybackIdentity(undefined);
     setPlaybackResume(null);
+    setPlaybackAutoResume(false);
+    setPlaybackEpisodeId(undefined);
+    setPlaybackInfo({ logoUrl: channel.logoUrl });
     setPlaybackTitle(channel.name);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
@@ -263,6 +306,9 @@ export function App(): JSX.Element {
     setPlaybackUrl(null);
     setPlaybackIdentity(undefined);
     setPlaybackResume(null);
+    setPlaybackAutoResume(false);
+    setPlaybackEpisodeId(undefined);
+    setPlaybackInfo(undefined);
     setPlaybackTitle(undefined);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
@@ -382,6 +428,11 @@ export function App(): JSX.Element {
             onNextEpisode={nextEpisode ? playNextEpisode : undefined}
             isLive={isPlaybackLive}
             resumeFrom={playbackResume}
+            autoResume={playbackAutoResume}
+            info={playbackInfo}
+            episodes={playbackEpisodeId ? seriesEpisodes : undefined}
+            currentEpisodeId={playbackEpisodeId}
+            onPlayEpisode={(episode) => playEpisode(episode, seriesEpisodes)}
           />
       )}
     </div>

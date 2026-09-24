@@ -231,6 +231,24 @@ describe("XtreamClient", () => {
     expect(episodes).toHaveLength(1);
   });
 
+  it("maps get_vod_info into movie details", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        info: { plot: "A team travels through a wormhole.", genre: "Sci-Fi, Drama", releasedate: "2014-11-07", rating: "8.6", backdrop_path: ["https://example.com/b.jpg"], duration_secs: 10140 },
+      }),
+    );
+    const client = new XtreamClient(credentials);
+    expect(await client.getVodDetails("77")).toEqual({
+      plot: "A team travels through a wormhole.",
+      genre: ["Sci-Fi", "Drama"],
+      releaseDate: "2014-11-07",
+      rating: 8.6,
+      backdropUrl: "https://example.com/b.jpg",
+      durationSeconds: 10140,
+    });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("action=get_vod_info");
+  });
+
   it("treats a missing or zero rating/info block as absent rather than defaulting to zero", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ info: { rating: "0" }, episodes: {} }));
     const client = new XtreamClient(credentials);

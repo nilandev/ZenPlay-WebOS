@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Check, FastForward, Pause, Play, Rewind, SkipForward, Subtitles } from "lucide-react";
+import { Check, FastForward, ListVideo, Pause, Play, Rewind, SkipForward, Subtitles } from "lucide-react";
 import type { AudioTrackInfo, SubtitleTrackInfo } from "@player";
 import { buildShelfFocusGraph } from "../focus/build-shelf-graph.js";
 import { Focusable, FocusScrollManagedContext } from "../focus/Focusable.js";
@@ -14,6 +14,7 @@ export const PLAYER_SEEK_ID = "seek-bar";
 export const PLAYER_PLAY_PAUSE_ID = "play-pause";
 export const PLAYER_AUDIO_SUBTITLES_ID = "audio-subtitles";
 export const PLAYER_NEXT_EPISODE_ID = "next-episode";
+export const PLAYER_EPISODES_ID = "player-episodes-button";
 
 /** Seconds jumped per Left/Right press — the 10s convention of Netflix and most streaming apps. Holding the key speeds this up (see PlayerScreen). */
 export const SEEK_STEP_SECONDS = 10;
@@ -40,8 +41,15 @@ export interface PlaybackControlsProps {
   hasNextEpisode: boolean;
   /** Live TV: no seek bar or scrubbing; a LIVE badge next to the title instead. */
   isLive?: boolean;
+  /** Renders the Audio & Subtitles panel. */
   isMenuOpen: boolean;
+  /** Any panel over the controls (Audio & Subtitles, Episodes) — the controls' own focus nodes are withdrawn meanwhile. */
+  isPanelOpen: boolean;
+  /** Where focus lands when the panel closes (the control that opened it). */
+  returnFocusId?: string | null;
   onOpenMenu: () => void;
+  /** Series only — adds an Episodes button. */
+  onOpenEpisodes?: () => void;
   onTogglePlayPause: () => void;
   onSelectAudioTrack: (id: number) => void;
   onSelectSubtitleTrack: (id: number | null) => void;
@@ -80,8 +88,10 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
     pendingSeekSeconds,
     hasNextEpisode,
     isLive = false,
+    isPanelOpen,
     isMenuOpen,
     onOpenMenu,
+    onOpenEpisodes,
     onTogglePlayPause,
     onNextEpisode,
   } = props;
@@ -96,16 +106,22 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
   // shape changes — and in place (setGraph is atomic), keeping focus.
   const latestRef = useRef(props);
   latestRef.current = props;
-  const returnToMenuButtonRef = useRef(false);
+  const wasPanelOpenRef = useRef(false);
+  const hasEpisodes = Boolean(onOpenEpisodes);
 
   const buttonRow = useMemo(
-    () => [PLAYER_PLAY_PAUSE_ID, PLAYER_AUDIO_SUBTITLES_ID, ...(isNextEpisodeDue ? [PLAYER_NEXT_EPISODE_ID] : [])],
-    [isNextEpisodeDue],
+    () => [
+      PLAYER_PLAY_PAUSE_ID,
+      PLAYER_AUDIO_SUBTITLES_ID,
+      ...(hasEpisodes ? [PLAYER_EPISODES_ID] : []),
+      ...(isNextEpisodeDue ? [PLAYER_NEXT_EPISODE_ID] : []),
+    ],
+    [isNextEpisodeDue, hasEpisodes],
   );
 
   useEffect(() => {
-    if (isMenuOpen) {
-      returnToMenuButtonRef.current = true;
+    if (isPanelOpen) {
+      wasPanelOpenRef.current = true;
       setGraph(SCOPE, []);
       return;
     }
@@ -116,13 +132,16 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
         const current = latestRef.current;
         if (node.id === PLAYER_SEEK_ID || node.id === PLAYER_PLAY_PAUSE_ID) current.onTogglePlayPause();
         else if (node.id === PLAYER_AUDIO_SUBTITLES_ID) current.onOpenMenu();
+        else if (node.id === PLAYER_EPISODES_ID) current.onOpenEpisodes?.();
         else if (node.id === PLAYER_NEXT_EPISODE_ID) current.onNextEpisode();
       },
     }));
-    const initialFocusId = returnToMenuButtonRef.current ? PLAYER_AUDIO_SUBTITLES_ID : isLive ? PLAYER_PLAY_PAUSE_ID : PLAYER_SEEK_ID;
-    returnToMenuButtonRef.current = false;
+    const defaultFocusId = isLive ? PLAYER_PLAY_PAUSE_ID : PLAYER_SEEK_ID;
+    const returnTo = latestRef.current.returnFocusId;
+    const initialFocusId = wasPanelOpenRef.current && returnTo && nodes.some((n) => n.id === returnTo) ? returnTo : defaultFocusId;
+    wasPanelOpenRef.current = false;
     setGraph(SCOPE, nodes, initialFocusId);
-  }, [buttonRow, isLive, isMenuOpen, setGraph]);
+  }, [buttonRow, isLive, isPanelOpen, setGraph]);
 
   useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
@@ -143,6 +162,8 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
           bottom: 0,
           padding: `10rem ${BROWSE_SIDE_PADDING} 3rem`,
           background: "linear-gradient(0deg, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.65) 45%, rgba(0,0,0,0) 100%)",
+          // A bottom panel (Episodes) takes this space; the side menu doesn't.
+          visibility: isPanelOpen && !isMenuOpen ? "hidden" : "visible",
         }}
       >
         <div style={{ display: "flex", alignItems: "flex-end", gap: "2rem", marginBottom: "1.75rem" }}>
@@ -178,6 +199,7 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
         <div style={{ display: "flex", alignItems: "center", gap: "1.25rem" }}>
           <TvButton id={PLAYER_PLAY_PAUSE_ID} label={isPlaying ? "Pause" : "Play"} icon={isPlaying ? Pause : Play} onSelect={onTogglePlayPause} />
           <TvButton id={PLAYER_AUDIO_SUBTITLES_ID} label="Audio & Subtitles" icon={Subtitles} onSelect={onOpenMenu} />
+          {onOpenEpisodes && <TvButton id={PLAYER_EPISODES_ID} label="Episodes" icon={ListVideo} onSelect={onOpenEpisodes} />}
           <div style={{ flex: 1 }} />
           {isNextEpisodeDue && (
             <div style={{ animation: "player-next-episode-in 320ms cubic-bezier(0.2, 0.8, 0.3, 1)" }}>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { resolveRemoteAction, type PlatformId } from "@core";
+import { resolveRemoteAction, type PlatformId, type SeriesEpisode } from "@core";
 import type { AudioTrackInfo, PlaybackProgress, PlayerEngine, PlayerError, SubtitleTrackInfo } from "@player";
 import {
   BROWSE_SIDE_PADDING,
@@ -16,6 +16,8 @@ import {
 } from "@ui";
 import { ArrowLeft, Play, RotateCcw, TriangleAlert } from "lucide-react";
 import { upsertContinueWatching, type ResumePoint } from "../profile-store.js";
+import { PlayerEpisodesPanel } from "./PlayerEpisodesPanel.js";
+import { PausedInfoOverlay, PlayerLoadingScreen, type PlaybackInfo } from "./PlayerOverlays.js";
 
 /** Identifies what's playing for Continue Watching persistence — omitted entirely for content that shouldn't be resumed (live TV, catch-up). */
 export interface PlaybackIdentity {
@@ -42,6 +44,14 @@ export interface PlayerScreenProps {
   isLive?: boolean;
   /** Where this profile stopped last time — offers "Resume from …" / "Start Over" before the stream loads. */
   resumeFrom?: ResumePoint | null;
+  /** The viewer already chose Resume (e.g. the series page's Resume button) — start at resumeFrom without asking. */
+  autoResume?: boolean;
+  /** Plot, rating, year and artwork for the loading and "You're watching" screens. */
+  info?: PlaybackInfo;
+  /** Series playback: every episode of the series, for the in-player Episodes panel. */
+  episodes?: SeriesEpisode[];
+  currentEpisodeId?: string;
+  onPlayEpisode?: (episode: SeriesEpisode) => void;
   /** Test seam — see VideoSurface. */
   engineFactory?: () => PlayerEngine;
 }
@@ -57,6 +67,11 @@ const SEEK_COMMIT_MS = 800;
 
 /** Buffering this long without recovering (a dead link, or a stream that stopped) is shown as an error. */
 const STALL_TIMEOUT_MS = 30_000;
+
+/** Paused this long, the picture dims and "You're watching" takes over (Netflix's timing is similar). */
+const PAUSED_INFO_DELAY_MS = 10_000;
+
+type Panel = "none" | "menu" | "episodes";
 
 const RESUME_SCOPE = "player-resume";
 const RESUME_ID = "player-resume-continue";
@@ -98,7 +113,12 @@ function describeFailure(failure: PlaybackFailure, isLive: boolean): string {
  * - While they're shown, Left/Right scrub only when the seek bar is focused;
  *   elsewhere they move focus between buttons as usual.
  * - Rewind / Fast-forward always scrub; Play, Pause and Stop do what they say.
- * - Back closes the Audio & Subtitles panel first, then the player.
+ * - Back closes an open panel (Audio & Subtitles, Episodes) first, then the player.
+ * - Series: Up from the seek bar (or the Episodes button) opens the Episodes panel.
+ *
+ * Until the stream starts, a loading screen (artwork, title) covers the
+ * black video. After PAUSED_INFO_DELAY_MS paused, "You're watching" dims
+ * the picture; any key brings the controls back, OK also resumes.
  *
  * Before playback it may ask Resume / Start Over; if the stream fails (an
  * engine error, or buffering for STALL_TIMEOUT_MS) it shows an error with
@@ -116,6 +136,11 @@ export function PlayerScreen({
   onNextEpisode,
   isLive = false,
   resumeFrom,
+  autoResume = false,
+  info,
+  episodes,
+  currentEpisodeId,
+  onPlayEpisode,
   engineFactory,
 }: PlayerScreenProps): JSX.Element {
   const lastWriteRef = useRef(0);
@@ -125,8 +150,9 @@ export function PlayerScreen({
   // player) asks again and never inherits the previous episode's start.
   const [resumeAnsweredFor, setResumeAnsweredFor] = useState<string | null>(null);
   const [startAt, setStartAt] = useState<{ streamUrl: string; seconds: number } | null>(null);
-  const isChoosingResume = Boolean(resumeFrom) && resumeAnsweredFor !== streamUrl;
-  const startPositionSeconds = startAt?.streamUrl === streamUrl ? startAt.seconds : undefined;
+  const isChoosingResume = Boolean(resumeFrom) && !autoResume && resumeAnsweredFor !== streamUrl;
+  const startPositionSeconds =
+    startAt?.streamUrl === streamUrl ? startAt.seconds : autoResume && resumeFrom ? resumeFrom.positionSeconds : undefined;
   const [attempt, setAttempt] = useState(0);
   const [failure, setFailure] = useState<PlaybackFailure | null>(null);
 
@@ -139,13 +165,21 @@ export function PlayerScreen({
   const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrackInfo[]>([]);
   const [activeSubtitleTrackId, setActiveSubtitleTrackId] = useState<number | null>(null);
   const [areControlsVisible, setAreControlsVisible] = useState(true);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [panel, setPanel] = useState<Panel>("none");
+  const [returnFocusId, setReturnFocusId] = useState<string | null>(null);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [isPausedInfoShown, setIsPausedInfoShown] = useState(false);
+  const [pausedInfoCycle, setPausedInfoCycle] = useState(0);
+  const sawBufferingRef = useRef(false);
 
+  const isMenuOpen = panel === "menu";
   const isShowingVideo = !isChoosingResume && failure === null;
+  const hasEpisodes = Boolean(onPlayEpisode && episodes && episodes.length > 1);
 
   // Mirrors of state for the key handler and timers, which live outside React's render cycle.
-  const stateRef = useRef({ isPlaying, isMenuOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo });
-  stateRef.current = { isPlaying, isMenuOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo };
+  const isPanelOpen = panel !== "none";
+  const stateRef = useRef({ isPlaying, isPanelOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo, isPausedInfoShown, hasEpisodes });
+  stateRef.current = { isPlaying, isPanelOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo, isPausedInfoShown, hasEpisodes };
 
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -156,8 +190,8 @@ export function PlayerScreen({
     setAreControlsVisible(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => {
-      const { isPlaying: playing, isMenuOpen: menuOpen, pendingSeekSeconds: pending } = stateRef.current;
-      if (playing && !menuOpen && pending === null) setAreControlsVisible(false);
+      const { isPlaying: playing, isPanelOpen: panelOpen, pendingSeekSeconds: pending } = stateRef.current;
+      if (playing && !panelOpen && pending === null) setAreControlsVisible(false);
     }, AUTO_HIDE_MS);
   }, []);
 
@@ -227,7 +261,12 @@ export function PlayerScreen({
   const handleBufferingChange = useCallback(
     (isBuffering: boolean) => {
       clearStallTimer();
-      if (isBuffering) stallTimerRef.current = setTimeout(() => setFailure({ kind: "network", stalled: true }), STALL_TIMEOUT_MS);
+      if (isBuffering) {
+        sawBufferingRef.current = true;
+        stallTimerRef.current = setTimeout(() => setFailure({ kind: "network", stalled: true }), STALL_TIMEOUT_MS);
+      } else if (sawBufferingRef.current) {
+        setHasStarted(true); // the first load finished — the stream is playing
+      }
     },
     [clearStallTimer],
   );
@@ -242,6 +281,9 @@ export function PlayerScreen({
     setPositionSeconds(0);
     setPendingSeekSeconds(null);
     setFailure(null);
+    setPanel("none");
+    setHasStarted(false);
+    sawBufferingRef.current = false;
     if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
   }, [streamUrl]);
 
@@ -258,7 +300,31 @@ export function PlayerScreen({
     const from = isLive ? undefined : position > 0 ? position : startPositionSeconds;
     setStartAt(from !== undefined ? { streamUrl, seconds: from } : null);
     setFailure(null);
+    setHasStarted(false);
+    sawBufferingRef.current = false;
     setAttempt((n) => n + 1);
+    showControls();
+  }
+
+  // "You're watching": after a while paused (with nothing else on screen).
+  useEffect(() => {
+    if (isPlaying || !hasStarted || !isShowingVideo || isPanelOpen || pendingSeekSeconds !== null) {
+      setIsPausedInfoShown(false);
+      return;
+    }
+    const timer = setTimeout(() => setIsPausedInfoShown(true), PAUSED_INFO_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [isPlaying, hasStarted, isShowingVideo, isPanelOpen, pendingSeekSeconds, pausedInfoCycle]);
+
+  function dismissPausedInfo(): void {
+    setIsPausedInfoShown(false);
+    setPausedInfoCycle((n) => n + 1); // still paused: it comes back after another delay
+    showControls();
+  }
+
+  function openPanel(next: Exclude<Panel, "none">): void {
+    setReturnFocusId(useFocusStore.getState().focusedId);
+    setPanel(next);
     showControls();
   }
 
@@ -305,8 +371,8 @@ export function PlayerScreen({
 
   /** Rewind / Fast-forward keys: scrub from anywhere, landing focus on the seek bar. */
   function scrubFromMediaKey(direction: -1 | 1): void {
-    const { isShowingVideo: showing, isMenuOpen: menuOpen, durationSeconds: duration } = stateRef.current;
-    if (!showing || menuOpen || isLive || !Number.isFinite(duration)) return;
+    const { isShowingVideo: showing, isPanelOpen: panelOpen, durationSeconds: duration } = stateRef.current;
+    if (!showing || panelOpen || isLive || !Number.isFinite(duration)) return;
     showControls();
     useFocusStore.getState().focus(PLAYER_SEEK_ID);
     scrub(direction);
@@ -317,11 +383,23 @@ export function PlayerScreen({
   useEffect(() => {
     function onKeyDownCapture(event: KeyboardEvent): void {
       const action = resolveRemoteAction(platform, event);
-      const { isMenuOpen: menuOpen, areControlsVisible: visible, isShowingVideo: showing } = stateRef.current;
+      const { isPanelOpen: panelOpen, areControlsVisible: visible, isShowingVideo: showing, isPausedInfoShown: pausedInfo } = stateRef.current;
       if (action === "unknown" || !showing) return;
+
+      if (pausedInfo) {
+        // Any key brings the controls back; OK / Play also resume. Stop still exits.
+        if (action === "stop") return;
+        event.preventDefault();
+        event.stopPropagation();
+        dismissPausedInfo();
+        if (action === "select") swallowNextKeyUp();
+        if (action === "select" || action === "play" || action === "play-pause") void engineRef.current?.play();
+        return;
+      }
+
       const wasHidden = !visible;
       showControls();
-      if (menuOpen || (action !== "up" && action !== "down" && action !== "left" && action !== "right" && action !== "select")) return;
+      if (panelOpen || (action !== "up" && action !== "down" && action !== "left" && action !== "right" && action !== "select")) return;
 
       const canScrub = !isLive && Number.isFinite(stateRef.current.durationSeconds);
       const isLeftRight = action === "left" || action === "right";
@@ -339,6 +417,12 @@ export function PlayerScreen({
         event.preventDefault();
         event.stopPropagation();
         if (action === "select") swallowNextKeyUp();
+        return;
+      }
+      if (action === "up" && focusedId === PLAYER_SEEK_ID && stateRef.current.hasEpisodes) {
+        event.preventDefault();
+        event.stopPropagation();
+        openPanel("episodes");
       }
     }
     document.addEventListener("keydown", onKeyDownCapture, true);
@@ -349,7 +433,7 @@ export function PlayerScreen({
 
   useRemoteInput(platform, {
     onBack: () => {
-      if (stateRef.current.isMenuOpen) setIsMenuOpen(false);
+      if (stateRef.current.isPanelOpen) setPanel("none");
       else onClose();
     },
     onPlayPause: togglePlayPause,
@@ -399,12 +483,16 @@ export function PlayerScreen({
           onBufferingChange={handleBufferingChange}
         />
       )}
+      {failure === null && (
+        <PlayerLoadingScreen title={title} subtitle={subtitle} info={info} isLive={isLive} isVisible={!hasStarted} />
+      )}
+      {failure === null && isPausedInfoShown && <PausedInfoOverlay title={title} subtitle={subtitle} info={info} isLive={isLive} />}
       {failure === null ? (
         <div
           style={{
             position: "absolute",
             inset: 0,
-            opacity: areControlsVisible ? 1 : 0,
+            opacity: areControlsVisible && hasStarted && !isPausedInfoShown ? 1 : 0,
             pointerEvents: areControlsVisible ? "auto" : "none",
             transition: "opacity 220ms ease-out",
           }}
@@ -423,12 +511,25 @@ export function PlayerScreen({
             activeSubtitleTrackId={activeSubtitleTrackId}
             hasNextEpisode={Boolean(onNextEpisode)}
             isMenuOpen={isMenuOpen}
-            onOpenMenu={() => setIsMenuOpen(true)}
+            isPanelOpen={isPanelOpen}
+            returnFocusId={returnFocusId}
+            onOpenMenu={() => openPanel("menu")}
+            onOpenEpisodes={hasEpisodes ? () => openPanel("episodes") : undefined}
             onTogglePlayPause={togglePlayPause}
             onSelectAudioTrack={selectAudioTrack}
             onSelectSubtitleTrack={selectSubtitleTrack}
             onNextEpisode={() => onNextEpisode?.()}
           />
+          {panel === "episodes" && episodes && (
+            <PlayerEpisodesPanel
+              episodes={episodes}
+              currentEpisodeId={currentEpisodeId}
+              onPlayEpisode={(episode) => {
+                setPanel("none");
+                if (episode.id !== currentEpisodeId) onPlayEpisode?.(episode);
+              }}
+            />
+          )}
         </div>
       ) : (
         <PlaybackError title={title} message={describeFailure(failure, isLive)} onRetry={retry} onBack={onClose} />

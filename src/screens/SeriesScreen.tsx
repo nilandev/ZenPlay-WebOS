@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PlatformId, PlaylistSource, Profile, SeriesEpisode } from "@core";
+import type { PlatformId, PlaylistSource, Profile, SeriesDetails, SeriesEpisode } from "@core";
 import type { FocusNode } from "@ui";
 import { Check, Play, Plus, RotateCcw, Search, Star, X } from "lucide-react";
 import {
@@ -44,12 +44,21 @@ import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { useCatalogShelves } from "../use-catalog-shelves.js";
 import { getCatalogPage } from "../catalog-store.js";
 
+/** The series around an episode being played — the player's title, artwork and "You're watching" details. */
+export interface EpisodePlayContext {
+  seriesName?: string;
+  posterUrl?: string;
+  details?: SeriesDetails;
+  /** The viewer chose Resume on the series page — the player starts at the saved position without asking again. */
+  resume?: boolean;
+}
+
 export interface SeriesScreenProps {
   source: PlaylistSource;
   platform: PlatformId;
   profile: Profile;
-  /** allEpisodes is every episode across all seasons for this series (not just the current season) — lets the caller (App.tsx) compute the next episode for the player's Next Episode control. */
-  onPlayEpisode: (episode: SeriesEpisode, allEpisodes: SeriesEpisode[]) => void;
+  /** allEpisodes is every episode across all seasons for this series (not just the current season) — lets the caller (App.tsx) compute the next episode for the player's Next Episode control and fill its Episodes panel. */
+  onPlayEpisode: (episode: SeriesEpisode, allEpisodes: SeriesEpisode[], context: EpisodePlayContext) => void;
   onBack: () => void;
   /** Opens directly into this series' episode list instead of the shelf browser — used when arriving from My Favourite, or when returning to a series left open before the tab was switched away (see App.tsx's seriesSelectionId). */
   initialSelectedId?: string;
@@ -345,6 +354,8 @@ export function SeriesScreen({
     [selected, profile.id, continueWatchingVersion],
   );
   const resumeEpisode = continueEntry ? episodes.find((ep) => ep.id === continueEntry.episodeId) : undefined;
+  const playEpisode = (episode: SeriesEpisode, resume = false): void =>
+    onPlayEpisode(episode, episodes, { seriesName: series?.name, posterUrl: series?.posterUrl, details, resume });
 
   // Header for the content area: the category (or search) being shown and,
   // for a single category, how many titles it holds.
@@ -535,7 +546,7 @@ export function SeriesScreen({
         if (!id) return;
         if (selected) {
           const episode = seasonEpisodes.find((ep) => ep.id === id);
-          if (episode) onPlayEpisode(episode, episodes);
+          if (episode) playEpisode(episode);
           return;
         }
         const s = visibleSeries.find((item) => item.id === resolveSeriesIdFromFocusId(id));
@@ -643,7 +654,7 @@ export function SeriesScreen({
           isFavorited={isFavorited}
           playLabel={playLabel}
           canResume={Boolean(resumeEpisode)}
-          onPlay={() => playTarget && onPlayEpisode(playTarget, episodes)}
+          onPlay={() => playTarget && playEpisode(playTarget, playTarget.id === resumeEpisode?.id)}
           onToggleFavorite={() => {
             toggleFavorite(profile.id, source.id, "series", selected);
             setFavoritesVersion((v) => v + 1);
@@ -672,7 +683,7 @@ export function SeriesScreen({
               <EpisodeCard
                 episode={episode}
                 progress={episode.id === resumeEpisode?.id ? resumeProgress : undefined}
-                onSelect={() => onPlayEpisode(episode, episodes)}
+                onSelect={() => playEpisode(episode)}
               />
             )}
           />
