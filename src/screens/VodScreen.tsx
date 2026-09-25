@@ -38,6 +38,7 @@ import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { useCatalogShelves } from "../use-catalog-shelves.js";
 import { getCatalogPage } from "../catalog-store.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
+import { useContentPolicy } from "../content-policy.js";
 import { SyncNotice } from "./SyncNotice.js";
 
 export interface VodScreenProps {
@@ -56,10 +57,11 @@ const CONTENT_ENTRY_SCOPE = "content";
 const ALL_CATEGORIES_ID = "__all__";
 const gridItemId = (movieId: string) => `vod-grid:${movieId}`;
 /**
- * The category each source was last browsed in, so coming back to this
- * screen (it remounts on every tab switch — see App.tsx) reopens where the
- * user was. Module-level on purpose: it should outlive the screen, not an
- * app restart.
+ * The category each profile last browsed in each source, so coming back to
+ * this screen (it remounts on every tab switch — see App.tsx) reopens where
+ * the user was. Module-level on purpose: it should outlive the screen, not
+ * an app restart. Per profile, so a Kids profile never reopens a category
+ * a parent was browsing.
  */
 const lastCategoryBySource = new Map<string, string>();
 
@@ -74,10 +76,13 @@ const SEARCH_INPUT_ID = "vod-search-input";
 export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybackOpen = false }: VodScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
-  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(source.id) ?? ALL_CATEGORIES_ID);
+  const memoryKey = `${profile.id}:${source.id}`;
+  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(memoryKey) ?? ALL_CATEGORIES_ID);
   useEffect(() => {
-    lastCategoryBySource.set(source.id, activeCategoryId);
-  }, [source.id, activeCategoryId]);
+    lastCategoryBySource.set(memoryKey, activeCategoryId);
+  }, [memoryKey, activeCategoryId]);
+  // Kids profiles only see what the content policy allows (docs/kids-profile.md §6); a standard profile's policy passes everything.
+  const policy = useContentPolicy(profile, source.id);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -109,7 +114,8 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // category on an Xtream source, fetched with the provider's own
   // category_id filter — small, and it means picking a category isn't a
   // dead end during a first sync.
-  const useCategoryFetch = isAwaitingSync && !isAllCategories && !trimmedQuery && source.kind === "xtream";
+  // Never for a Kids profile: unfiltered provider data must not render while the table is built.
+  const useCategoryFetch = isAwaitingSync && !isAllCategories && !trimmedQuery && source.kind === "xtream" && !policy.isKids;
   const loadCategoryMovies = useCallback(
     () => loadChannelsByKind(source, "movie", isAllCategories ? undefined : activeCategoryId),
     [source, isAllCategories, activeCategoryId],
@@ -121,6 +127,11 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   } = useCachedContent(isAllCategories ? "vod:none" : `vod:${source.id}:cat:${activeCategoryId}`, "catalog", loadCategoryMovies, EMPTY_MOVIES, {
     enabled: useCategoryFetch,
   });
+
+  const loadCategories = useCallback(() => loadVodCategories(source), [source]);
+  const { data: categories } = useCachedContent(`vod-categories:${source.id}`, "category", loadCategories, EMPTY_CATEGORIES);
+  const visibleCategories = useMemo(() => policy.visibleCatalogCategories("vod", categories), [policy, categories]);
+  const catalogFilter = useMemo(() => policy.catalogFilter("vod", categories), [policy, categories]);
 
   // Local-table path: paginated grid/search reads, grown on demand (see
   // use-catalog-page.ts) — this is what lets the grid render 100k+ catalogs
@@ -134,14 +145,13 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   } = useVodCatalogPage(source.id, {
     categoryId: isAllCategories ? undefined : activeCategoryId,
     namePrefix: trimmedQuery || undefined,
+    filter: catalogFilter,
     enabled: isLocalCatalogReady && (!isAllCategories || trimmedQuery.length > 0),
   });
 
   // Fixed TV poster density (see tv-metrics.ts) — the grid and the D-pad focus graph share this column count.
   const gridColumns = POSTER_COLUMNS;
 
-  const loadCategories = useCallback(() => loadVodCategories(source), [source]);
-  const { data: categories } = useCachedContent(`vod-categories:${source.id}`, "category", loadCategories, EMPTY_CATEGORIES);
 
   // Bumped on every favourite toggle to force each FocusCard's heart badge
   // to re-render — see LiveTvScreen's identical comment for why this is
@@ -162,11 +172,14 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
 
   // "All Categories" shelf browser: one bounded query per category (see
   // use-catalog-shelves.ts) instead of loading the whole catalog.
-  const mapShelfPage = useCallback((categoryId: string, limit: number) => getCatalogPage(source.id, "vod", { categoryId, offset: 0, limit }), [source.id]);
+  const mapShelfPage = useCallback(
+    (categoryId: string, limit: number) => getCatalogPage(source.id, "vod", { categoryId, offset: 0, limit, filter: catalogFilter }),
+    [source.id, catalogFilter],
+  );
   const { shelves, isLoading: isLocalShelvesLoading } = useCatalogShelves(
     source.id,
     "vod",
-    categories,
+    visibleCategories,
     mapShelfPage,
     isLocalCatalogReady && isAllCategories && !trimmedQuery,
   );
@@ -174,11 +187,17 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   const categoryItems = useMemo(
     () => [
       { id: ALL_CATEGORIES_ID, label: "Browse", count: undefined as number | undefined },
-      ...categories.map((c) => ({ id: c.id, label: c.name, count: undefined as number | undefined })),
+      ...visibleCategories.map((c) => ({ id: c.id, label: c.name, count: undefined as number | undefined })),
     ],
-    [categories],
+    [visibleCategories],
   );
   const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "Browse";
+
+  // A remembered category a parent has since hidden falls back to Browse.
+  useEffect(() => {
+    if (!policy.isKids || isAllCategories || categories.length === 0) return;
+    if (!visibleCategories.some((c) => c.id === activeCategoryId)) setActiveCategoryId(ALL_CATEGORIES_ID);
+  }, [policy.isKids, isAllCategories, categories.length, visibleCategories, activeCategoryId]);
 
   // A category other than "All Categories", or a non-empty search query,
   // replaces the shelf browser with a single flat, vertically-scrolling

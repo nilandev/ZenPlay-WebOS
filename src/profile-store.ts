@@ -1,4 +1,5 @@
 import type { ContinueWatchingEntry, FavoriteEntry, FavoriteKind, Profile, WatchHistoryEntry } from "@core";
+import { removeKidsProfileRules } from "./parental-store.js";
 
 const PROFILES_KEY = "iptv.profiles.v1";
 const ACTIVE_PROFILE_KEY = "iptv.active-profile-id.v1";
@@ -42,6 +43,7 @@ export function deleteProfile(profileId: string): Profile[] {
   const profiles = loadProfiles().filter((p) => p.id !== profileId);
   saveProfiles(profiles);
   writeWatchHistory(readWatchHistory().filter((e) => e.profileId !== profileId));
+  removeKidsProfileRules(profileId);
   return profiles;
 }
 

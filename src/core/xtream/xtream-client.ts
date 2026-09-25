@@ -284,7 +284,7 @@ export class XtreamClient {
     return raw.map((s) => mapVodStream(this.credentials, s));
   }
 
-  async getSeriesList(categoryId?: string): Promise<Array<Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle">>> {
+  async getSeriesList(categoryId?: string): Promise<Array<Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre">>> {
     const params: Record<string, string> = { action: "get_series" };
     if (categoryId) params.category_id = categoryId;
     const raw = await this.fetchJson<XtreamSeriesRaw[]>(params);

@@ -25,6 +25,8 @@ export interface EpgRecord {
   stop: number;
   title: string;
   description?: string;
+  categories?: string[];
+  rating?: string;
   /** Unique per sync run (increasing) — see deleteStaleProgrammes. */
   generation: number;
 }

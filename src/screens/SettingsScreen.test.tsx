@@ -47,7 +47,7 @@ describe("SettingsScreen (App Settings)", () => {
   it("is one page: a Playlist section (the cards, then the update settings) and Playback — no Manage Playlists row or side pane", () => {
     renderSettings();
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Playlist", "Playback"]);
+    expect(headings).toEqual(["Playlist", "Playback", "Parental Controls"]);
     expect(screen.getByText("My Provider")).toBeDefined();
     expect(screen.getByText("Sports Playlist")).toBeDefined();
     expect(screen.queryByText("Manage Playlists")).toBeNull();

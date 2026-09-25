@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Channel, PlaylistSource, Profile, SeriesEpisode, WatchHistoryEntry } from "@core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isKidsProfile, type Channel, type PlaylistSource, type Profile, type SeriesEpisode, type WatchHistoryEntry } from "@core";
 import {
   addPlaylistSource,
   forgetProfileSource,
@@ -21,7 +21,9 @@ import {
   getResumePoint,
   type ResumePoint,
 } from "./profile-store.js";
-import { MeshBackground, SyncPill } from "@ui";
+import { MeshBackground, SyncPill, Toast } from "@ui";
+import { useContentPolicy } from "./content-policy.js";
+import { useMatureNowChannelIds } from "./use-policy-live-channels.js";
 import { getLocalLiveMeta } from "./live-store.js";
 import { liveStreamUrl } from "./live-stream-url.js";
 import { purgeSourceData } from "./sync/purge.js";
@@ -34,6 +36,7 @@ import type { ChannelLineup } from "./channel-lineup.js";
 import type { WatchTarget } from "./use-watch-history-recorder.js";
 import { AddSourceScreen } from "./screens/AddSourceScreen.js";
 import { HomeScreen } from "./screens/HomeScreen.js";
+import { KidsHomeScreen } from "./screens/KidsHomeScreen.js";
 import { LiveTvScreen } from "./screens/LiveTvScreen.js";
 import { VodScreen } from "./screens/VodScreen.js";
 import { SeriesScreen, type EpisodePlayContext } from "./screens/SeriesScreen.js";
@@ -82,6 +85,11 @@ export function App(): JSX.Element {
   const [profiles, setProfiles] = useState<Profile[]>(() => loadProfiles());
   const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
   const [isManagingProfiles, setIsManagingProfiles] = useState(false);
+  // "Who's watching?" was opened from a Kids profile — picking a parent profile then needs the PIN (docs/kids-profile.md §2.3).
+  const [isLeavingKids, setIsLeavingKids] = useState(false);
+  // Shown when a Kids profile's live channel was stopped because what's on turned mature (§3.6).
+  const [kidsNotice, setKidsNotice] = useState<string | null>(null);
+  const dismissKidsNotice = useCallback(() => setKidsNotice(null), []);
   const [activeTab, setActiveTab] = useState<TabId>("home");
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const playbackUrlRef = useRef(playbackUrl);
@@ -130,6 +138,36 @@ export function App(): JSX.Element {
   const [playbackCloseVersion, setPlaybackCloseVersion] = useState(0);
   // Bumped every time the player closes (live too), so Recently Watched re-reads what was just watched.
   const [historyVersion, setHistoryVersion] = useState(0);
+
+  // What the active profile may see — everything for a standard profile, the Kids whitelist for a Kids profile.
+  const policy = useContentPolicy(activeProfile, activeSource?.id);
+  const isKids = isKidsProfile(activeProfile);
+
+  // Kids + live: re-check the playing channel and its lineup against what's on
+  // now. CH+/CH− skip channels airing something mature, and the playing channel
+  // stops if its programme turns mature (docs/kids-profile.md §3.6).
+  const guardedChannels = useMemo(() => {
+    const list = channelLineup?.lineup ?? [];
+    return playbackChannel && !list.some((c) => c.id === playbackChannel.id) ? [...list, playbackChannel] : list;
+  }, [channelLineup, playbackChannel]);
+  const matureNowIds = useMatureNowChannelIds(activeSource?.id ?? "", guardedChannels, isKids && isPlaybackLive && guardedChannels.length > 0);
+  const playerLineup = useMemo(() => {
+    if (!channelLineup || matureNowIds.size === 0) return channelLineup;
+    return {
+      lineup: channelLineup.lineup.filter((c) => !matureNowIds.has(c.id)),
+      directory: channelLineup.directory.filter((c) => !matureNowIds.has(c.id)),
+    };
+  }, [channelLineup, matureNowIds]);
+  // Settings (playlists, reset data, Parental Controls) doesn't exist in a Kids profile.
+  useEffect(() => {
+    if (isKids && activeTab === "settings") setActiveTab("home");
+  }, [isKids, activeTab]);
+  const closePlaybackRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (!isKids || !isPlaybackLive || !playbackChannel || !matureNowIds.has(playbackChannel.id)) return;
+    closePlaybackRef.current();
+    setKidsNotice("This show isn't available right now — pick another channel.");
+  }, [isKids, isPlaybackLive, playbackChannel, matureNowIds]);
 
   /** Makes `profile` the active one, switching to the playlist it last used (see playlist-store's per-profile memory). */
   function activateProfile(profile: Profile): void {
@@ -214,6 +252,7 @@ export function App(): JSX.Element {
   }
 
   function handleCreateProfile(profile: Profile): void {
+    setIsLeavingKids(false);
     const updated = addProfile(profile);
     setProfiles(updated);
     setActiveProfile(profile);
@@ -221,6 +260,7 @@ export function App(): JSX.Element {
   }
 
   function handleSelectProfile(profile: Profile): void {
+    setIsLeavingKids(false);
     activateProfile(profile);
     setActiveProfileId(profile.id);
   }
@@ -258,6 +298,7 @@ export function App(): JSX.Element {
         onSelectProfile={handleSelectProfile}
         onCreateProfile={handleCreateProfile}
         onManageProfiles={() => setIsManagingProfiles(true)}
+        isLeavingKids={isLeavingKids}
       />
     );
   }
@@ -295,6 +336,7 @@ export function App(): JSX.Element {
       title: movie.name,
       imageUrl: movie.logoUrl,
       streamUrl: movie.streamUrl,
+      categoryId: movie.groupTitle,
     });
     setPlaybackEpisodeId(undefined);
     setPlaybackInfo({ posterUrl: movie.logoUrl });
@@ -357,6 +399,7 @@ export function App(): JSX.Element {
       episodeId: episode.id,
       season: episode.season,
       episode: episode.episode,
+      categoryId: context.categoryId,
       nextEpisode: next
         ? { episodeId: next.id, season: next.season, episode: next.episode, subtitle: `Up next: ${episodeLine(next)}`, streamUrl: next.streamUrl }
         : undefined,
@@ -397,6 +440,7 @@ export function App(): JSX.Element {
       imageUrl: channel.logoUrl,
       streamUrl: channel.streamUrl,
       channelNumber: channel.number,
+      categoryId: channel.groupTitle,
     });
     setPlaybackTitle(channel.name);
     setPlaybackSubtitle(undefined);
@@ -444,10 +488,13 @@ export function App(): JSX.Element {
     // no need to force a re-read after closing live TV/catch-up.
     if (playbackIdentity) setPlaybackCloseVersion((v) => v + 1);
   };
+  closePlaybackRef.current = closePlayback;
 
-  if (activeTab === "home") {
+  if (activeTab === "home" && !isKids) {
     // Home is a static menu with nothing playable on it, so unlike every
-    // other tab below it never hosts a PlayerScreen overlay.
+    // other tab below it never hosts a PlayerScreen overlay. (A Kids
+    // profile's Home has recommendation rails, so it's rendered below with
+    // the other tabs.)
     return (
       <HomeScreen
         source={activeSource}
@@ -459,7 +506,10 @@ export function App(): JSX.Element {
           setPendingSeriesId(null);
           setActiveTab(tileId as TabId);
         }}
-        onOpenProfiles={() => setActiveProfile(null)}
+        onOpenProfiles={() => {
+          setIsLeavingKids(isKids);
+          setActiveProfile(null);
+        }}
       />
     );
   }
@@ -471,6 +521,33 @@ export function App(): JSX.Element {
 
   return (
     <div style={{ minHeight: "100vh" }}>
+      {activeTab === "home" && (
+        <KidsHomeScreen
+          source={activeSource}
+          sources={sources}
+          onSelectSource={handleSetActiveSource}
+          platform={platform}
+          profile={activeProfile}
+          policy={policy}
+          onSelectTile={(tileId) => {
+            setPendingSeriesId(null);
+            setActiveTab(tileId as TabId);
+          }}
+          onOpenProfiles={() => {
+            setIsLeavingKids(true);
+            setActiveProfile(null);
+          }}
+          onPlayMovie={playMovie}
+          onPlayChannel={playLive}
+          onContinueSeries={continueSeries}
+          onOpenSeries={(seriesId) => {
+            setPendingSeriesId(seriesId);
+            setActiveTab("series");
+          }}
+          refreshKey={historyVersion}
+          isPlaybackOpen={Boolean(playbackUrl)}
+        />
+      )}
       {activeTab === "live" && (
         <LiveTvScreen
           source={activeSource}
@@ -518,6 +595,7 @@ export function App(): JSX.Element {
         <FavouritesScreen
           source={activeSource}
           profileId={activeProfile.id}
+          policy={policy}
           platform={platform}
           onBack={goHome}
           onPlayChannel={playLive}
@@ -533,6 +611,7 @@ export function App(): JSX.Element {
         <HistoryScreen
           source={activeSource}
           profileId={activeProfile.id}
+          policy={policy}
           platform={platform}
           onBack={goHome}
           onPlayChannel={playLive}
@@ -546,7 +625,7 @@ export function App(): JSX.Element {
           isPlaybackOpen={Boolean(playbackUrl)}
         />
       )}
-      {activeTab === "settings" && (
+      {activeTab === "settings" && !isKids && (
         <SettingsScreen
           platform={platform}
           sources={sources}
@@ -555,10 +634,12 @@ export function App(): JSX.Element {
           onRemoveSource={handleRemoveSource}
           onSetActiveSource={handleSetActiveSource}
           onBack={goHome}
+          profiles={profiles}
         />
       )}
 
       {!playbackUrl && syncPillLabel && <SyncPill label={syncPillLabel} />}
+      {!playbackUrl && kidsNotice && <Toast message={kidsNotice} tone="error" onDismiss={dismissKidsNotice} />}
 
       {playbackUrl && (
         <PlayerScreen
@@ -573,7 +654,7 @@ export function App(): JSX.Element {
             isLive={isPlaybackLive}
             liveChannel={playbackChannel}
             guideSource={activeSource}
-            channelLineup={channelLineup}
+            channelLineup={playerLineup}
             watchTarget={watchTarget}
             onTuneChannel={(channel) => playLive(channel)}
             onPlayAlternateStream={(url) => setPlaybackUrl(url)}

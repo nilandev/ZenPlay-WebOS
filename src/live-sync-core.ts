@@ -1,4 +1,4 @@
-import { mapLiveStream, parseM3u, type Channel, type PlaylistSource, type XtreamLiveStreamRaw } from "@core";
+import { KIDS_RULES_VERSION, mapLiveStream, parseM3u, type Channel, type PlaylistSource, type XtreamLiveStreamRaw } from "@core";
 import { catalogSyncMetaKey, deleteStaleGeneration, getSyncMeta, openCatalogDb, putRecordsBatch, putSyncMeta } from "./core/storage/catalog-db.js";
 import { deleteStaleChannels, getLiveSyncMeta, openLiveDb, putChannels, putLiveSyncMeta, type LiveChannelRecord, type LiveDb } from "./core/storage/live-db.js";
 import { channelToRecord, UNGROUPED_CATEGORY } from "./catalog-records.js";
@@ -91,7 +91,7 @@ async function writeMovies(sourceId: string, movies: Channel[], batchSize: numbe
     await putRecordsBatch(catalogDb, "vod", movies.slice(offset, offset + batchSize).map((movie) => channelToRecord(sourceId, generation, movie)));
     if (yieldBetweenBatches) await yieldBetweenBatches();
   }
-  await putSyncMeta(catalogDb, { key, lastSyncedAt: Date.now(), recordCount: movies.length, generation });
+  await putSyncMeta(catalogDb, { key, lastSyncedAt: Date.now(), recordCount: movies.length, generation, rulesVersion: KIDS_RULES_VERSION });
   if (previous) await deleteStaleGeneration(catalogDb, "vod", sourceId, generation);
 }
 

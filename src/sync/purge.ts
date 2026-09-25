@@ -4,6 +4,7 @@ import { clearCachedContentForSource } from "../content-cache.js";
 import { clearEpgForSource } from "../epg-sync.js";
 import { clearLiveForSource } from "../live-sync.js";
 import { removeSourceUserData } from "../profile-store.js";
+import { removeSourceKidsRules } from "../parental-store.js";
 import { cancelSync, syncSource, whenIdle, type SyncOutcome } from "./sync-manager.js";
 import { useSyncStore } from "./sync-store.js";
 
@@ -45,5 +46,6 @@ export async function purgeSourceData(sourceId: string): Promise<void> {
   await stopSyncing(sourceId);
   await clearDownloadedData(sourceId);
   removeSourceUserData(sourceId);
+  removeSourceKidsRules(sourceId);
   useSyncStore.getState().forget(sourceId);
 }

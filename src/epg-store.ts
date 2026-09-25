@@ -23,7 +23,15 @@ export async function getLocalChannelProgrammes(sourceId: string, epgChannelId: 
     const epgDb = await openEpgDb();
     const [meta, records] = await Promise.all([getEpgSyncMeta(epgDb, sourceId), getChannelProgrammes(epgDb, sourceId, epgChannelId)]);
     if (!meta) return undefined;
-    return records.map((r) => ({ channelId: r.channelId, title: r.title, description: r.description, start: new Date(r.start), stop: new Date(r.stop) }));
+    return records.map((r) => ({
+      channelId: r.channelId,
+      title: r.title,
+      description: r.description,
+      ...(r.categories ? { categories: r.categories } : {}),
+      ...(r.rating ? { rating: r.rating } : {}),
+      start: new Date(r.start),
+      stop: new Date(r.stop),
+    }));
   } catch {
     return undefined;
   }

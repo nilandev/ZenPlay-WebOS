@@ -38,6 +38,8 @@ export interface XtreamSeriesRaw {
   name: string;
   cover?: string;
   category_id?: string;
+  /** Comma-separated on most panels ("Animation, Family"); often empty. */
+  genre?: string | null;
 }
 
 export interface XtreamEpgListingRaw {
@@ -131,12 +133,14 @@ export function mapVodStream(credentials: Pick<XtreamCredentials, "baseUrl" | "u
   };
 }
 
-export function mapSeriesEntry(s: XtreamSeriesRaw): Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle"> {
+export function mapSeriesEntry(s: XtreamSeriesRaw): Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre"> {
+  const genre = typeof s.genre === "string" ? s.genre.trim() : "";
   return {
     id: String(s.series_id),
     name: s.name,
     posterUrl: s.cover,
     groupTitle: s.category_id,
+    ...(genre ? { genre } : {}),
   };
 }
 

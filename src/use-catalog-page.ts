@@ -3,6 +3,7 @@ import type { Channel, SeriesInfo } from "@core";
 import { useCacheInvalidationStore } from "./cache-invalidation-store.js";
 import { catalogVersionKey } from "./catalog-sync.js";
 import { getCatalogCount, getCatalogPage, type CatalogPageQuery } from "./catalog-store.js";
+import type { CatalogFilter } from "./content-policy.js";
 
 /** One "screenful" of growth per loadMore() call — a few grid rows' worth, matched loosely to how many cards actually fit on screen (see VodScreen/SeriesScreen's computeGridColumns). */
 const PAGE_SIZE = 60;
@@ -10,6 +11,8 @@ const PAGE_SIZE = 60;
 export interface UseCatalogPageOptions {
   categoryId?: string;
   namePrefix?: string;
+  /** A Kids profile's filter (content-policy.ts); undefined reads everything. */
+  filter?: CatalogFilter;
   enabled?: boolean;
 }
 
@@ -55,7 +58,7 @@ function useCatalogPageImpl<T>(
   fetchPage: (query: CatalogPageQuery) => Promise<T[]>,
   options: UseCatalogPageOptions,
 ): CatalogPageState<T> {
-  const { categoryId, namePrefix, enabled = true } = options;
+  const { categoryId, namePrefix, filter: kidsFilter, enabled = true } = options;
   const [items, setItems] = useState<T[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(enabled);
   const [hasMore, setHasMore] = useState(true);
@@ -68,7 +71,15 @@ function useCatalogPageImpl<T>(
 
   const version = useCacheInvalidationStore((state) => state.versions[catalogVersionKey(sourceId, kind)]);
 
-  const filter: Omit<CatalogPageQuery, "offset" | "limit"> = useMemo(() => ({ categoryId, namePrefix }), [categoryId, namePrefix]);
+  // Keyed on the Kids filter's key, not its identity — it's rebuilt on every render of the policy's owner.
+  const kidsFilterRef = useRef(kidsFilter);
+  kidsFilterRef.current = kidsFilter;
+  const kidsFilterKey = kidsFilter?.key;
+  const filter: Omit<CatalogPageQuery, "offset" | "limit"> = useMemo(
+    () => ({ categoryId, namePrefix, filter: kidsFilterRef.current }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [categoryId, namePrefix, kidsFilterKey],
+  );
 
   useEffect(() => {
     let cancelled = false;

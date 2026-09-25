@@ -21,7 +21,9 @@ import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { syncSource } from "../sync/sync-manager.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
-import { useLiveChannels } from "../use-live-channels.js";
+import { PASS_THROUGH_POLICY, type ContentPolicy } from "../content-policy.js";
+import { useKidsAllowedKeys } from "../use-kids-allowed.js";
+import { usePolicyLiveChannels } from "../use-policy-live-channels.js";
 import { ChannelTile, RemoveBadge } from "./ListTiles.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 
@@ -44,6 +46,8 @@ export interface FavouritesScreenProps {
   onOpenSeries: (seriesId: string) => void;
   /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away. */
   isPlaybackOpen?: boolean;
+  /** The profile's content policy — a Kids profile's list only shows what's still allowed (docs/kids-profile.md §6). */
+  policy?: ContentPolicy;
 }
 
 interface ListItem {
@@ -115,6 +119,7 @@ export function FavouritesScreen({
   onPlayMovie,
   onOpenSeries,
   isPlaybackOpen = false,
+  policy = PASS_THROUGH_POLICY,
 }: FavouritesScreenProps): JSX.Element {
   // Bumped whenever an item is removed so the list re-reads localStorage.
   const [favoritesVersion, setFavoritesVersion] = useState(0);
@@ -133,7 +138,10 @@ export function FavouritesScreen({
   const movieIds = useMemo(() => favorites.filter((f) => f.contentKind === "movie").map((f) => f.contentId), [favorites]);
   const seriesIds = useMemo(() => favorites.filter((f) => f.contentKind === "series").map((f) => f.contentId), [favorites]);
 
-  const { channels: liveChannels } = useLiveChannels(source, { enabled: liveIds.length > 0 });
+  const { channels: liveChannels } = usePolicyLiveChannels(source, policy, { enabled: liveIds.length > 0 });
+  const savedItems = useMemo(() => favorites.map((f) => ({ kind: f.contentKind, id: f.contentId })), [favorites]);
+  // null for a standard profile: everything saved is shown.
+  const allowedKeys = useKidsAllowedKeys(source, policy, savedItems);
   const movies = useSavedRecords(source, "vod", movieIds, EMPTY_CHANNELS);
   const series = useSavedRecords<SeriesSummary>(source, "series", seriesIds, EMPTY_SERIES);
 
@@ -145,6 +153,7 @@ export function FavouritesScreen({
     const movieItems: ListItem[] = [];
     const seriesItems: ListItem[] = [];
     for (const entry of favorites) {
+      if (allowedKeys && !allowedKeys.has(`${entry.contentKind}:${entry.contentId}`)) continue;
       if (entry.contentKind === "live") {
         const channel = liveById.get(entry.contentId);
         if (channel) channels.push({ entry, title: channel.name, imageUrl: channel.logoUrl, channel });
@@ -161,7 +170,7 @@ export function FavouritesScreen({
       { key: "movie", title: "Movies", items: movieItems },
       { key: "series", title: "Series", items: seriesItems },
     ].filter((row) => row.items.length > 0);
-  }, [favorites, liveChannels, movies, series]);
+  }, [favorites, liveChannels, movies, series, allowedKeys]);
 
   // For the player's CH+/CH− (My List's channels, in order) and number keys (every channel, numbered as Live TV shows them).
   const numberedLive = useMemo(() => withChannelNumbers(liveChannels), [liveChannels]);

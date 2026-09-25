@@ -1,4 +1,4 @@
-import { XtreamClient, type Channel, type PlaylistSource, type SeriesInfo } from "@core";
+import { KIDS_RULES_VERSION, XtreamClient, type Channel, type PlaylistSource, type SeriesInfo } from "@core";
 import {
   catalogSyncMetaKey,
   deleteSourceCatalog,
@@ -59,6 +59,8 @@ export async function isCatalogSyncDue(sourceId: string, kind: CatalogKind): Pro
     const catalogDb = await openCatalogDb();
     const meta = await getSyncMeta(catalogDb, syncMetaKey(sourceId, kind));
     if (!meta) return true;
+    // Tagged under older Kids rules: re-sync so the tag index matches the bundled rules.
+    if ((meta.rulesVersion ?? 0) < KIDS_RULES_VERSION) return true;
     return Date.now() - meta.lastSyncedAt > SYNC_STALE_AFTER_MS;
   } catch {
     // IndexedDB unavailable — nothing to sync into, so there's no sync to be "due".
@@ -107,7 +109,7 @@ async function runSync(source: PlaylistSource, kind: CatalogKind, onProgress?: (
     const records =
       kind === "vod"
         ? (batch as Channel[]).map((item) => channelToRecord(source.id, generation, item))
-        : (batch as Array<Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle">>).map((item) => seriesToRecord(source.id, generation, item));
+        : (batch as Array<Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre">>).map((item) => seriesToRecord(source.id, generation, item));
     recordCount += records.length;
     onProgress?.(recordCount);
     // Batches are written as they arrive rather than awaited serially here —
@@ -117,7 +119,7 @@ async function runSync(source: PlaylistSource, kind: CatalogKind, onProgress?: (
   });
 
   await Promise.all(writeQueue);
-  await putSyncMeta(catalogDb, { key, lastSyncedAt: Date.now(), recordCount: total || recordCount, generation });
+  await putSyncMeta(catalogDb, { key, lastSyncedAt: Date.now(), recordCount: total || recordCount, generation, rulesVersion: KIDS_RULES_VERSION });
   if (previousMeta) await deleteStaleGeneration(catalogDb, kind, source.id, generation);
   // Lets an already-mounted VodScreen/SeriesScreen (via use-catalog-page.ts)
   // notice this completed sync and switch from its fallback direct-fetch

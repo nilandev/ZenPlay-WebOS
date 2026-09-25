@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { PlatformId, Profile } from "@core";
+import { isKidsProfile, type PlatformId, type Profile } from "@core";
 import { MeshBackground, ProfileAvatarTile, TvButton, useFocusStore, useRemoteInput } from "@ui";
 import { Check } from "lucide-react";
+import { getDisclaimerAcknowledgedAt } from "../parental-store.js";
+import { FirstKidsProfileSetup } from "./ParentalFlows.js";
 import { ProfileForm } from "./ProfileForm.js";
 import { buildProfileGridGraph, ProfileGridLayout } from "./ProfileGridLayout.js";
 
@@ -29,19 +31,28 @@ export interface ManageProfilesScreenProps {
  */
 export function ManageProfilesScreen({ profiles, platform, onBack, onUpdateProfile, onDeleteProfile }: ManageProfilesScreenProps): JSX.Element {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isConfirmingKids, setIsConfirmingKids] = useState(false);
   const editingProfile = profiles.find((p) => p.id === editingId) ?? null;
 
+  if (isConfirmingKids) {
+    return <FirstKidsProfileSetup platform={platform} onFinished={() => setIsConfirmingKids(false)} />;
+  }
+
   if (editingProfile) {
+    // At least one standard profile must remain, so a parent can always get back in (docs/kids-profile.md §2.1).
+    const hasOtherStandard = profiles.some((p) => p.id !== editingProfile.id && !isKidsProfile(p));
     return (
       <ProfileForm
         platform={platform}
         profile={editingProfile}
         title="Edit Profile"
         saveLabel="Save"
-        canDelete={profiles.length > 1}
+        canDelete={profiles.length > 1 && (isKidsProfile(editingProfile) || hasOtherStandard)}
+        canBeKids={hasOtherStandard}
         onSave={(fields) => {
           onUpdateProfile(editingProfile.id, fields);
           setEditingId(null);
+          if (fields.kind === "kids" && !getDisclaimerAcknowledgedAt()) setIsConfirmingKids(true);
         }}
         onDelete={() => {
           onDeleteProfile(editingProfile.id);
@@ -103,6 +114,7 @@ function ManageProfilesGrid({
             id={profile.id}
             label={profile.name}
             avatarUrl={profile.avatarUrl}
+            isKids={isKidsProfile(profile)}
             variant="edit"
             onSelect={() => onSelectProfile(profile.id)}
           />

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { PlatformId, PlaylistSource } from "@core";
-import { Check } from "lucide-react";
+import type { PlatformId, PlaylistSource, Profile } from "@core";
+import { Check, ChevronRight, ShieldCheck } from "lucide-react";
 import { BROWSE_SIDE_PADDING, Focusable, MeshBackground, TV_TEXT, useFocusStore, useIsFocused, useRemoteInput, type FocusNode } from "@ui";
 import {
   loadSettings,
@@ -13,9 +13,12 @@ import {
   type UpdateOnLaunch,
 } from "../settings-store.js";
 import { AddSourceScreen } from "./AddSourceScreen.js";
+import { ParentalControlsScreen } from "./ParentalControlsScreen.js";
+import { PinGate } from "./ParentalFlows.js";
 import { dismissPlaylistDialog, PlaylistCards, playlistCardId, playlistsEntryFromBelow, ADD_PLAYLIST_ID } from "./PlaylistCards.js";
 
 const AUTO_REFRESH_ID = "settings-auto-refresh";
+const PARENTAL_ID = "settings-parental-controls";
 const SCOPE = "settings";
 const updateOnLaunchId = (value: UpdateOnLaunch) => `settings-update-on-launch:${value}`;
 const guideRefreshId = (value: GuideRefreshHours) => `settings-guide-refresh:${value}`;
@@ -72,6 +75,8 @@ export interface SettingsScreenProps {
   onRemoveSource: (sourceId: string) => void;
   onSetActiveSource: (sourceId: string) => void;
   onBack: () => void;
+  /** Every profile — Parental Controls manages the Kids ones. */
+  profiles?: Profile[];
 }
 
 /**
@@ -81,8 +86,25 @@ export interface SettingsScreenProps {
  * uses, since two mounted screens both handling the remote would
  * double-fire every press.
  */
-export function SettingsScreen({ onAddSource, platform, ...props }: SettingsScreenProps): JSX.Element {
+export function SettingsScreen({ onAddSource, platform, profiles = [], ...props }: SettingsScreenProps): JSX.Element {
   const [isAdding, setIsAdding] = useState(false);
+  // Parental Controls: behind the parent PIN in locked mode (docs/kids-profile.md §2.3), straight in with no PIN set.
+  const [parental, setParental] = useState<"gate" | "open" | null>(null);
+
+  if (parental === "gate") {
+    return <PinGate platform={platform} title="Parental Controls" onUnlock={() => setParental("open")} onCancel={() => setParental(null)} />;
+  }
+  if (parental === "open") {
+    return (
+      <ParentalControlsScreen
+        platform={platform}
+        profiles={profiles}
+        sources={props.sources}
+        activeSourceId={props.activeSourceId}
+        onBack={() => setParental(null)}
+      />
+    );
+  }
 
   if (isAdding) {
     return (
@@ -96,7 +118,7 @@ export function SettingsScreen({ onAddSource, platform, ...props }: SettingsScre
       />
     );
   }
-  return <SettingsView {...props} platform={platform} onAddPlaylist={() => setIsAdding(true)} />;
+  return <SettingsView {...props} platform={platform} onAddPlaylist={() => setIsAdding(true)} onOpenParental={() => setParental("gate")} />;
 }
 
 /**
@@ -125,7 +147,8 @@ function SettingsView({
   onSetActiveSource,
   onBack,
   onAddPlaylist,
-}: Omit<SettingsScreenProps, "onAddSource"> & { onAddPlaylist: () => void }): JSX.Element {
+  onOpenParental,
+}: Omit<SettingsScreenProps, "onAddSource" | "profiles"> & { onAddPlaylist: () => void; onOpenParental: () => void }): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focus = useFocusStore((state) => state.focus);
@@ -141,6 +164,8 @@ function SettingsView({
   function patch(update: Partial<AppSettings>): void {
     setSettings(updateSettings(update));
   }
+  const onOpenParentalRef = useRef(onOpenParental);
+  onOpenParentalRef.current = onOpenParental;
 
   // Up from the first settings row goes back into the playlist cards.
   const cardsEntryFromBelow = playlistsEntryFromBelow(sources);
@@ -156,6 +181,7 @@ function SettingsView({
         pickerRow(LIVE_FORMAT_OPTIONS, liveFormatId, "liveStreamFormat"),
         pickerRow(PLAYBACK_SPEED_OPTIONS, playbackSpeedId, "playbackSpeed"),
       ].map((row) => row.map(({ id, patch: update }) => ({ id, onSelect: () => patch(update) }))),
+      [{ id: PARENTAL_ID, onSelect: () => onOpenParentalRef.current() }],
     ];
     // Up/Down keep the column position, clamped to the neighbouring row's length.
     const at = (row: Array<{ id: string }> | undefined, index: number) => row?.[Math.min(index, row.length - 1)]?.id;
@@ -258,6 +284,15 @@ function SettingsView({
           />
         </SettingsSection>
 
+        <SettingsSection title="Parental Controls">
+          <LinkRow
+            id={PARENTAL_ID}
+            label="Parental Controls"
+            description="Kids profiles, what they can watch, and the parent PIN"
+            onSelect={onOpenParental}
+          />
+        </SettingsSection>
+
         <AboutSection />
       </div>
     </MeshBackground>
@@ -338,6 +373,21 @@ function ToggleRow({ id, label, description, value, onToggle }: { id: string; la
             />
           </span>
         </span>
+      </button>
+    </Focusable>
+  );
+}
+
+function LinkRow({ id, label, description, onSelect }: { id: string; label: string; description: string; onSelect: () => void }): JSX.Element {
+  const isFocused = useIsFocused(id);
+  return (
+    <Focusable id={id} style={{ height: "auto" }}>
+      <button type="button" onClick={onSelect} style={rowStyle(isFocused)}>
+        <span style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <ShieldCheck size="1.75rem" aria-hidden />
+          <RowText label={label} description={description} isFocused={isFocused} />
+        </span>
+        <ChevronRight size="1.75rem" aria-hidden />
       </button>
     </Focusable>
   );

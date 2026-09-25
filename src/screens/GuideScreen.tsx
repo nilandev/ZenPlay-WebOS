@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { XtreamClient, type Category, type Channel, type PlatformId, type PlaylistSource, type Profile } from "@core";
+import { getDefaultKidsRules, XtreamClient, type Category, type Channel, type PlatformId, type PlaylistSource, type Profile } from "@core";
 import {
   CATEGORY_RAIL_COLLAPSED_WIDTH,
   CategoryRail,
@@ -15,12 +15,11 @@ import {
   type GuideSelection,
 } from "@ui";
 import { useCacheInvalidationStore } from "../cache-invalidation-store.js";
-import { loadLiveCategories } from "../content-loader.js";
 import { epgVersionKey } from "../epg-store.js";
 import { loadFavorites } from "../profile-store.js";
-import { useCachedContent } from "../use-cached-content.js";
 import { useGuideProgrammes } from "../use-guide-programmes.js";
-import { useLiveChannels } from "../use-live-channels.js";
+import { useContentPolicy } from "../content-policy.js";
+import { usePolicyLiveChannels } from "../use-policy-live-channels.js";
 import { liveStreamUrl } from "../live-stream-url.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 
@@ -37,7 +36,6 @@ export interface GuideScreenProps {
 }
 
 const EMPTY_CHANNELS: Channel[] = [];
-const EMPTY_CATEGORIES: Category[] = [];
 const ALL_CATEGORY_ID = "__all__";
 const MY_LIST_CATEGORY_ID = "__favourites__";
 
@@ -79,15 +77,15 @@ function formatDuration(ms: number): string {
  */
 export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlaybackOpen = false }: GuideScreenProps): JSX.Element {
   // The same local live table Live TV reads (see use-live-channels.ts) — one list, one download.
-  const { channels, isInitialLoading: isChannelsLoading, error: loadError } = useLiveChannels(source);
-
-  const loadCategories = useCallback(() => loadLiveCategories(source), [source]);
-  const { data: fetchedCategories, isInitialLoading: isCategoriesLoading } = useCachedContent(
-    `live-categories:${source.id}`,
-    "category",
-    loadCategories,
-    EMPTY_CATEGORIES,
-  );
+  // A Kids profile sees only allowed channels, minus any airing something mature right now (docs/kids-profile.md §3.6).
+  const policy = useContentPolicy(profile, source.id);
+  const {
+    channels,
+    fetchedCategories,
+    isInitialLoading: isChannelsLoading,
+    isCategoriesLoading,
+    error: loadError,
+  } = usePolicyLiveChannels(source, policy);
 
   // The source's XMLTV guide lives in the local EPG table, kept fresh in a
   // worker by epg-sync.ts (started from App). This version bumps when a sync
@@ -120,10 +118,12 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
     [profile, favoriteChannels.length, channels.length, categories],
   );
 
-  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(source.id) ?? ALL_CATEGORY_ID);
+  // Remembered per profile, so a Kids profile never reopens a category a parent was browsing.
+  const memoryKey = `${profile?.id ?? ""}:${source.id}`;
+  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(memoryKey) ?? ALL_CATEGORY_ID);
   useEffect(() => {
-    lastCategoryBySource.set(source.id, activeCategoryId);
-  }, [source.id, activeCategoryId]);
+    lastCategoryBySource.set(memoryKey, activeCategoryId);
+  }, [memoryKey, activeCategoryId]);
 
   const visibleChannels = useMemo(() => {
     if (activeCategoryId === ALL_CATEGORY_ID) return channels;
@@ -144,6 +144,11 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
   const handleSelect = useCallback(
     ({ channel, programme }: GuideSelection) => {
       const now = Date.now();
+      // Kids: a mature programme on an allowed channel (live or catch-up) isn't played.
+      if (policy.isKids && programme && getDefaultKidsRules().matureProgrammeReason(programme)) {
+        setNotice("This show isn't available right now");
+        return;
+      }
       if (!programme || (programme.start.getTime() <= now && now < programme.stop.getTime())) {
         onPlay(liveStreamUrl(channel));
         return;
@@ -160,7 +165,7 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
       }
       setNotice("Catch-up isn't available for this channel");
     },
-    [onPlay, source],
+    [onPlay, source, policy.isKids],
   );
 
   const [gridEntryId, setGridEntryId] = useState<string | undefined>(undefined);

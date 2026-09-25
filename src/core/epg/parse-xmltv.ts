@@ -29,6 +29,8 @@ export function* parseXmltv(xml: string): Generator<EpgProgramme> {
   const attrRe = /(\w[\w-]*)="([^"]*)"/g;
   const titleRe = /<title[^>]*>([\s\S]*?)<\/title>/;
   const descRe = /<desc[^>]*>([\s\S]*?)<\/desc>/;
+  const categoryRe = /<category[^>]*>([\s\S]*?)<\/category>/g;
+  const ratingRe = /<rating[^>]*>[\s\S]*?<value[^>]*>([\s\S]*?)<\/value>/;
 
   let match: RegExpExecArray | null;
   while ((match = programmeRe.exec(xml)) !== null) {
@@ -55,14 +57,26 @@ export function* parseXmltv(xml: string): Generator<EpgProgramme> {
 
     const titleMatch = titleRe.exec(body);
     const descMatch = descRe.exec(body);
+    const ratingMatch = ratingRe.exec(body);
+    const categories: string[] = [];
+    categoryRe.lastIndex = 0;
+    let categoryMatch: RegExpExecArray | null;
+    while ((categoryMatch = categoryRe.exec(body)) !== null) {
+      const category = decodeXmlEntities(categoryMatch[1].trim());
+      if (category) categories.push(category);
+    }
 
-    yield {
+    const programme: EpgProgramme = {
       channelId: attrs.channel,
       title: decodeXmlEntities(titleMatch?.[1]?.trim() ?? "Untitled"),
       description: descMatch ? decodeXmlEntities(descMatch[1].trim()) : undefined,
       start,
       stop,
     };
+    // Only set when present, so guides without them store exactly what they did before.
+    if (categories.length > 0) programme.categories = categories;
+    if (ratingMatch?.[1]?.trim()) programme.rating = decodeXmlEntities(ratingMatch[1].trim());
+    yield programme;
   }
 }
 

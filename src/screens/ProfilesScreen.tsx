@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { PlatformId, Profile } from "@core";
+import { isKidsProfile, type PlatformId, type Profile } from "@core";
 import { MeshBackground, ProfileAvatarTile, TvButton, useFocusStore, useRemoteInput } from "@ui";
 import { Pencil } from "lucide-react";
+import { getDisclaimerAcknowledgedAt, requiresPin } from "../parental-store.js";
+import { FirstKidsProfileSetup, PinGate } from "./ParentalFlows.js";
 import { ProfileForm } from "./ProfileForm.js";
 import { buildProfileGridGraph, ProfileGridLayout } from "./ProfileGridLayout.js";
 
@@ -11,6 +13,14 @@ export interface ProfilesScreenProps {
   onSelectProfile: (profile: Profile) => void;
   onCreateProfile: (profile: Profile) => void;
   onManageProfiles: () => void;
+  /** The picker was opened from a Kids profile — choosing a standard profile asks for the parent PIN (locked mode). */
+  isLeavingKids?: boolean;
+}
+
+interface PendingGate {
+  title: string;
+  subtitle?: string;
+  action: () => void;
 }
 
 const CREATE_ID = "create-profile";
@@ -30,8 +40,47 @@ const MANAGE_ID = "manage-profiles";
  * like moving focus, but silently cancels out non-idempotent ones like
  * toggling a switch — see conversation history for the full trace).
  */
-export function ProfilesScreen({ profiles, platform, onSelectProfile, onCreateProfile, onManageProfiles }: ProfilesScreenProps): JSX.Element {
+export function ProfilesScreen({ profiles, platform, onSelectProfile, onCreateProfile, onManageProfiles, isLeavingKids = false }: ProfilesScreenProps): JSX.Element {
   const [isCreating, setIsCreating] = useState(false);
+  // A PIN-guarded action waiting for the parent PIN (docs/kids-profile.md §2.3).
+  const [gate, setGate] = useState<PendingGate | null>(null);
+  // A just-created first Kids profile, held back until the disclaimer/PIN step is answered.
+  const [pendingKidsProfile, setPendingKidsProfile] = useState<Profile | null>(null);
+
+  const hasKidsProfile = profiles.some(isKidsProfile);
+  /** Runs `action` straight away in trust mode; in locked mode only after the PIN. */
+  const guard = (needed: boolean, next: PendingGate) => {
+    if (needed && requiresPin()) setGate(next);
+    else next.action();
+  };
+
+  if (gate) {
+    return (
+      <PinGate
+        platform={platform}
+        title={gate.title}
+        subtitle={gate.subtitle}
+        onUnlock={() => {
+          setGate(null);
+          gate.action();
+        }}
+        onCancel={() => setGate(null)}
+      />
+    );
+  }
+
+  if (pendingKidsProfile) {
+    return (
+      <FirstKidsProfileSetup
+        platform={platform}
+        onFinished={() => {
+          const profile = pendingKidsProfile;
+          setPendingKidsProfile(null);
+          onCreateProfile(profile);
+        }}
+      />
+    );
+  }
 
   if (isCreating) {
     return (
@@ -39,14 +88,19 @@ export function ProfilesScreen({ profiles, platform, onSelectProfile, onCreatePr
         platform={platform}
         title="New Profile"
         saveLabel="Create"
+        // The first profile must be a parent (standard) profile.
+        canBeKids={profiles.some((p) => !isKidsProfile(p))}
         onCancel={() => setIsCreating(false)}
         onSave={(fields) => {
-          onCreateProfile({
+          const profile: Profile = {
             id: crypto.randomUUID(),
             name: fields.name,
             avatarUrl: fields.avatarUrl,
-          });
+            ...(fields.kind === "kids" ? { kind: "kids" as const } : {}),
+          };
           setIsCreating(false);
+          if (fields.kind === "kids" && !getDisclaimerAcknowledgedAt()) setPendingKidsProfile(profile);
+          else onCreateProfile(profile);
         }}
       />
     );
@@ -56,9 +110,15 @@ export function ProfilesScreen({ profiles, platform, onSelectProfile, onCreatePr
     <ProfilePickerGrid
       profiles={profiles}
       platform={platform}
-      onSelectProfile={onSelectProfile}
-      onManageProfiles={onManageProfiles}
-      onStartCreate={() => setIsCreating(true)}
+      onSelectProfile={(profile) =>
+        guard(isLeavingKids && !isKidsProfile(profile), {
+          title: `Switch to ${profile.name}`,
+          subtitle: "Enter the parent PIN to leave the Kids profile",
+          action: () => onSelectProfile(profile),
+        })
+      }
+      onManageProfiles={() => guard(hasKidsProfile, { title: "Manage Profiles", action: onManageProfiles })}
+      onStartCreate={() => guard(hasKidsProfile, { title: "Add Profile", action: () => setIsCreating(true) })}
     />
   );
 }
@@ -116,7 +176,14 @@ function ProfilePickerGrid({
         action={<TvButton id={MANAGE_ID} label="Manage Profiles" icon={Pencil} onSelect={onManageProfiles} />}
       >
         {profiles.map((profile) => (
-          <ProfileAvatarTile key={profile.id} id={profile.id} label={profile.name} avatarUrl={profile.avatarUrl} onSelect={() => onSelectProfile(profile)} />
+          <ProfileAvatarTile
+            key={profile.id}
+            id={profile.id}
+            label={profile.name}
+            avatarUrl={profile.avatarUrl}
+            isKids={isKidsProfile(profile)}
+            onSelect={() => onSelectProfile(profile)}
+          />
         ))}
         <ProfileAvatarTile id={CREATE_ID} label="Add Profile" variant="add" onSelect={onStartCreate} />
       </ProfileGridLayout>

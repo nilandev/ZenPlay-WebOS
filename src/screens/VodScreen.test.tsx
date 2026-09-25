@@ -177,3 +177,42 @@ describe("VodScreen at catalog scale", () => {
     expect(posters).toHaveLength(20);
   });
 });
+
+describe("VodScreen in a Kids profile", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    return resetScreenState();
+  });
+
+  const kid: Profile = { id: "kid-1", name: "Mia", avatarUrl: "avatar/toon_2.png", kind: "kids" };
+
+  it("shows only allowed categories and titles (AC3, AC4)", async () => {
+    const { loadVodCategories } = await import("../content-loader.js");
+    (loadVodCategories as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: "cat-1", name: "Action", kind: "movie" },
+      { id: "cat-kids", name: "Kids Movies", kind: "movie" },
+    ]);
+    const catalogDb = await openCatalogDb();
+    await putRecordsBatch(catalogDb, "vod", [
+      { id: `${source.id}:1`, sourceId: source.id, streamId: "1", name: "Action Movie", nameLower: "action movie", groupTitle: "cat-1", streamUrl: "x", generation: 1 },
+      { id: `${source.id}:2`, sourceId: source.id, streamId: "2", name: "Frozen", nameLower: "frozen", groupTitle: "cat-kids", streamUrl: "x", generation: 1 },
+      { id: `${source.id}:3`, sourceId: source.id, streamId: "3", name: "Christmas Horror", nameLower: "christmas horror", groupTitle: "cat-kids", streamUrl: "x", generation: 1 },
+    ]);
+    await putSyncMeta(catalogDb, { key: `vod:${source.id}`, lastSyncedAt: Date.now(), recordCount: 3, generation: 1 });
+
+    render(<VodScreen source={source} platform="web" profile={kid} onPlay={() => {}} onBack={() => {}} />);
+    expect(await screen.findByText("Frozen")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Kids Movies" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Action" })).toBeNull();
+    expect(screen.queryByText("Action Movie")).toBeNull();
+    expect(screen.queryByText("Christmas Horror")).toBeNull();
+  });
+
+  it("never falls back to an unfiltered provider fetch while the table is being built", async () => {
+    const { loadChannelsByKind } = await import("../content-loader.js");
+    render(<VodScreen source={source} platform="web" profile={kid} onPlay={() => {}} onBack={() => {}} />);
+    await screen.findByText("Getting your movies ready…");
+    await flush();
+    expect(loadChannelsByKind).not.toHaveBeenCalled();
+  });
+});

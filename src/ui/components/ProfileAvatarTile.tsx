@@ -13,6 +13,31 @@ export interface ProfileAvatarTileProps {
   avatarUrl?: string;
   /** "add" draws the dashed "+" circle; "edit" adds a pencil badge (Manage Profiles). */
   variant?: "profile" | "add" | "edit";
+  /** Draws the "KIDS" badge on the avatar. */
+  isKids?: boolean;
+}
+
+/** The small "KIDS" pill shown on a Kids profile's avatar and the Home profile chip. */
+export function KidsBadge({ size = "md" }: { size?: "sm" | "md" }): JSX.Element {
+  return (
+    <span
+      aria-label="Kids profile"
+      style={{
+        display: "inline-block",
+        padding: size === "sm" ? "0.125rem 0.5rem" : "0.25rem 0.75rem",
+        borderRadius: 999,
+        background: "#ffd23f",
+        color: "#1a1400",
+        fontSize: size === "sm" ? "0.875rem" : "1.125rem",
+        fontWeight: 800,
+        letterSpacing: "0.06em",
+        lineHeight: 1.2,
+        boxShadow: "0 0.25rem 0.75rem rgba(0,0,0,0.45)",
+      }}
+    >
+      KIDS
+    </span>
+  );
 }
 
 /**
@@ -20,7 +45,7 @@ export interface ProfileAvatarTileProps {
  * the avatar with a white ring and brightens the name. Only transform and
  * box-shadow change, so focus moves stay cheap on TV hardware.
  */
-export function ProfileAvatarTile({ id, label, onSelect, avatarUrl, variant = "profile" }: ProfileAvatarTileProps): JSX.Element {
+export function ProfileAvatarTile({ id, label, onSelect, avatarUrl, variant = "profile", isKids = false }: ProfileAvatarTileProps): JSX.Element {
   const isFocused = useIsFocused(id);
   const isAdd = variant === "add";
 
@@ -62,6 +87,11 @@ export function ProfileAvatarTile({ id, label, onSelect, avatarUrl, variant = "p
               <img src={avatarUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
             )}
           </span>
+          {isKids && (
+            <span style={{ position: "absolute", left: "50%", top: "-0.5rem", transform: "translateX(-50%)" }}>
+              <KidsBadge />
+            </span>
+          )}
           {variant === "edit" && (
             <span
               style={{

@@ -1,5 +1,6 @@
 import type { Profile } from "@core";
 import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
+import { KidsBadge } from "./ProfileAvatarTile.js";
 
 export interface ProfileSwitcherProps {
   profile: Profile;
@@ -53,6 +54,7 @@ export function ProfileSwitcher({ profile, onOpen }: ProfileSwitcherProps): JSX.
     >
       <AvatarBadge avatarUrl={profile.avatarUrl} size="3.75rem" />
       <span style={{ fontSize: "1.375rem", fontWeight: 600 }}>{profile.name}</span>
+      {profile.kind === "kids" && <KidsBadge size="sm" />}
     </button>
   );
 }

@@ -3,6 +3,14 @@ export interface Profile {
   name: string;
   /** Path under public/avatar (e.g. "avatar/toon_1.png") chosen from AVATAR_CHOICES at creation. */
   avatarUrl: string;
+  /** A Kids profile only sees content the Kids engine (or a parent) allows — see docs/kids-profile.md. Missing means "standard". */
+  kind?: ProfileKind;
+}
+
+export type ProfileKind = "standard" | "kids";
+
+export function isKidsProfile(profile: Pick<Profile, "kind"> | null | undefined): boolean {
+  return profile?.kind === "kids";
 }
 
 /**
@@ -48,6 +56,8 @@ export interface WatchHistoryEntry {
   streamUrl?: string;
   /** Live channels: the number shown in the channel list. */
   channelNumber?: number;
+  /** The title's category id (Channel.groupTitle), when known at play time — Kids recommendations group by it. */
+  categoryId?: string;
   /** Series: the episode to continue with (the next one, once an episode is finished). */
   episodeId?: string;
   season?: number;

@@ -81,15 +81,28 @@ export function ChannelSidebar({
 
   const indexById = useMemo(() => new Map(channels.map((channel, index) => [channel.id, index])), [channels]);
 
+  // The previous list's ids, and whether the last list change happened while
+  // focus was on one of its rows — the same list refreshed underneath the
+  // user (a sync, or a Kids channel hidden in real time) rather than a new
+  // category picked from the rail.
+  const previousIdsRef = useRef<string[] | null>(null);
+  const keepFocusRef = useRef(false);
+
   useEffect(() => {
     const ids = channels.map((channel) => channel.id);
+    const focusedBefore = useFocusStore.getState().focusedId;
+    const previousIndex = focusedBefore && previousIdsRef.current ? previousIdsRef.current.indexOf(focusedBefore) : -1;
+    previousIdsRef.current = ids;
     const nodes = buildListFocusGraph(ids).map((node, index) => ({
       ...node,
       neighbors: { ...node.neighbors, left: leftEntryId, right: rightEntryId },
       onSelect: () => onSelectRef.current(channels[index]),
     }));
     setGraph(SCOPE, nodes);
-  }, [channels, leftEntryId, rightEntryId, setGraph]);
+    keepFocusRef.current = previousIndex >= 0 && ids.length > 0;
+    // The focused row went away: its neighbour (whatever now sits at its place) takes focus, not the top of the list.
+    if (keepFocusRef.current && focusedBefore && !ids.includes(focusedBefore)) focus(ids[Math.min(previousIndex, ids.length - 1)]);
+  }, [channels, leftEntryId, rightEntryId, setGraph, focus]);
 
   // Rebuilds above replace the scope in place (setGraph is atomic); clearing
   // it on every rebuild would drop focus for an instant and snap it back to
@@ -142,7 +155,14 @@ export function ChannelSidebar({
   // keep pointing at a row id from the previous category that no longer
   // exists in this scope, and the store's setGraph() fallback would only
   // catch that on the very first registration, not a later category switch.
+  //
+  // Not when the list only refreshed while the user was on it (see
+  // keepFocusRef above) — focus then stays where it was.
   useEffect(() => {
+    if (keepFocusRef.current) {
+      keepFocusRef.current = false;
+      return;
+    }
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setScrollTop(0);
     if (channels.length > 0) focus(channels[0].id);

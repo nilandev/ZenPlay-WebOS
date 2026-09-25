@@ -103,6 +103,8 @@ export async function runEpgSync(request: EpgSyncRequest, options: SyncJobOption
       stop,
       title: programme.title,
       description: programme.description,
+      ...(programme.categories ? { categories: programme.categories } : {}),
+      ...(programme.rating ? { rating: programme.rating } : {}),
       generation,
     });
     if (batch.length >= batchSize) await flush();
