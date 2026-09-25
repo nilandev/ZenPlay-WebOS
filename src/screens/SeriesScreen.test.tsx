@@ -311,6 +311,26 @@ describe("SeriesScreen detail page", () => {
     expect(focusedId()).toBe("series-hero-play");
   });
 
+  it("OK on My List (D-pad, not a click) adds and removes the series, and OK on Play plays", async () => {
+    localStorage.clear();
+    const { isFavorite } = await import("../profile-store.js");
+    const onPlayEpisode = vi.fn();
+    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={onPlayEpisode} onBack={() => {}} initialSelectedId="s0" />);
+    await screen.findByRole("button", { name: "Play S1 E1" });
+    await vi.waitFor(() => expect(focusedId()).toBe("series-hero-play"));
+
+    press("ArrowRight");
+    expect(focusedId()).toBe("series-hero-favorite");
+    press("Enter");
+    expect(isFavorite(profile.id, source.id, "series", "s0")).toBe(true);
+    press("Enter");
+    expect(isFavorite(profile.id, source.id, "series", "s0")).toBe(false);
+
+    press("ArrowLeft");
+    press("Enter");
+    expect(onPlayEpisode).toHaveBeenCalledWith(expect.objectContaining({ id: "ep-1-1" }), episodes, expect.objectContaining({ resume: false }));
+  });
+
   it("switching season updates the episode row and Up from it returns to that season's tab", async () => {
     render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} initialSelectedId="s0" />);
     await screen.findByRole("button", { name: "Play S1 E1" });

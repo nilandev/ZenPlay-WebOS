@@ -316,6 +316,22 @@ export function SeriesScreen({
   const playEpisode = (episode: SeriesEpisode, resume = false): void =>
     onPlayEpisode(episode, episodes, { seriesName: series?.name, posterUrl: series?.posterUrl, categoryId: series?.groupTitle, details, resume });
 
+  // The detail page's Play and My List actions — shared by the buttons'
+  // click (touch/pointer) and their focus nodes' onSelect (D-pad OK), which
+  // read them through detailActionsRef so the focus graph isn't rebuilt on
+  // every render.
+  const playTarget = resumeEpisode ?? seasonEpisodes[0];
+  const handleDetailPlay = (): void => {
+    if (playTarget) playEpisode(playTarget, playTarget.id === resumeEpisode?.id);
+  };
+  const handleDetailToggleFavorite = (): void => {
+    if (!selected) return;
+    toggleFavorite(profile.id, source.id, "series", selected);
+    setFavoritesVersion((v) => v + 1);
+  };
+  const detailActionsRef = useRef({ play: handleDetailPlay, toggleFavorite: handleDetailToggleFavorite });
+  detailActionsRef.current = { play: handleDetailPlay, toggleFavorite: handleDetailToggleFavorite };
+
   // Header for the content area: the category (or search) being shown and,
   // for a single category, how many titles it holds.
   const headerTitle = trimmedQuery ? `Results for "${trimmedQuery}"` : isAllCategories ? "Series" : activeCategoryLabel;
@@ -450,8 +466,8 @@ export function SeriesScreen({
     const belowActions = activeTabId ?? episodeIds[0];
 
     const actionNodes: FocusNode[] = [
-      { id: DETAIL_PLAY_ID, neighbors: { right: DETAIL_FAVORITE_ID, down: belowActions } },
-      { id: DETAIL_FAVORITE_ID, neighbors: { left: DETAIL_PLAY_ID, down: belowActions } },
+      { id: DETAIL_PLAY_ID, neighbors: { right: DETAIL_FAVORITE_ID, down: belowActions }, onSelect: () => detailActionsRef.current.play() },
+      { id: DETAIL_FAVORITE_ID, neighbors: { left: DETAIL_PLAY_ID, down: belowActions }, onSelect: () => detailActionsRef.current.toggleFavorite() },
     ];
     const seasonNodes: FocusNode[] = hasSeasonTabs
       ? seasons.map((season, index) => ({
@@ -602,7 +618,6 @@ export function SeriesScreen({
 
   if (selected) {
     const isFavorited = favoriteSeriesIds.has(selected);
-    const playTarget = resumeEpisode ?? seasonEpisodes[0];
     const playLabel = playTarget ? `${resumeEpisode ? "Resume" : "Play"} S${playTarget.season} E${playTarget.episode}` : "Play";
     const resumeProgress =
       continueEntry && continueEntry.durationSeconds > 0 ? continueEntry.positionSeconds / continueEntry.durationSeconds : undefined;
@@ -619,11 +634,8 @@ export function SeriesScreen({
           isFavorited={isFavorited}
           playLabel={playLabel}
           canResume={Boolean(resumeEpisode)}
-          onPlay={() => playTarget && playEpisode(playTarget, playTarget.id === resumeEpisode?.id)}
-          onToggleFavorite={() => {
-            toggleFavorite(profile.id, source.id, "series", selected);
-            setFavoritesVersion((v) => v + 1);
-          }}
+          onPlay={handleDetailPlay}
+          onToggleFavorite={handleDetailToggleFavorite}
         />
 
         <div style={{ padding: `2.5rem ${BROWSE_SIDE_PADDING} 0` }}>
