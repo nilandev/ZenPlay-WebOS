@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, type LucideIcon } from "lucide-react";
+import { ListVideo, RefreshCw, type LucideIcon } from "lucide-react";
 import type { PlatformId, PlaylistSource, Profile } from "@core";
 import {
   Clock,
@@ -329,24 +329,15 @@ export function HomeScreen({ source, sources = [], onSelectSource, platform, pro
         </div>
       </main>
 
-      <footer
-        style={{
-          display: "flex",
-          alignItems: "flex-end",
-          justifyContent: "space-between",
-          flexShrink: 0,
-          fontSize: "1.125rem",
-          fontWeight: 500,
-          color: "var(--text-dim)",
-          lineHeight: 1.6,
-        }}
-      >
-        <div>
-          <div>Current Playlist: {playlistInfo.name || source.name || "—"}</div>
-          <div>Current playlist expires: {playlistInfo.name ? formatExpiry(playlistInfo.expiresAt) : "—"}</div>
-          {syncStatus && <div style={{ color: failure && !runningLabel ? "#ff8a8a" : undefined }}>{syncStatus}</div>}
-        </div>
-        <div>v{__APP_VERSION__}</div>
+      <footer style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "2rem", flexShrink: 0 }}>
+        <PlaylistStatusBar
+          // Only when there's no playlist chip in the header to show it.
+          name={canSwitchPlaylist ? undefined : playlistInfo.name || source.name || undefined}
+          expiresAt={playlistInfo.name ? playlistInfo.expiresAt : undefined}
+          syncStatus={syncStatus}
+          syncTone={runningLabel ? "running" : failure ? "failed" : "ok"}
+        />
+        <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "rgba(235,236,242,0.4)" }}>Version: {__APP_VERSION__}</div>
       </footer>
     </div>
     {toast && <Toast message={toast.message} tone={toast.tone} onDismiss={dismissToast} />}
@@ -355,9 +346,128 @@ export function HomeScreen({ source, sources = [], onSelectSource, platform, pro
   );
 }
 
-function formatExpiry(expiresAt: Date | null): string {
-  if (expiresAt === null) return "Unlimited";
-  return expiresAt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+const DAY_MS = 86_400_000;
+/** Within this many days of expiry the chip turns amber, so there's time to renew. */
+const EXPIRY_WARNING_DAYS = 30;
+
+type ExpiryTone = "ok" | "soon" | "expired" | "unknown";
+
+/** The expiry chip's wording and tone — "Expires Sep 15, 2027", "Expires in 12 days", "Expired Sep 1, 2026", "No expiry". */
+export function describeExpiry(expiresAt: Date | null | undefined, now = Date.now()): { label: string; tone: ExpiryTone } {
+  if (expiresAt === undefined) return { label: "Expiry unknown", tone: "unknown" };
+  if (expiresAt === null) return { label: "No expiry", tone: "ok" };
+  const date = expiresAt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const daysLeft = Math.ceil((expiresAt.getTime() - now) / DAY_MS);
+  if (daysLeft <= 0) return { label: `Expired ${date}`, tone: "expired" };
+  if (daysLeft <= EXPIRY_WARNING_DAYS) return { label: daysLeft === 1 ? "Expires tomorrow" : `Expires in ${daysLeft} days`, tone: "soon" };
+  return { label: `Expires ${date}`, tone: "ok" };
+}
+
+/** Plain text while the expiry is fine; a pulsing dot and coloured text only when it needs attention (amber in the last month, red once expired). */
+const EXPIRY_STYLES: Record<ExpiryTone, { dot?: string; text?: string }> = {
+  ok: {},
+  soon: { dot: "#f5b83d", text: "#f5c46b" },
+  expired: { dot: "#ff5c5c", text: "#ff8a8a" },
+  unknown: {},
+};
+
+/**
+ * Home's footer: the current playlist as one quiet, informational line —
+ * expiry · sync status, each led by a small status dot. The playlist's
+ * name leads the line only when there's a single playlist — otherwise it's
+ * already in the header's playlist chip. Colour is kept to the dots unless
+ * something needs attention (expiry within a month or past, a failed
+ * refresh); a sync in progress shows a small spinning icon instead of a
+ * dot. No surface or glow, so it never competes with the tiles above it.
+ */
+function PlaylistStatusBar({
+  name,
+  expiresAt,
+  syncStatus,
+  syncTone,
+}: {
+  /** Set only when the header has no playlist chip (a single playlist). */
+  name?: string;
+  expiresAt: Date | null | undefined;
+  syncStatus: string | null;
+  syncTone: "running" | "failed" | "ok";
+}): JSX.Element {
+  const expiry = describeExpiry(expiresAt);
+  const expiryStyle = EXPIRY_STYLES[expiry.tone];
+
+  return (
+    <div
+      role="status"
+      aria-label="Current playlist"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.875rem",
+        minWidth: 0,
+        maxWidth: "75vw",
+        fontSize: "1.125rem",
+        fontWeight: 500,
+        color: "rgba(235,236,242,0.55)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <style>{`
+        @keyframes home-status-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes home-status-pulse { 0% { transform: scale(1); opacity: 0.55; } 70%, 100% { transform: scale(2.6); opacity: 0; } }
+      `}</style>
+      {name && (
+        <>
+          <StatusItem indicator={<ListVideo size="1.125rem" strokeWidth={2} aria-hidden style={{ flexShrink: 0, opacity: 0.8 }} />}>
+            <span style={{ color: "rgba(235,236,242,0.8)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+          </StatusItem>
+          <Dot />
+        </>
+      )}
+      <StatusItem indicator={expiryStyle.dot ? <StatusDot color={expiryStyle.dot} pulse /> : null} color={expiryStyle.text}>
+        {expiry.label}
+      </StatusItem>
+      {syncStatus && (
+        <>
+          <Dot />
+          <StatusItem
+            indicator={
+              syncTone === "running" ? (
+                <RefreshCw size="1.125rem" strokeWidth={2} aria-hidden style={{ flexShrink: 0, opacity: 0.8, animation: "home-status-spin 1.1s linear infinite" }} />
+              ) : (
+                <StatusDot color={syncTone === "failed" ? "#ff5c5c" : "#2ecc8a"} pulse={syncTone === "ok"} />
+              )
+            }
+            color={syncTone === "failed" ? "#ff8a8a" : undefined}
+          >
+            {syncStatus}
+          </StatusItem>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatusItem({ indicator, color, children }: { indicator: React.ReactNode; color?: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: "0.625rem", minWidth: 0, color }}>
+      {indicator}
+      {children}
+    </span>
+  );
+}
+
+/** A small coloured dot; `pulse` adds a soft expanding ring (transform/opacity only — cheap on TV GPUs). */
+function StatusDot({ color, pulse }: { color: string; pulse: boolean }): JSX.Element {
+  return (
+    <span aria-hidden style={{ position: "relative", width: "0.625rem", height: "0.625rem", flexShrink: 0 }}>
+      {pulse && <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: color, animation: "home-status-pulse 2.4s ease-out infinite" }} />}
+      <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: color }} />
+    </span>
+  );
+}
+
+function Dot(): JSX.Element {
+  return <span aria-hidden style={{ flexShrink: 0, opacity: 0.5 }}>·</span>;
 }
 
 /**

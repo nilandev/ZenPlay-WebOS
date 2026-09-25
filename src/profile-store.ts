@@ -1,4 +1,4 @@
-import type { ContinueWatchingEntry, FavoriteEntry, FavoriteKind, Profile, WatchHistoryEntry } from "@core";
+import { migrateAvatarUrl, type ContinueWatchingEntry, type FavoriteEntry, type FavoriteKind, type Profile, type WatchHistoryEntry } from "@core";
 import { removeKidsProfileRules } from "./parental-store.js";
 
 const PROFILES_KEY = "iptv.profiles.v1";
@@ -20,7 +20,17 @@ function readJson<T>(key: string, fallback: T): T {
 }
 
 export function loadProfiles(): Profile[] {
-  return readJson<Profile[]>(PROFILES_KEY, []);
+  const stored = readJson<Profile[]>(PROFILES_KEY, []);
+  // Old static avatars move to their animated counterparts, saved once so this only ever runs one time.
+  const profiles = stored.map((p) => ({ ...p, avatarUrl: migrateAvatarUrl(p.avatarUrl) }));
+  if (profiles.some((p, i) => p.avatarUrl !== stored[i].avatarUrl)) {
+    try {
+      saveProfiles(profiles);
+    } catch {
+      // Storage unavailable — the mapping still applies on every read.
+    }
+  }
+  return profiles;
 }
 
 export function saveProfiles(profiles: Profile[]): void {

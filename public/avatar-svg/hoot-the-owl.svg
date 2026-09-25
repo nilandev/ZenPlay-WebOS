@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512"><title>Hoot</title><defs><clipPath id="clip-hoot-the-owl"><circle cx="100" cy="100" r="100"/></clipPath></defs><g clip-path="url(#clip-hoot-the-owl)">
+<rect width="200" height="200" fill="#5E60CE"/>
+<circle cx="30" cy="36" r="12" fill="#FFE66D"/>
+<g><animateTransform attributeName="transform" type="rotate" values="-6 100 170;6 100 170;-6 100 170" dur="3s" begin="0s" repeatCount="indefinite"/>
+ <polygon points="50,62 40,24 78,48" fill="#7A4A26"/><polygon points="150,62 160,24 122,48" fill="#7A4A26"/>
+ <ellipse cx="100" cy="140" rx="64" ry="70" fill="#A1683A"/>
+ <ellipse cx="100" cy="166" rx="38" ry="38" fill="#E8C39E"/>
+ <path d="M86 156 l6 6 l6 -6 M104 156 l6 6 l6 -6 M94 172 l6 6 l6 -6" stroke="#C9A27A" stroke-width="3" fill="none"/>
+ <ellipse cx="100" cy="95" rx="60" ry="52" fill="#A1683A"/>
+ <circle cx="76" cy="92" r="26" fill="#F3DFC1"/><circle cx="124" cy="92" r="26" fill="#F3DFC1"/>
+ <g transform="translate(76 92)"><g><animateTransform attributeName="transform" type="scale" values="1 1;1 1;1 0.08;1 1" keyTimes="0;0.9;0.95;1" dur="4.2s" begin="0s" repeatCount="indefinite"/><circle r="11" fill="#222"/><circle cx="4" cy="-4" r="3.5" fill="#fff"/></g></g><g transform="translate(124 92)"><g><animateTransform attributeName="transform" type="scale" values="1 1;1 1;1 0.08;1 1" keyTimes="0;0.9;0.95;1" dur="4.2s" begin="0s" repeatCount="indefinite"/><circle r="11" fill="#222"/><circle cx="4" cy="-4" r="3.5" fill="#fff"/></g></g>
+ <circle cx="76" cy="92" r="22" fill="none" stroke="#222" stroke-width="5"/>
+ <circle cx="124" cy="92" r="22" fill="none" stroke="#222" stroke-width="5"/>
+ <line x1="97" y1="90" x2="103" y2="90" stroke="#222" stroke-width="5"/>
+ <polygon points="92,110 108,110 100,126" fill="#FFB703"/>
+</g>
+<rect x="0" y="184" width="200" height="16" rx="6" fill="#6B3E1F"/>
+<ellipse cx="170" cy="182" rx="14" ry="7" fill="#52B788" transform="rotate(-20 170 182)"/></g></svg>

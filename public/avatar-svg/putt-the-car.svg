@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512"><title>Putt</title><defs><clipPath id="clip-putt-the-car"><circle cx="100" cy="100" r="100"/></clipPath></defs><g clip-path="url(#clip-putt-the-car)">
+<rect width="200" height="200" fill="#8ECAE6"/>
+<circle cx="28" cy="30" r="14" fill="#fff" opacity=".8"/><circle cx="44" cy="32" r="10" fill="#fff" opacity=".8"/>
+<rect x="0" y="172" width="200" height="28" fill="#4A4E69"/>
+<g><animateTransform attributeName="transform" type="translate" values="0 0;-44 0" dur="0.6s" repeatCount="indefinite"/><rect x="-40" y="189" width="22" height="4" rx="2" fill="#FFF3B0"/><rect x="4" y="189" width="22" height="4" rx="2" fill="#FFF3B0"/><rect x="48" y="189" width="22" height="4" rx="2" fill="#FFF3B0"/><rect x="92" y="189" width="22" height="4" rx="2" fill="#FFF3B0"/><rect x="136" y="189" width="22" height="4" rx="2" fill="#FFF3B0"/><rect x="180" y="189" width="22" height="4" rx="2" fill="#FFF3B0"/><rect x="224" y="189" width="22" height="4" rx="2" fill="#FFF3B0"/></g>
+<circle cx="40" cy="176" r="6" fill="#fff" opacity="0"><animate attributeName="cx" values="40;8" dur="1.5s" begin="0s" repeatCount="indefinite"/><animate attributeName="r" values="4;11" dur="1.5s" begin="0s" repeatCount="indefinite"/><animate attributeName="opacity" values=".9;0" dur="1.5s" begin="0s" repeatCount="indefinite"/></circle><circle cx="40" cy="176" r="6" fill="#fff" opacity="0"><animate attributeName="cx" values="40;8" dur="1.5s" begin=".75s" repeatCount="indefinite"/><animate attributeName="r" values="4;11" dur="1.5s" begin=".75s" repeatCount="indefinite"/><animate attributeName="opacity" values=".9;0" dur="1.5s" begin=".75s" repeatCount="indefinite"/></circle>
+<rect x="44" y="148" width="24" height="34" rx="7" fill="#22223B"/><rect x="132" y="148" width="24" height="34" rx="7" fill="#22223B"/>
+<g><animateTransform attributeName="transform" type="translate" values="0 0;0 -3;0 0" dur="0.5s" repeatCount="indefinite"/>
+ <path d="M62 110 Q66 56 100 56 Q134 56 138 110Z" fill="#FFD60A"/>
+ <path d="M73 106 Q77 70 100 70 Q123 70 127 106Z" fill="#BDE0FE"/>
+ <path d="M84 100 L96 76" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".7"/>
+ <ellipse cx="30" cy="104" rx="10" ry="7" fill="#FFD60A"/><ellipse cx="170" cy="104" rx="10" ry="7" fill="#FFD60A"/>
+ <rect x="34" y="104" width="132" height="62" rx="24" fill="#FFD60A"/>
+ <g transform="translate(66 128)"><g><animateTransform attributeName="transform" type="scale" values="1 1;1 1;1 0.08;1 1" keyTimes="0;0.9;0.95;1" dur="3.4s" begin="0s" repeatCount="indefinite"/><circle r="14" fill="#fff" stroke="#E0A800" stroke-width="3"/><circle cx="2" r="7" fill="#1d1d1d"/><circle cx="5" cy="-3" r="2.5" fill="#fff"/></g></g><g transform="translate(134 128)"><g><animateTransform attributeName="transform" type="scale" values="1 1;1 1;1 0.08;1 1" keyTimes="0;0.9;0.95;1" dur="3.4s" begin="0s" repeatCount="indefinite"/><circle r="14" fill="#fff" stroke="#E0A800" stroke-width="3"/><circle cx="2" r="7" fill="#1d1d1d"/><circle cx="5" cy="-3" r="2.5" fill="#fff"/></g></g>
+ <path d="M80 140 Q100 162 120 140Z" fill="#3D2C2E"/>
+ <ellipse cx="100" cy="151" rx="8" ry="4.5" fill="#FF8FA3"/>
+ <ellipse cx="52" cy="146" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/><ellipse cx="148" cy="146" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/>
+ <rect x="84" y="158" width="32" height="8" rx="3" fill="#fff" opacity=".85"/>
+</g></g></svg>

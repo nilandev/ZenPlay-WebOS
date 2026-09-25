@@ -8,7 +8,7 @@ import { __resetEpgDbForTests } from "../core/storage/epg-db.js";
 import { __resetSyncStoreForTests, useSyncStore } from "../sync/sync-store.js";
 import { useFocusStore } from "../ui/focus/focus-store.js";
 import { PROFILE_SWITCHER_FOCUS_ID } from "../ui/components/ProfileSwitcher.js";
-import { __resetHomeFocusMemoryForTests, HomeScreen } from "./HomeScreen.js";
+import { __resetHomeFocusMemoryForTests, describeExpiry, HomeScreen } from "./HomeScreen.js";
 
 // jsdom doesn't implement scrollIntoView; Focusable calls it whenever a node becomes focused.
 beforeEach(() => {
@@ -306,5 +306,39 @@ describe("HomeScreen playlist switching", () => {
     press("Enter"); // OK on the active row
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(onSelectSource).not.toHaveBeenCalled();
+  });
+});
+
+describe("describeExpiry", () => {
+  const now = Date.parse("2026-09-25T12:00:00Z");
+  it("reads as a date when far off, a countdown in the last month, and red once expired", () => {
+    expect(describeExpiry(new Date("2027-09-15T12:00:00Z"), now)).toMatchObject({ tone: "ok", label: expect.stringMatching(/^Expires /) });
+    expect(describeExpiry(new Date("2026-10-07T12:00:00Z"), now)).toEqual({ tone: "soon", label: "Expires in 12 days" });
+    expect(describeExpiry(new Date("2026-09-26T12:00:00Z"), now)).toEqual({ tone: "soon", label: "Expires tomorrow" });
+    expect(describeExpiry(new Date("2026-09-01T12:00:00Z"), now)).toMatchObject({ tone: "expired", label: expect.stringMatching(/^Expired /) });
+    expect(describeExpiry(null, now)).toEqual({ tone: "ok", label: "No expiry" });
+    expect(describeExpiry(undefined, now)).toEqual({ tone: "unknown", label: "Expiry unknown" });
+  });
+});
+
+describe("HomeScreen footer playlist name", () => {
+  beforeEach(() => {
+    clearAllCachedContent();
+    __resetHomeFocusMemoryForTests();
+    useFocusStore.getState().clearGraph("home-grid");
+  });
+  afterEach(() => useFocusStore.getState().clearGraph("home-grid"));
+
+  it("names the playlist in the footer only when there's no playlist chip", () => {
+    const status = () => screen.getByRole("status", { name: "Current playlist" });
+    const { unmount } = render(<HomeScreen source={source} platform="web" profile={profile} onSelectTile={() => {}} onOpenProfiles={() => {}} />);
+    expect(status().textContent).toContain(source.name);
+    unmount();
+
+    const other = { ...source, id: "other", name: "Second List" };
+    render(
+      <HomeScreen source={source} sources={[source, other]} onSelectSource={() => {}} platform="web" profile={profile} onSelectTile={() => {}} onOpenProfiles={() => {}} />,
+    );
+    expect(status().textContent).not.toContain(source.name);
   });
 });

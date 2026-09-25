@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512"><title>Snap</title><defs><clipPath id="clip-snap-the-crocodile"><circle cx="100" cy="100" r="100"/></clipPath></defs><g clip-path="url(#clip-snap-the-crocodile)">
+<rect width="200" height="200" fill="#FFD6A5"/>
+<circle cx="160" cy="44" r="24" fill="#FFADAD"/>
+<g><animateTransform attributeName="transform" type="rotate" values="-3 100 160;3 100 160;-3 100 160" dur="2.4s" begin="0s" repeatCount="indefinite"/>
+ <circle cx="68" cy="72" r="22" fill="#5DAE4B"/><circle cx="132" cy="72" r="22" fill="#5DAE4B"/>
+ <ellipse cx="100" cy="112" rx="72" ry="48" fill="#5DAE4B"/>
+ <g fill="#4A9A3A"><ellipse cx="100" cy="70" rx="6" ry="4"/><ellipse cx="88" cy="78" rx="5" ry="3"/><ellipse cx="112" cy="78" rx="5" ry="3"/></g>
+ <ellipse cx="100" cy="116" rx="62" ry="28" fill="#74C862"/>
+ <ellipse cx="90" cy="100" rx="4" ry="3" fill="#2F6B24"/><ellipse cx="110" cy="100" rx="4" ry="3" fill="#2F6B24"/>
+ <g transform="translate(68 70)"><g><animateTransform attributeName="transform" type="scale" values="1 1;1 1;1 0.08;1 1" keyTimes="0;0.9;0.95;1" dur="3.8s" begin="0s" repeatCount="indefinite"/><circle r="13" fill="#fff"/><ellipse rx="6" ry="9" fill="#1d1d1d"/><circle cx="3" cy="-4" r="2.5" fill="#fff"/></g></g><g transform="translate(132 70)"><g><animateTransform attributeName="transform" type="scale" values="1 1;1 1;1 0.08;1 1" keyTimes="0;0.9;0.95;1" dur="3.8s" begin="0s" repeatCount="indefinite"/><circle r="13" fill="#fff"/><ellipse rx="6" ry="9" fill="#1d1d1d"/><circle cx="3" cy="-4" r="2.5" fill="#fff"/></g></g>
+ <path d="M45 120 Q100 160 155 120 Q100 138 45 120Z" fill="#7A1F2B"/>
+ <polygon points="55,123 60,131 65,123" fill="#fff"/><polygon points="71,126 76,134 81,126" fill="#fff"/><polygon points="87,128 92,136 97,128" fill="#fff"/><polygon points="103,128 108,136 113,128" fill="#fff"/><polygon points="119,126 124,134 129,126" fill="#fff"/><polygon points="135,123 140,131 145,123" fill="#fff"/>
+ <ellipse cx="40" cy="128" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/><ellipse cx="160" cy="128" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/>
+</g>
+<g><animateTransform attributeName="transform" type="translate" values="0 0;-40 0;0 0" dur="3s" repeatCount="indefinite"/>
+ <path d="M-60 168 Q-50 160 -40 168 Q-30 176 -20 168 Q-10 160 0 168 Q10 176 20 168 Q30 160 40 168 Q50 176 60 168 Q70 160 80 168 Q90 176 100 168 Q110 160 120 168 Q130 176 140 168 Q150 160 160 168 Q170 176 180 168 Q190 160 200 168 Q210 176 220 168 Q230 160 240 168 Q250 176 260 168 L260 200 L-60 200Z" fill="#48CAE4" opacity=".92"/></g></g></svg>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512"><title>Berry</title><defs><clipPath id="clip-berry-the-strawberry"><circle cx="100" cy="100" r="100"/></clipPath></defs><g clip-path="url(#clip-berry-the-strawberry)">
+<rect width="200" height="200" fill="#A0E7E5"/><circle cx="20" cy="20" r="5" fill="#C4F1EF"/><circle cx="180" cy="30" r="5" fill="#C4F1EF"/><circle cx="30" cy="120" r="5" fill="#C4F1EF"/><circle cx="175" cy="110" r="5" fill="#C4F1EF"/><circle cx="20" cy="185" r="5" fill="#C4F1EF"/><circle cx="180" cy="190" r="5" fill="#C4F1EF"/>
+<g transform="translate(100 188)"><g><animateTransform attributeName="transform" type="scale" values="1 1;1.05 0.95;0.98 1.03;1 1" dur="1.2s" repeatCount="indefinite"/><g transform="translate(-100 -188)">
+ <path d="M100 188 Q38 165 44 98 Q52 56 100 60 Q148 56 156 98 Q162 165 100 188Z" fill="#FF4D6D"/>
+ <ellipse cx="62" cy="90" rx="2.5" ry="4" fill="#FFE066"/><ellipse cx="138" cy="88" rx="2.5" ry="4" fill="#FFE066"/><ellipse cx="56" cy="125" rx="2.5" ry="4" fill="#FFE066"/><ellipse cx="144" cy="128" rx="2.5" ry="4" fill="#FFE066"/><ellipse cx="75" cy="150" rx="2.5" ry="4" fill="#FFE066"/><ellipse cx="125" cy="152" rx="2.5" ry="4" fill="#FFE066"/><ellipse cx="100" cy="165" rx="2.5" ry="4" fill="#FFE066"/><ellipse cx="88" cy="82" rx="2.5" ry="4" fill="#FFE066"/><ellipse cx="112" cy="80" rx="2.5" ry="4" fill="#FFE066"/><ellipse cx="70" cy="122" rx="2.5" ry="4" fill="#FFE066"/>
+ <g fill="#52B788"><polygon points="100,66 70,52 88,50"/><polygon points="100,66 130,52 112,50"/><polygon points="100,66 86,38 100,46"/><polygon points="100,66 114,38 100,46"/></g>
+ <rect x="97" y="26" width="6" height="18" rx="3" fill="#40916C"/>
+ <path d="M72 104 Q80 96 88 104" stroke="#2A0A12" stroke-width="4" fill="none" stroke-linecap="round"/>
+ <ellipse cx="119" cy="102" rx="7" ry="9" fill="#2A0A12"><animate attributeName="ry" values="9;9;1;9" keyTimes="0;0.9;0.95;1" dur="3s" begin="0s" repeatCount="indefinite"/></ellipse>
+ <circle cx="121" cy="98" r="2.5" fill="#fff"><animate attributeName="opacity" values="1;1;0;1" keyTimes="0;0.9;0.95;1" dur="3s" begin="0s" repeatCount="indefinite"/></circle>
+ <path d="M84 120 Q100 138 116 120Z" fill="#7A1F2B"/>
+ <ellipse cx="105" cy="129" rx="6" ry="5" fill="#FF8FA3"/>
+ <ellipse cx="64" cy="118" rx="9" ry="6" fill="#FFB3C1" opacity=".65"/><ellipse cx="136" cy="118" rx="9" ry="6" fill="#FFB3C1" opacity=".65"/></g></g></g></g></svg>

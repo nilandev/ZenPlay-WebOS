@@ -4,6 +4,7 @@ import {
   clearWatchHistory,
   deleteProfile,
   getResumePoint,
+  loadProfiles,
   loadWatchHistory,
   recordWatchHistory,
   removeWatchHistory,
@@ -84,5 +85,23 @@ describe("watch history", () => {
     expect(loadWatchHistory("p1", "s1")).toEqual([]);
     deleteProfile("p2");
     expect(loadWatchHistory("p2", "s1")).toEqual([]);
+  });
+});
+
+describe("animated avatars", () => {
+  it("moves profiles saved with an old static avatar onto the animated set, and saves it", async () => {
+    const { AVATAR_CHOICES } = await import("@core");
+    localStorage.setItem(
+      "iptv.profiles.v1",
+      JSON.stringify([
+        { id: "a", name: "A", avatarUrl: "avatar/toon_1.png" },
+        { id: "b", name: "B", avatarUrl: "avatar/toon_10.png" },
+        { id: "c", name: "C", avatarUrl: AVATAR_CHOICES[4] },
+      ]),
+    );
+    const profiles = loadProfiles();
+    expect(profiles.map((p) => p.avatarUrl)).toEqual([AVATAR_CHOICES[0], AVATAR_CHOICES[9], AVATAR_CHOICES[4]]);
+    expect(profiles.every((p) => p.avatarUrl.endsWith(".svg"))).toBe(true);
+    expect(localStorage.getItem("iptv.profiles.v1")).not.toContain("toon_");
   });
 });

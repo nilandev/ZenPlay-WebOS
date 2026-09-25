@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512"><title>Rexy</title><defs><clipPath id="clip-rexy-the-dino"><circle cx="100" cy="100" r="100"/></clipPath></defs><g clip-path="url(#clip-rexy-the-dino)">
+<rect width="200" height="200" fill="#FFD166"/>
+<circle cx="168" cy="32" r="22" fill="#FFE7A3"/>
+<g><animateTransform attributeName="transform" type="translate" values="0 0;0 -3;0 0" dur="2s" repeatCount="indefinite"/>
+ <g fill="#2E9E5B"><polygon points="68,56 76,30 90,48"/><polygon points="90,46 101,20 113,46"/><polygon points="112,48 125,30 133,58"/></g>
+ <path d="M38 200 Q42 145 100 145 Q158 145 162 200Z" fill="#5BC97A"/>
+ <path d="M76 200 Q80 166 100 166 Q120 166 124 200Z" fill="#D4F5C2"/>
+ <g><animateTransform attributeName="transform" type="rotate" values="-28 55 162;28 55 162;-28 55 162" dur="0.8s" begin="0s" repeatCount="indefinite"/><rect x="48" y="158" width="14" height="24" rx="7" fill="#46B066"/></g>
+ <rect x="138" y="160" width="14" height="22" rx="7" fill="#46B066"/>
+ <ellipse cx="100" cy="95" rx="62" ry="52" fill="#5BC97A"/>
+ <ellipse cx="100" cy="118" rx="46" ry="27" fill="#7EDC98"/>
+ <circle cx="86" cy="106" r="3" fill="#2E7D4A"/><circle cx="114" cy="106" r="3" fill="#2E7D4A"/>
+ <circle cx="70" cy="78" r="15" fill="#fff"/><circle cx="130" cy="78" r="15" fill="#fff"/>
+ <ellipse cx="73" cy="80" rx="7" ry="8" fill="#1d1d1d"><animate attributeName="ry" values="8;8;1;8" keyTimes="0;0.9;0.95;1" dur="4s" begin="0s" repeatCount="indefinite"/></ellipse>
+ <ellipse cx="127" cy="80" rx="7" ry="8" fill="#1d1d1d"><animate attributeName="ry" values="8;8;1;8" keyTimes="0;0.9;0.95;1" dur="4s" begin="0s" repeatCount="indefinite"/></ellipse>
+ <circle cx="76" cy="76" r="2.5" fill="#fff"><animate attributeName="opacity" values="1;1;0;1" keyTimes="0;0.9;0.95;1" dur="4s" begin="0s" repeatCount="indefinite"/></circle><circle cx="130" cy="76" r="2.5" fill="#fff"><animate attributeName="opacity" values="1;1;0;1" keyTimes="0;0.9;0.95;1" dur="4s" begin="0s" repeatCount="indefinite"/></circle>
+ <path d="M72 122 Q100 150 128 122Z" fill="#7A1F2B"/>
+ <polygon points="80,122 85,131 90,123" fill="#fff"/><polygon points="110,123 115,131 120,122" fill="#fff"/>
+ <ellipse cx="50" cy="110" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/><ellipse cx="150" cy="110" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/>
+</g></g></svg>

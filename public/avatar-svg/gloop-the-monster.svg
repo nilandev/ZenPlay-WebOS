@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512"><title>Gloop</title><defs><clipPath id="clip-gloop-the-monster"><circle cx="100" cy="100" r="100"/></clipPath></defs><g clip-path="url(#clip-gloop-the-monster)">
+<rect width="200" height="200" fill="#FF6B6B"/>
+<g><animateTransform attributeName="transform" type="rotate" values="-3 100 195;3 100 195;-3 100 195" dur="1.5s" begin="0s" repeatCount="indefinite"/>
+ <path d="M60 58 Q48 22 72 28 Q72 45 78 56Z" fill="#FFF3B0"/>
+ <path d="M140 58 Q152 22 128 28 Q128 45 122 56Z" fill="#FFF3B0"/>
+ <circle cx="100" cy="118" r="72" fill="#3A86FF"/>
+ <circle cx="52" cy="128" r="6" fill="#2B6FE0"/><circle cx="148" cy="145" r="9" fill="#2B6FE0"/><circle cx="152" cy="104" r="4" fill="#2B6FE0"/>
+ <g transform="translate(100 96)"><g><animateTransform attributeName="transform" type="scale" values="1 1;1 1;1 0.08;1 1" keyTimes="0;0.9;0.95;1" dur="3.2s" begin="0s" repeatCount="indefinite"/><circle r="28" fill="#fff"/><circle r="15" fill="#FFBE0B"/><circle r="7" fill="#1d1d1d"/><circle cx="5" cy="-6" r="4" fill="#fff"/></g></g>
+ <path d="M58 138 Q100 184 142 138 Q100 154 58 138Z" fill="#1A1A40"/>
+ <polygon points="78,144 84,156 90,147" fill="#fff"/><polygon points="110,147 116,156 122,144" fill="#fff"/>
+ <ellipse cx="56" cy="128" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/><ellipse cx="144" cy="128" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/>
+</g></g></svg>
