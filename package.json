@@ -2,6 +2,29 @@
   "name": "zenplay",
   "private": true,
   "version": "0.1.0",
+  "description": "An open-source IPTV player for LG webOS TV: Live TV, EPG, movies and series from your own Xtream Codes or M3U playlists.",
+  "keywords": [
+    "iptv",
+    "webos",
+    "lg-tv",
+    "smart-tv",
+    "m3u",
+    "xtream-codes",
+    "epg",
+    "xmltv",
+    "hls",
+    "react",
+    "typescript"
+  ],
+  "homepage": "https://github.com/nilandev/zenplay#readme",
+  "bugs": {
+    "url": "https://github.com/nilandev/zenplay/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nilandev/zenplay.git"
+  },
+  "author": "Nilanchala <ask.nilan@gmail.com>",
   "license": "MIT",
   "type": "module",
   "engines": {

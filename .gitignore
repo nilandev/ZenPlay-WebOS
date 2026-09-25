@@ -9,7 +9,17 @@ webos-dist/
 *.ipk
 .env
 .env.local
+.env.*.local
 coverage/
+
+# Editor / local tooling
+.idea/
+.claude/settings.local.json
 
 # Stray headless-Chrome profile from local screenshot tooling
 undefined/
+
+# Internal planning notes (kept local, not published)
+docs/
+PLAN.md
+PHASE2.md
