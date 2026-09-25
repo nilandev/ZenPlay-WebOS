@@ -17,6 +17,7 @@ import {
 import type { FocusNode } from "@ui";
 import { loadPlaylistInfo } from "../content-loader.js";
 import { syncSource } from "../sync/sync-manager.js";
+import { PLAYLIST_CHIP_ID, PlaylistChip, PlaylistPicker } from "./PlaylistPicker.js";
 import { getSourceSyncState, useSourceSyncState } from "../sync/sync-store.js";
 import { describeRunningSync, describeSyncFailure, formatCounts, formatSyncedAgo, readSyncSummary, useSyncSummary } from "../sync/sync-summary.js";
 import { useCachedContent } from "../use-cached-content.js";
@@ -88,25 +89,38 @@ export function __resetHomeFocusMemoryForTests(): void {
 }
 
 /**
- * Header (profile switcher) and both tile rows as one focus graph. Left/Right move within a row, Up/Down move between rows within the
- * same column; Up from the primary row reaches the profile switcher and
- * Down from the header reaches the first tile.
+ * Header (profile chip, and the playlist chip when there's more than one
+ * playlist) and both tile rows as one focus graph. Left/Right move within
+ * a row, Up/Down move between rows within the same column; Up from the
+ * primary row reaches the header chip on that side (the playlist chip sits
+ * over the right half) and Down from either chip reaches the tiles.
  */
-function buildHomeFocusGraph(onOpenProfiles: () => void, onRefresh: () => void, onSelectTile: (id: string) => void): FocusNode[] {
+function buildHomeFocusGraph(
+  onOpenProfiles: () => void,
+  onRefresh: () => void,
+  onSelectTile: (id: string) => void,
+  onOpenPlaylists: (() => void) | null,
+): FocusNode[] {
   // Both rows are the same width with the same column count, so Up/Down
   // simply link the tiles in the same column.
   const primaryIds = PRIMARY_TILES.map((tile) => tile.id);
   const secondaryIds = SECONDARY_TILES.map((tile) => tile.id);
 
+  const hasPlaylistChip = onOpenPlaylists !== null;
   const profileNode: FocusNode = {
     id: PROFILE_SWITCHER_FOCUS_ID,
-    neighbors: { down: primaryIds[0] },
+    neighbors: { down: primaryIds[0], right: hasPlaylistChip ? PLAYLIST_CHIP_ID : undefined },
     onSelect: onOpenProfiles,
   };
+  const headerNodes: FocusNode[] = hasPlaylistChip
+    ? [profileNode, { id: PLAYLIST_CHIP_ID, neighbors: { left: PROFILE_SWITCHER_FOCUS_ID, down: primaryIds[primaryIds.length - 1] }, onSelect: onOpenPlaylists }]
+    : [profileNode];
+  // Up from a tile reaches the header chip above its half of the screen.
+  const headerAbove = (index: number) => (hasPlaylistChip && index >= primaryIds.length / 2 ? PLAYLIST_CHIP_ID : PROFILE_SWITCHER_FOCUS_ID);
 
   const primaryNodes: FocusNode[] = primaryIds.map((id, index) => ({
     id,
-    neighbors: { left: primaryIds[index - 1], right: primaryIds[index + 1], up: PROFILE_SWITCHER_FOCUS_ID, down: secondaryIds[index] },
+    neighbors: { left: primaryIds[index - 1], right: primaryIds[index + 1], up: headerAbove(index), down: secondaryIds[index] },
     onSelect: () => onSelectTile(id),
   }));
 
@@ -116,11 +130,14 @@ function buildHomeFocusGraph(onOpenProfiles: () => void, onRefresh: () => void, 
     onSelect: () => (id === REFRESH_TILE_ID ? onRefresh() : onSelectTile(id)),
   }));
 
-  return [profileNode, ...primaryNodes, ...secondaryNodes];
+  return [...headerNodes, ...primaryNodes, ...secondaryNodes];
 }
 
 export interface HomeScreenProps {
   source: PlaylistSource;
+  /** Every configured playlist — the header offers switching between them when there's more than one. */
+  sources?: PlaylistSource[];
+  onSelectSource?: (sourceId: string) => void;
   platform: PlatformId;
   profile: Profile;
   onSelectTile: (tileId: string) => void;
@@ -144,7 +161,7 @@ export interface HomeScreenProps {
  * "Syncing Movies…", a failure) from sync-store.ts and the tables' own sync
  * records — local reads only; Home never triggers a fetch of its own.
  */
-export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProfiles }: HomeScreenProps): JSX.Element {
+export function HomeScreen({ source, sources = [], onSelectSource, platform, profile, onSelectTile, onOpenProfiles }: HomeScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
 
@@ -218,15 +235,42 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
     [onSelectTile],
   );
 
+  // Playlist switching: a header chip, shown only when there's something to switch to.
+  const canSwitchPlaylist = sources.length > 1 && onSelectSource !== undefined;
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const openPicker = useCallback(() => setIsPickerOpen(true), []);
+  // Back on the chip once the picker closes — applied after the graph is rebuilt (focus() ignores ids not in it).
+  const refocusChipRef = useRef(false);
+  const closePicker = useCallback(() => {
+    refocusChipRef.current = true;
+    setIsPickerOpen(false);
+  }, []);
+  const selectPlaylist = useCallback(
+    (sourceId: string) => {
+      setIsPickerOpen(false);
+      onSelectSource?.(sourceId);
+    },
+    [onSelectSource],
+  );
+
   useEffect(() => {
-    setGraph(SCOPE, buildHomeFocusGraph(onOpenProfiles, handleRefresh, handleSelectTile), lastSelectedTileId);
-    return () => clearGraph(SCOPE);
-  }, [setGraph, clearGraph, onOpenProfiles, handleRefresh, handleSelectTile]);
+    // The picker takes the D-pad while open: nothing behind it is reachable.
+    if (isPickerOpen) {
+      setGraph(SCOPE, []);
+      return;
+    }
+    setGraph(SCOPE, buildHomeFocusGraph(onOpenProfiles, handleRefresh, handleSelectTile, canSwitchPlaylist ? openPicker : null), lastSelectedTileId);
+    if (refocusChipRef.current) {
+      refocusChipRef.current = false;
+      useFocusStore.getState().focus(PLAYLIST_CHIP_ID);
+    }
+  }, [setGraph, onOpenProfiles, handleRefresh, handleSelectTile, canSwitchPlaylist, openPicker, isPickerOpen]);
+  useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
   // Tiles and the profile switcher carry their own node onSelect (see
   // buildHomeFocusGraph), which the focus store's select() invokes — so the
   // only screen-level handler is Back, which exits the app.
-  useRemoteInput(platform, { onBack: handleBack });
+  useRemoteInput(platform, { onBack: () => (isPickerOpen ? closePicker() : handleBack()) });
 
   return (
     // Animated even on TVs: the mesh drifts on the compositor only (see
@@ -260,6 +304,11 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
         <div style={{ position: "absolute", left: "50%", top: 0, transform: "translateX(-50%)" }}>
           <Clock />
         </div>
+        {canSwitchPlaylist && (
+          <Focusable id={PLAYLIST_CHIP_ID} style={{ width: "auto", height: "auto" }}>
+            <PlaylistChip source={source} onOpen={openPicker} />
+          </Focusable>
+        )}
       </header>
 
       <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: MENU_GAP }}>
@@ -301,6 +350,7 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
       </footer>
     </div>
     {toast && <Toast message={toast.message} tone={toast.tone} onDismiss={dismissToast} />}
+    {isPickerOpen && <PlaylistPicker sources={sources} activeSourceId={source.id} onSelect={selectPlaylist} onClose={closePicker} />}
     </MeshBackground>
   );
 }

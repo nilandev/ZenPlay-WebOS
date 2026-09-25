@@ -44,17 +44,17 @@ describe("SettingsScreen (App Settings)", () => {
     for (const scope of ["settings", "settings-playlists", "settings-playlists-confirm", "add-source"]) useFocusStore.getState().clearGraph(scope);
   });
 
-  it("is one page: Playlists, Content Settings, Playback — no Manage Playlists row or side pane", () => {
+  it("is one page: a Playlist section (the cards, then the update settings) and Playback — no Manage Playlists row or side pane", () => {
     renderSettings();
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Playlists", "Content Settings", "Playback"]);
+    expect(headings).toEqual(["Playlist", "Playback"]);
     expect(screen.getByText("My Provider")).toBeDefined();
     expect(screen.getByText("Sports Playlist")).toBeDefined();
     expect(screen.queryByText("Manage Playlists")).toBeNull();
-    // Content Settings holds the four update settings, in order.
-    const content = screen.getByRole("heading", { name: "Content Settings" }).parentElement!;
-    const labels = ["Automatic Refresh", "Update Playlist on Launch", "Guide Sync Interval", "Days of Guide to Keep"];
-    const positions = labels.map((label) => content.textContent!.indexOf(label));
+    // The Playlist section holds the four update settings under the cards, in order.
+    const section = screen.getByRole("heading", { name: "Playlist" }).parentElement!;
+    const labels = ["Sports Playlist", "Automatic Refresh", "Update Playlist on Launch", "Guide Sync Interval", "Days of Guide to Keep"];
+    const positions = labels.map((label) => section.textContent!.indexOf(label));
     expect(positions.every((p) => p >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
   });

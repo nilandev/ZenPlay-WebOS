@@ -1,12 +1,13 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource, Profile } from "@core";
-import { clearAllCachedContent, getCachedContent } from "../content-cache.js";
+import { clearAllCachedContent } from "../content-cache.js";
 import { __clearLiveDbForTests, __resetLiveDbForTests, openLiveDb, putLiveSyncMeta } from "../core/storage/live-db.js";
 import { __resetCatalogDbForTests } from "../core/storage/catalog-db.js";
 import { __resetEpgDbForTests } from "../core/storage/epg-db.js";
 import { __resetSyncStoreForTests, useSyncStore } from "../sync/sync-store.js";
 import { useFocusStore } from "../ui/focus/focus-store.js";
+import { PROFILE_SWITCHER_FOCUS_ID } from "../ui/components/ProfileSwitcher.js";
 import { __resetHomeFocusMemoryForTests, HomeScreen } from "./HomeScreen.js";
 
 // jsdom doesn't implement scrollIntoView; Focusable calls it whenever a node becomes focused.
@@ -234,5 +235,76 @@ describe("HomeScreen sync status", () => {
     );
     expect(useFocusStore.getState().focusedId).toBe("refresh");
     expect(screen.getByText("Last refresh failed · press Refresh Playlist to retry")).toBeTruthy();
+  });
+});
+
+describe("HomeScreen playlist switching", () => {
+  const second: PlaylistSource = { kind: "m3u-url", id: "src-2", name: "Sports Playlist", url: "http://example.com/list.m3u" };
+
+  beforeEach(() => {
+    clearAllCachedContent();
+    __resetHomeFocusMemoryForTests();
+    useFocusStore.getState().clearGraph("home-grid");
+    Element.prototype.scrollIntoView = () => {};
+  });
+  afterEach(() => {
+    useFocusStore.getState().clearGraph("home-grid");
+    useFocusStore.getState().clearGraph("home-playlist-picker");
+  });
+
+  function renderWithPlaylists(sources: PlaylistSource[], onSelectSource = vi.fn()) {
+    render(
+      <HomeScreen source={source} sources={sources} onSelectSource={onSelectSource} platform="web" profile={profile} onSelectTile={() => {}} onOpenProfiles={() => {}} />,
+    );
+    return onSelectSource;
+  }
+
+  it("shows no playlist chip with a single playlist", () => {
+    renderWithPlaylists([source]);
+    expect(screen.queryByRole("button", { name: /Switch playlist/ })).toBeNull();
+    expect(useFocusStore.getState().nodes["home-playlist-chip"]).toBeUndefined();
+  });
+
+  it("with more than one, the header chip names the active playlist and sits above the right-hand tiles", () => {
+    renderWithPlaylists([source, second]);
+    expect(screen.getByRole("button", { name: "Playlist: My Source. Switch playlist" })).toBeTruthy();
+    act(() => useFocusStore.getState().focus("guide"));
+    press("ArrowUp");
+    expect(useFocusStore.getState().focusedId).toBe("home-playlist-chip");
+    press("ArrowLeft");
+    expect(useFocusStore.getState().focusedId).toBe(PROFILE_SWITCHER_FOCUS_ID);
+    act(() => useFocusStore.getState().focus("live"));
+    press("ArrowUp");
+    expect(useFocusStore.getState().focusedId).toBe(PROFILE_SWITCHER_FOCUS_ID); // the left half still goes to the profile chip
+  });
+
+  it("the chip opens a picker on the active playlist; OK on another switches to it", () => {
+    const onSelectSource = renderWithPlaylists([source, second]);
+    act(() => useFocusStore.getState().focus("home-playlist-chip"));
+    press("Enter");
+
+    expect(screen.getByRole("dialog", { name: "Switch playlist" })).toBeTruthy();
+    expect(useFocusStore.getState().focusedId).toBe(`home-playlist-option:${source.id}`);
+    expect(screen.getAllByText(/Not downloaded yet/)).toHaveLength(2);
+    expect(useFocusStore.getState().nodes.live).toBeUndefined(); // nothing behind the picker is reachable
+
+    press("ArrowDown");
+    press("Enter");
+    expect(onSelectSource).toHaveBeenCalledWith("src-2");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Back (or OK on the active playlist) closes the picker without switching, back on the chip", () => {
+    const onSelectSource = renderWithPlaylists([source, second]);
+    act(() => useFocusStore.getState().focus("home-playlist-chip"));
+    press("Enter");
+    press("Escape");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(useFocusStore.getState().focusedId).toBe("home-playlist-chip");
+
+    press("Enter");
+    press("Enter"); // OK on the active row
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onSelectSource).not.toHaveBeenCalled();
   });
 });

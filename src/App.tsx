@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Channel, PlaylistSource, Profile, SeriesEpisode, WatchHistoryEntry } from "@core";
 import {
   addPlaylistSource,
+  forgetProfileSource,
   getActivePlaylistSourceId,
   loadPlaylistSources,
+  playlistForProfile,
+  rememberProfileSource,
   removePlaylistSource,
   setActivePlaylistSourceId,
 } from "./playlist-store.js";
@@ -128,13 +131,29 @@ export function App(): JSX.Element {
   // Bumped every time the player closes (live too), so Recently Watched re-reads what was just watched.
   const [historyVersion, setHistoryVersion] = useState(0);
 
+  /** Makes `profile` the active one, switching to the playlist it last used (see playlist-store's per-profile memory). */
+  function activateProfile(profile: Profile): void {
+    const remembered = playlistForProfile(profile.id, sources);
+    if (remembered && remembered !== activeSourceId) {
+      setActivePlaylistSourceId(remembered);
+      setActiveSourceIdState(remembered);
+    }
+    setActiveProfile(profile);
+  }
+
   useEffect(() => {
     const savedId = getActiveProfileId();
     const saved = savedId ? profiles.find((p) => p.id === savedId) : undefined;
-    if (saved) setActiveProfile(saved);
+    if (saved) activateProfile(saved);
     // Only re-check localStorage-persisted active profile once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Whatever playlist the active profile ends up on — picked on Home,
+  // switched in Settings, or newly added — is the one it opens on next time.
+  useEffect(() => {
+    if (activeProfile && activeSource) rememberProfileSource(activeProfile.id, activeSource.id);
+  }, [activeProfile, activeSource]);
 
   // Keeps the active source's data fresh — a launch sync a few seconds in,
   // then on an interval, on return from the background and when the network
@@ -202,7 +221,7 @@ export function App(): JSX.Element {
   }
 
   function handleSelectProfile(profile: Profile): void {
-    setActiveProfile(profile);
+    activateProfile(profile);
     setActiveProfileId(profile.id);
   }
 
@@ -212,6 +231,7 @@ export function App(): JSX.Element {
 
   function handleDeleteProfile(profileId: string): void {
     setProfiles(deleteProfile(profileId));
+    forgetProfileSource(profileId);
     if (getActiveProfileId() === profileId) clearActiveProfile();
   }
 
@@ -431,6 +451,8 @@ export function App(): JSX.Element {
     return (
       <HomeScreen
         source={activeSource}
+        sources={sources}
+        onSelectSource={handleSetActiveSource}
         platform={platform}
         profile={activeProfile}
         onSelectTile={(tileId) => {
