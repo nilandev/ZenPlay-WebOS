@@ -2,6 +2,10 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource, Profile } from "@core";
 import { clearAllCachedContent, getCachedContent } from "../content-cache.js";
+import { __clearLiveDbForTests, __resetLiveDbForTests, openLiveDb, putLiveSyncMeta } from "../core/storage/live-db.js";
+import { __resetCatalogDbForTests } from "../core/storage/catalog-db.js";
+import { __resetEpgDbForTests } from "../core/storage/epg-db.js";
+import { __resetSyncStoreForTests, useSyncStore } from "../sync/sync-store.js";
 import { useFocusStore } from "../ui/focus/focus-store.js";
 import { __resetHomeFocusMemoryForTests, HomeScreen } from "./HomeScreen.js";
 
@@ -174,5 +178,61 @@ describe("HomeScreen", () => {
 
     expect(syncSource).toHaveBeenCalledWith(source, { trigger: "manual", force: true });
     expect(reloadSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("HomeScreen sync status", () => {
+  beforeEach(async () => {
+    clearAllCachedContent();
+    __resetHomeFocusMemoryForTests();
+    __resetSyncStoreForTests();
+    useFocusStore.getState().clearGraph("home-grid");
+    // The fake-timer tests above opened these connections without ever letting them settle — start fresh.
+    __resetCatalogDbForTests();
+    __resetEpgDbForTests();
+    __resetLiveDbForTests();
+    await __clearLiveDbForTests();
+    vi.clearAllMocks();
+  });
+  afterEach(() => useFocusStore.getState().clearGraph("home-grid"));
+
+  it("shows how fresh the playlist is, or what's syncing right now", async () => {
+    await putLiveSyncMeta(await openLiveDb(), { sourceId: source.id, lastSyncedAt: Date.now() - 2 * 60 * 60 * 1000, generation: 1, channelCount: 5 });
+    renderHome();
+    expect(await screen.findByText("Updated 2h ago")).toBeTruthy();
+
+    act(() => {
+      useSyncStore.getState().beginRun(source.id, "interval");
+      useSyncStore.getState().setStage(source.id, "vod", { status: "running", done: 4000 });
+    });
+    expect(screen.getByText(`Syncing Movies… ${(4000).toLocaleString()}`)).toBeTruthy();
+  });
+
+  it("after Refresh, reports what's now stored", async () => {
+    await putLiveSyncMeta(await openLiveDb(), { sourceId: source.id, lastSyncedAt: Date.now(), generation: 1, channelCount: 12430 });
+    const { syncSource } = await import("../sync/sync-manager.js");
+    vi.mocked(syncSource).mockResolvedValue({ stages: { live: "synced" }, errors: {} });
+    renderHome();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Playlist" }));
+    expect(await screen.findByText(`Playlist updated · ${(12430).toLocaleString()} channels`)).toBeTruthy();
+  });
+
+  it("after a failed Refresh, says why and how to retry — without taking focus", async () => {
+    const { syncSource } = await import("../sync/sync-manager.js");
+    vi.mocked(syncSource).mockImplementation(async () => {
+      useSyncStore.getState().setStage(source.id, "auth", { status: "failed", error: "The provider didn't respond within 15 seconds." });
+      return { stages: { auth: "failed" }, errors: { auth: "The provider didn't respond within 15 seconds." } };
+    });
+    renderHome();
+    act(() => useFocusStore.getState().focus("refresh"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Playlist" }));
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Refresh failed: The provider didn't respond within 15 seconds. Press Refresh Playlist to try again.",
+    );
+    expect(useFocusStore.getState().focusedId).toBe("refresh");
+    expect(screen.getByText("Last refresh failed · press Refresh Playlist to retry")).toBeTruthy();
   });
 });

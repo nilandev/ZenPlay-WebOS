@@ -18,7 +18,14 @@ import {
   getResumePoint,
   type ResumePoint,
 } from "./profile-store.js";
+import { MeshBackground, SyncPill } from "@ui";
+import { getLocalLiveMeta } from "./live-store.js";
+import { liveStreamUrl } from "./live-stream-url.js";
+import { purgeSourceData } from "./sync/purge.js";
 import { startSyncScheduler } from "./sync/sync-scheduler.js";
+import { useSourceSyncState } from "./sync/sync-store.js";
+import { describeRunningSync } from "./sync/sync-summary.js";
+import { FirstSyncScreen } from "./screens/FirstSyncScreen.js";
 import { loadMovieDetails, loadSeriesDetails } from "./content-loader.js";
 import type { ChannelLineup } from "./channel-lineup.js";
 import type { WatchTarget } from "./use-watch-history-recorder.js";
@@ -30,7 +37,6 @@ import { SeriesScreen, type EpisodePlayContext } from "./screens/SeriesScreen.js
 import { yearFromDate, type PlaybackInfo } from "./screens/PlayerOverlays.js";
 import { GuideScreen } from "./screens/GuideScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
-import { ManagePlaylistsScreen } from "./screens/ManagePlaylistsScreen.js";
 import { FavouritesScreen } from "./screens/FavouritesScreen.js";
 import { HistoryScreen } from "./screens/HistoryScreen.js";
 import { ProfilesScreen } from "./screens/ProfilesScreen.js";
@@ -47,7 +53,6 @@ const TABS = [
   { id: "favourites", label: "My Favourite" },
   { id: "history", label: "History" },
   { id: "settings", label: "Settings" },
-  { id: "manage-playlists", label: "Manage Playlists" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -145,6 +150,22 @@ export function App(): JSX.Element {
     return startSyncScheduler(source);
   }, [activeSource?.id, hasActiveProfile]);
 
+  // Whether each source still needs its first download, which gets its own
+  // screen (FirstSyncScreen) instead of dropping the user onto empty tabs.
+  // "done" once its live channels have synced before, or the user continued.
+  const [firstSyncBySource, setFirstSyncBySource] = useState<Record<string, "checking" | "needed" | "done">>({});
+  const activeSourceId_ = activeSource?.id;
+  useEffect(() => {
+    if (!activeSourceId_ || firstSyncBySource[activeSourceId_]) return;
+    setFirstSyncBySource((prev) => ({ ...prev, [activeSourceId_]: "checking" }));
+    void getLocalLiveMeta(activeSourceId_).then((meta) => setFirstSyncBySource((prev) => ({ ...prev, [activeSourceId_]: meta ? "done" : "needed" })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSourceId_]);
+
+  // Browse screens show a small corner badge while the active source syncs in the background.
+  const activeSyncState = useSourceSyncState(activeSource?.id ?? "");
+  const syncPillLabel = activeSource ? describeRunningSync(activeSyncState, activeSource) : null;
+
   function handleSourceAdded(source: PlaylistSource): void {
     const updated = addPlaylistSource(source);
     setSources(updated);
@@ -153,6 +174,8 @@ export function App(): JSX.Element {
   }
 
   function handleRemoveSource(sourceId: string): void {
+    // Everything stored for it goes too — downloaded data and every profile's favourites/history (see sync/purge.ts).
+    void purgeSourceData(sourceId);
     const updated = removePlaylistSource(sourceId);
     setSources(updated);
     if (activeSourceId === sourceId) {
@@ -215,6 +238,21 @@ export function App(): JSX.Element {
         onSelectProfile={handleSelectProfile}
         onCreateProfile={handleCreateProfile}
         onManageProfiles={() => setIsManagingProfiles(true)}
+      />
+    );
+  }
+
+  const firstSync = firstSyncBySource[activeSource.id];
+  if (firstSync === undefined || firstSync === "checking") {
+    // A few milliseconds while IndexedDB answers — blank rather than a flash of Home before the first-sync screen.
+    return <MeshBackground>{null}</MeshBackground>;
+  }
+  if (firstSync === "needed") {
+    return (
+      <FirstSyncScreen
+        source={activeSource}
+        platform={platform}
+        onContinue={() => setFirstSyncBySource((prev) => ({ ...prev, [activeSource.id]: "done" }))}
       />
     );
   }
@@ -344,7 +382,8 @@ export function App(): JSX.Element {
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
     setIsPlaybackLive(true);
-    setPlaybackUrl(channel.streamUrl);
+    // In the Live Stream Format from App Settings (Xtream only — see live-stream-url.ts).
+    setPlaybackUrl(liveStreamUrl(channel));
   };
   // Recently Watched → a series: play its saved episode with the full episode
   // list (for Next Episode and the Episodes panel). If the episode is gone
@@ -486,19 +525,18 @@ export function App(): JSX.Element {
         />
       )}
       {activeTab === "settings" && (
-        <SettingsScreen platform={platform} onManagePlaylists={() => setActiveTab("manage-playlists")} onBack={goHome} />
-      )}
-      {activeTab === "manage-playlists" && (
-        <ManagePlaylistsScreen
+        <SettingsScreen
+          platform={platform}
           sources={sources}
           activeSourceId={activeSource?.id}
-          platform={platform}
-          onBack={() => setActiveTab("settings")}
           onAddSource={handleSourceAdded}
           onRemoveSource={handleRemoveSource}
           onSetActiveSource={handleSetActiveSource}
+          onBack={goHome}
         />
       )}
+
+      {!playbackUrl && syncPillLabel && <SyncPill label={syncPillLabel} />}
 
       {playbackUrl && (
         <PlayerScreen
@@ -516,6 +554,7 @@ export function App(): JSX.Element {
             channelLineup={channelLineup}
             watchTarget={watchTarget}
             onTuneChannel={(channel) => playLive(channel)}
+            onPlayAlternateStream={(url) => setPlaybackUrl(url)}
             resumeFrom={playbackResume}
             autoResume={playbackAutoResume}
             info={playbackInfo}

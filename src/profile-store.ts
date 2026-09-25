@@ -176,3 +176,20 @@ export function removeWatchHistory(entry: Pick<WatchHistoryEntry, "profileId" | 
 export function clearWatchHistory(profileId: string, sourceId: string): void {
   writeWatchHistory(readWatchHistory().filter((e) => !(e.profileId === profileId && e.sourceId === sourceId)));
 }
+
+/**
+ * Removes one playlist's favourites and Recently Watched entries for every
+ * profile — used when the playlist itself is removed (see sync/purge.ts).
+ * Continue Watching entries don't record their playlist, so they stay; a
+ * resume point for a title that no longer exists is simply never offered.
+ */
+export function removeSourceUserData(sourceId: string): void {
+  const favorites = readJson<FavoriteEntry[]>(FAVORITES_KEY, []);
+  const keptFavorites = favorites.filter((f) => f.sourceId !== sourceId);
+  if (keptFavorites.length !== favorites.length) {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(keptFavorites));
+    favoritesRevision += 1;
+    for (const listener of favoriteListeners) listener();
+  }
+  writeWatchHistory(readWatchHistory().filter((e) => e.sourceId !== sourceId));
+}

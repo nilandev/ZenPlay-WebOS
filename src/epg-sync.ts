@@ -5,6 +5,7 @@ import { deleteSourceProgrammes, openEpgDb } from "./core/storage/epg-db.js";
 import { forgetSourceGuides } from "./epg-cache.js";
 import { epgVersionKey, getLocalEpgMeta } from "./epg-store.js";
 import type { EpgSyncResult } from "./epg-sync-core.js";
+import { loadSettings } from "./settings-store.js";
 import { __resetSyncWorkerClientForTests, runSyncJobOffMainThread } from "./workers/sync-worker-client.js";
 
 /**
@@ -19,12 +20,18 @@ import { __resetSyncWorkerClientForTests, runSyncJobOffMainThread } from "./work
  * worker can't reach IndexedDB.)
  */
 
-/** A guide is refetched once it's older than this. */
-export const EPG_STALE_AFTER_MS = 6 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/** A guide is refetched once it's older than this — the "Update guide every" setting. */
+export function epgStaleAfterMs(): number {
+  return loadSettings().guideRefreshHours * HOUR_MS;
+}
 /** Programmes that ended more than this long ago aren't kept — enough for "what just finished" and short catch-up browsing. */
-export const EPG_KEEP_PAST_MS = 2 * 60 * 60 * 1000;
-/** How far ahead programmes are kept. */
-export const EPG_KEEP_FUTURE_MS = 3 * 24 * 60 * 60 * 1000;
+export const EPG_KEEP_PAST_MS = 2 * HOUR_MS;
+/** How far ahead programmes are kept — the "Days of guide to keep" setting, applied at the next sync. */
+export function epgKeepFutureMs(): number {
+  return loadSettings().guideDaysToKeep * 24 * HOUR_MS;
+}
 
 /** The XMLTV URL for a source, or undefined when it has none (an M3U source without an EPG URL). */
 export function epgUrlFor(source: PlaylistSource): string | undefined {
@@ -38,7 +45,7 @@ export function epgUrlFor(source: PlaylistSource): string | undefined {
 export async function isEpgSyncDue(source: PlaylistSource): Promise<boolean> {
   if (!epgUrlFor(source)) return false;
   const meta = await getLocalEpgMeta(source.id);
-  return !meta || Date.now() - meta.lastSyncedAt > EPG_STALE_AFTER_MS;
+  return !meta || Date.now() - meta.lastSyncedAt > epgStaleAfterMs();
 }
 
 // --- Public API -------------------------------------------------------------
@@ -61,7 +68,7 @@ export function syncEpg(source: PlaylistSource, options: { onProgress?: (written
   const now = Date.now();
   const promise = runSyncJobOffMainThread(
     "epg",
-    { sourceId: source.id, url, windowStartMs: now - EPG_KEEP_PAST_MS, windowEndMs: now + EPG_KEEP_FUTURE_MS },
+    { sourceId: source.id, url, windowStartMs: now - EPG_KEEP_PAST_MS, windowEndMs: now + epgKeepFutureMs() },
     options.onProgress,
   )
     .then((result) => {

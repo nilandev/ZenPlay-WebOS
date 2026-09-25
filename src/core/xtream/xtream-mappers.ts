@@ -56,6 +56,30 @@ function stripTrailingSlash(url: string): string {
 }
 
 /** Same URL shape XtreamClient.buildStreamUrl builds — a plain function of the credentials rather than a method, so the worker (which never holds an XtreamClient instance) can build identical URLs from the credentials postMessage'd to it. */
+/** The two containers an Xtream panel can serve a live channel in (its `allowed_output_formats`). */
+export type LiveStreamFormat = "m3u8" | "ts";
+
+const XTREAM_LIVE_URL_RE = /^(.*\/live\/[^/]+\/[^/]+\/[^/?#]+)\.(m3u8|ts)([?#].*)?$/i;
+
+/**
+ * The same Xtream live channel in the other container: `/live/u/p/42.m3u8`
+ * (HLS) ↔ `/live/u/p/42.ts` (a continuous MPEG-TS stream). Panels serve
+ * both from the same id; which one plays better depends on the panel and
+ * the TV. Returns undefined for anything that isn't an Xtream live URL (an
+ * M3U entry, a catch-up/timeshift URL, a film), which has no alternative.
+ */
+export function withLiveStreamFormat(url: string, format: LiveStreamFormat): string | undefined {
+  const match = XTREAM_LIVE_URL_RE.exec(url);
+  if (!match) return undefined;
+  return `${match[1]}.${format}${match[3] ?? ""}`;
+}
+
+/** Which container an Xtream live URL uses, or undefined when it isn't one. */
+export function liveStreamFormatOf(url: string): LiveStreamFormat | undefined {
+  const extension = XTREAM_LIVE_URL_RE.exec(url)?.[2]?.toLowerCase();
+  return extension === "m3u8" || extension === "ts" ? extension : undefined;
+}
+
 export function buildXtreamStreamUrl(
   credentials: Pick<XtreamCredentials, "baseUrl" | "username" | "password">,
   kind: "live" | "movie" | "series",

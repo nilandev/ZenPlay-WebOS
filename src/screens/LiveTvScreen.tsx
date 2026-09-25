@@ -19,6 +19,7 @@ import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useLiveChannels } from "../use-live-channels.js";
 import { useNowNext } from "../use-now-next.js";
+import { liveStreamUrl } from "../live-stream-url.js";
 import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 
@@ -236,7 +237,7 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
   // underneath, and without this its preview would keep streaming and
   // decoding the same channel in parallel with the fullscreen player —
   // two MSE pipelines competing for the TV's few hardware decoders.
-  const previewStreamUrl = isPlaybackOpen ? null : (previewChannel?.streamUrl ?? null);
+  const previewStreamUrl = isPlaybackOpen || !previewChannel ? null : liveStreamUrl(previewChannel);
 
   const isInitialLoading = isChannelsLoading || isCategoriesLoading;
 

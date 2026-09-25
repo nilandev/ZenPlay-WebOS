@@ -40,6 +40,7 @@ export interface SourceSyncState {
 
 interface SyncStoreState {
   sources: Record<string, SourceSyncState>;
+  forget: (sourceId: string) => void;
   beginRun: (sourceId: string, trigger: SyncTrigger) => void;
   setStage: (sourceId: string, stage: SyncStage, state: StageState) => void;
   endRun: (sourceId: string) => void;
@@ -56,6 +57,11 @@ const EMPTY: SourceSyncState = { isRunning: false, stages: {} };
  */
 export const useSyncStore = create<SyncStoreState>((set) => ({
   sources: {},
+  forget: (sourceId) =>
+    set((state) => {
+      const { [sourceId]: _removed, ...rest } = state.sources;
+      return { sources: rest };
+    }),
   beginRun: (sourceId, trigger) =>
     set((state) => ({ sources: { ...state.sources, [sourceId]: { ...(state.sources[sourceId] ?? EMPTY), isRunning: true, trigger } } })),
   setStage: (sourceId, stage, stageState) =>

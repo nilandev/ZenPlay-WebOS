@@ -16,6 +16,9 @@ import {
 } from "@ui";
 import { ArrowLeft, Play, RotateCcw, TriangleAlert } from "lucide-react";
 import { isFavorite, toggleFavorite, upsertContinueWatching, type ResumePoint } from "../profile-store.js";
+import { loadSettings } from "../settings-store.js";
+import { alternateLiveStream, LIVE_STREAM_FORMAT_LABELS } from "../live-stream-url.js";
+import { liveStreamFormatOf } from "@core";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 import type { ChannelLineup } from "../channel-lineup.js";
 import { useNowNext } from "../use-now-next.js";
@@ -67,6 +70,12 @@ export interface PlayerScreenProps {
   onPlayEpisode?: (episode: SeriesEpisode) => void;
   /** What's playing, for Recently Watched (omitted for catch-up). */
   watchTarget?: WatchTarget;
+  /**
+   * Plays the same Xtream live channel in the other format (HLS ↔ MPEG-TS)
+   * — offered on the error screen when this stream fails. Omitted: no
+   * alternative is offered.
+   */
+  onPlayAlternateStream?: (streamUrl: string) => void;
   /** Test seam — see VideoSurface. */
   engineFactory?: () => PlayerEngine;
 }
@@ -108,6 +117,7 @@ const START_OVER_ID = "player-resume-start-over";
 const ERROR_SCOPE = "player-error";
 const RETRY_ID = "player-error-retry";
 const ERROR_BACK_ID = "player-error-back";
+const ALTERNATE_STREAM_ID = "player-error-alternate";
 
 /** Scrub step grows the longer Left/Right is held or tapped in a row: 10s, then 30s, then 60s. */
 function seekStepFor(pressCount: number): number {
@@ -168,6 +178,7 @@ export function PlayerScreen({
   onNextEpisode,
   upNextEpisode,
   isLive = false,
+  onPlayAlternateStream,
   liveChannel,
   guideSource,
   channelLineup,
@@ -206,6 +217,12 @@ export function PlayerScreen({
   const startPositionSeconds =
     startAt?.streamUrl === streamUrl ? startAt.seconds : autoResume && resumeFrom ? resumeFrom.positionSeconds : undefined;
   const [attempt, setAttempt] = useState(0);
+  // An Xtream live channel can also be played in the other format — offered if this one fails.
+  const alternateStream = useMemo(() => alternateLiveStream(streamUrl), [streamUrl]);
+  const currentFormat = liveStreamFormatOf(streamUrl);
+  // App Settings → Playback, read for each stream (and each retry) so a change applies to the next thing played.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const playbackPrefs = useMemo(() => loadSettings(), [streamUrl, attempt]);
   const [failure, setFailure] = useState<PlaybackFailure | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(true);
@@ -697,6 +714,7 @@ export function PlayerScreen({
           streamUrl={streamUrl}
           engineFactory={engineFactory}
           startPositionSeconds={startPositionSeconds}
+          playbackRate={isLive ? 1 : playbackPrefs.playbackSpeed}
           onProgress={handleProgress}
           onEngineReady={handleEngineReady}
           onPlayStateChange={handlePlayStateChange}
@@ -761,7 +779,15 @@ export function PlayerScreen({
           )}
         </div>
       ) : (
-        <PlaybackError title={title} message={describeFailure(failure, isLive)} onRetry={retry} onBack={onClose} />
+        <PlaybackError
+          title={title}
+          message={describeFailure(failure, isLive)}
+          alternate={onPlayAlternateStream ? alternateStream : undefined}
+          currentFormatLabel={currentFormat ? LIVE_STREAM_FORMAT_LABELS[currentFormat] : undefined}
+          onRetry={retry}
+          onAlternate={alternateStream && onPlayAlternateStream ? () => onPlayAlternateStream(alternateStream.url) : undefined}
+          onBack={onClose}
+        />
       )}
     </div>
   );
@@ -842,16 +868,66 @@ function ResumeChoice({
   );
 }
 
-function PlaybackError({ title, message, onRetry, onBack }: { title?: string; message: string; onRetry: () => void; onBack: () => void }): JSX.Element {
-  useTwoButtonGraph(ERROR_SCOPE, RETRY_ID, ERROR_BACK_ID, onRetry, onBack);
+/**
+ * A failed stream. For an Xtream live channel it also offers the same
+ * channel in the other format (HLS ↔ MPEG-TS) — first and focused, since
+ * retrying the format that just failed usually fails the same way, and
+ * which one a panel serves reliably varies.
+ */
+function PlaybackError({
+  title,
+  message,
+  alternate,
+  currentFormatLabel,
+  onRetry,
+  onAlternate,
+  onBack,
+}: {
+  title?: string;
+  message: string;
+  alternate?: { label: string };
+  currentFormatLabel?: string;
+  onRetry: () => void;
+  onAlternate?: () => void;
+  onBack: () => void;
+}): JSX.Element {
+  const setGraph = useFocusStore((state) => state.setGraph);
+  const clearGraph = useFocusStore((state) => state.clearGraph);
+  const focus = useFocusStore((state) => state.focus);
+  const latestRef = useRef({ onRetry, onAlternate, onBack });
+  latestRef.current = { onRetry, onAlternate, onBack };
+  const hasAlternate = Boolean(alternate && onAlternate);
+
+  useEffect(() => {
+    const ids = [...(hasAlternate ? [ALTERNATE_STREAM_ID] : []), RETRY_ID, ERROR_BACK_ID];
+    const actions: Record<string, () => void> = {
+      [ALTERNATE_STREAM_ID]: () => latestRef.current.onAlternate?.(),
+      [RETRY_ID]: () => latestRef.current.onRetry(),
+      [ERROR_BACK_ID]: () => latestRef.current.onBack(),
+    };
+    setGraph(
+      ERROR_SCOPE,
+      ids.map((id, index) => ({ id, neighbors: { left: ids[index - 1], right: ids[index + 1] }, onSelect: actions[id] })),
+    );
+    // Other scopes (the controls) may still hold focus while unmounting.
+    focus(ids[0]);
+    return () => clearGraph(ERROR_SCOPE);
+  }, [hasAlternate, setGraph, clearGraph, focus]);
+
   return (
     <PlayerMessage>
       <div role="alert">
         <TriangleAlert size="3.5rem" strokeWidth={1.75} color="#ffb347" />
         <h1 style={{ fontSize: "3rem", fontWeight: 800, color: "#fff", margin: "1.25rem 0 0.75rem" }}>Can't play {title ? `“${title}”` : "this"}</h1>
-        <p style={{ fontSize: "1.625rem", color: "rgba(255,255,255,0.8)", margin: "0 0 3rem", lineHeight: 1.45, maxWidth: "52rem" }}>{message}</p>
-        <div style={{ display: "flex", gap: "1.25rem" }}>
-          <TvButton id={RETRY_ID} label="Try Again" icon={RotateCcw} variant="primary" onSelect={onRetry} />
+        <p style={{ fontSize: "1.625rem", color: "rgba(255,255,255,0.8)", margin: "0 0 1rem", lineHeight: 1.45, maxWidth: "52rem" }}>{message}</p>
+        {hasAlternate && (
+          <p style={{ fontSize: "1.375rem", color: "rgba(255,255,255,0.65)", margin: "0 0 1rem", lineHeight: 1.45, maxWidth: "52rem" }}>
+            This channel was playing as {currentFormatLabel}. Some providers stream more reliably as {alternate!.label} — you can set the default in App Settings.
+          </p>
+        )}
+        <div style={{ display: "flex", gap: "1.25rem", marginTop: "2rem" }}>
+          {hasAlternate && <TvButton id={ALTERNATE_STREAM_ID} label={`Try ${alternate!.label}`} icon={Play} variant="primary" onSelect={onAlternate!} />}
+          <TvButton id={RETRY_ID} label="Try Again" icon={RotateCcw} variant={hasAlternate ? "default" : "primary"} onSelect={onRetry} />
           <TvButton id={ERROR_BACK_ID} label="Back" icon={ArrowLeft} onSelect={onBack} />
         </div>
       </div>

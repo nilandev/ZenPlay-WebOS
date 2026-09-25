@@ -4,6 +4,7 @@ import type { LoadOptions, PlayerEngine, PlayerError } from "@player";
 import { useFocusStore } from "../ui/focus/focus-store.js";
 import { isFavorite } from "../profile-store.js";
 import { PlayerScreen } from "./PlayerScreen.js";
+import { updateSettings } from "../settings-store.js";
 
 const guide = vi.hoisted(() => ({ nowNext: null as unknown }));
 vi.mock("../use-now-next.js", () => ({
@@ -60,6 +61,26 @@ describe("PlayerScreen", () => {
   afterEach(() => {
     vi.useRealTimers();
     for (const scope of ["player-controls", "player-menu", "player-resume", "player-error", "player-episodes", "player-next-up"]) useFocusStore.getState().clearGraph(scope);
+  });
+
+  it("plays a film at the Default Speed from App Settings", async () => {
+    localStorage.clear();
+    updateSettings({ playbackSpeed: 1.25 });
+    const { engine } = makeEngine(3600);
+    render(<PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="Film" engineFactory={() => engine} />);
+    await act(async () => {});
+    expect(engine.load).toHaveBeenCalledWith("s", expect.objectContaining({ playbackRate: 1.25 }));
+    localStorage.clear();
+  });
+
+  it("always plays live TV at normal speed, whatever the Default Speed", async () => {
+    localStorage.clear();
+    updateSettings({ playbackSpeed: 2 });
+    const { engine } = makeEngine(NaN);
+    render(<PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="News" isLive engineFactory={() => engine} />);
+    await act(async () => {});
+    expect(engine.load).toHaveBeenCalledWith("s", expect.objectContaining({ playbackRate: 1 }));
+    localStorage.clear();
   });
 
   it("starts on the seek bar; Left/Right presses collect into one seek", () => {
@@ -157,7 +178,7 @@ describe("PlayerScreen", () => {
 
     press("Enter");
     await act(async () => {});
-    expect(engine.load).toHaveBeenCalledWith("s", { startPositionSeconds: 2832 });
+    expect(engine.load).toHaveBeenCalledWith("s", expect.objectContaining({ startPositionSeconds: 2832 }));
     view.unmount();
 
     const second = makeEngine(3600);
@@ -167,7 +188,43 @@ describe("PlayerScreen", () => {
     press("ArrowRight");
     press("Enter"); // Start Over
     await act(async () => {});
-    expect(second.engine.load).toHaveBeenCalledWith("s", { startPositionSeconds: undefined });
+    expect(second.engine.load).toHaveBeenCalledWith("s", expect.objectContaining({ startPositionSeconds: undefined }));
+  });
+
+  it("when an Xtream live channel fails, offers it in the other format first", async () => {
+    const hls = "http://tv.example/live/me/pw/42.m3u8";
+    const { engine, fail } = makeEngine(NaN);
+    const onPlayAlternateStream = vi.fn();
+    render(<PlayerScreen streamUrl={hls} platform="web" onClose={() => {}} title="News" isLive onPlayAlternateStream={onPlayAlternateStream} engineFactory={() => engine} />);
+    await act(async () => {});
+
+    fail({ kind: "media", fatal: true, message: "unsupported" });
+    expect(screen.getByText(/was playing as HLS\. Some providers stream more reliably as MPEG-TS/)).toBeDefined();
+    expect(focusedId()).toBe("player-error-alternate");
+    press("Enter");
+    expect(onPlayAlternateStream).toHaveBeenCalledWith("http://tv.example/live/me/pw/42.ts");
+
+    press("ArrowRight");
+    expect(focusedId()).toBe("player-error-retry");
+  });
+
+  it("offers HLS when an MPEG-TS channel fails", async () => {
+    const { engine, fail } = makeEngine(NaN);
+    render(
+      <PlayerScreen streamUrl="http://tv.example/live/me/pw/42.ts" platform="web" onClose={() => {}} title="News" isLive onPlayAlternateStream={() => {}} engineFactory={() => engine} />,
+    );
+    await act(async () => {});
+    fail({ kind: "network", fatal: true, message: "gone" });
+    expect(screen.getByRole("button", { name: "Try HLS" })).toBeDefined();
+  });
+
+  it("offers no other format for anything that isn't an Xtream live channel", async () => {
+    const { engine, fail } = makeEngine(3600);
+    render(<PlayerScreen streamUrl="http://tv.example/movie/me/pw/7.mkv" platform="web" onClose={() => {}} title="Film" onPlayAlternateStream={() => {}} engineFactory={() => engine} />);
+    await act(async () => {});
+    fail({ kind: "media", fatal: true, message: "codec" });
+    expect(screen.queryByRole("button", { name: /Try (HLS|MPEG-TS)/ })).toBeNull();
+    expect(focusedId()).toBe("player-error-retry");
   });
 
   it("shows an error for a fatal failure (not a recovering one); Try Again reloads from where it got to", async () => {
@@ -188,7 +245,7 @@ describe("PlayerScreen", () => {
     press("Enter");
     await act(async () => {});
     expect(created).toBe(2);
-    expect(engines[1].engine.load).toHaveBeenCalledWith("s", { startPositionSeconds: 1500 });
+    expect(engines[1].engine.load).toHaveBeenCalledWith("s", expect.objectContaining({ startPositionSeconds: 1500 }));
     expect(screen.queryByText("Can't play “Film”")).toBeNull();
 
     engines[1].fail({ kind: "media", fatal: true, message: "codec" });
@@ -350,7 +407,7 @@ describe("PlayerScreen", () => {
     );
     await act(async () => {});
     expect(screen.queryByRole("button", { name: /Resume from/ })).toBeNull();
-    expect(engine.load).toHaveBeenCalledWith("s", { startPositionSeconds: 900 });
+    expect(engine.load).toHaveBeenCalledWith("s", expect.objectContaining({ startPositionSeconds: 900 }));
   });
 
   it("live TV shows the channel number and what's on now from the guide — never LIVE", async () => {

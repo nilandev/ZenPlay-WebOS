@@ -12,10 +12,13 @@ import {
   useFocusStore,
   useRemoteInput,
   useIsFocused,
+  Toast,
 } from "@ui";
 import type { FocusNode } from "@ui";
 import { loadPlaylistInfo } from "../content-loader.js";
 import { syncSource } from "../sync/sync-manager.js";
+import { getSourceSyncState, useSourceSyncState } from "../sync/sync-store.js";
+import { describeRunningSync, describeSyncFailure, formatCounts, formatSyncedAgo, readSyncSummary, useSyncSummary } from "../sync/sync-summary.js";
 import { useCachedContent } from "../use-cached-content.js";
 
 export interface HomeTile {
@@ -136,9 +139,10 @@ export interface HomeScreenProps {
  * never starved. The one network call it can make is the user-initiated
  * Refresh action.
  *
- * The footer's playlist name/expiry is read from the cache only (whatever
- * App's profile-select revalidation or an earlier visit stored) — it never
- * triggers a fetch of its own.
+ * The footer's playlist name/expiry comes from the cache the sync
+ * manager's sign-in stage keeps, and its sync line ("Updated 2h ago",
+ * "Syncing Movies…", a failure) from sync-store.ts and the tables' own sync
+ * records — local reads only; Home never triggers a fetch of its own.
  */
 export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProfiles }: HomeScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
@@ -148,13 +152,52 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
   // spinning affordance instead of looking like a no-op click.
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
+  const dismissToast = useCallback(() => setToast(null), []);
+
   // A forced sync of every stage (see sync/sync-manager.ts) — real work
   // regardless of freshness, never a page reload. Joins a sync that's
-  // already running rather than downloading everything twice.
+  // already running rather than downloading everything twice. The result is
+  // reported in a toast: what's now stored, or what failed and why.
+  const isRefreshingRef = useRef(false);
   const handleRefresh = useCallback(() => {
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
     setIsRefreshing(true);
-    void syncSource(source, { trigger: "manual", force: true }).finally(() => setIsRefreshing(false));
+    setToast(null);
+    void syncSource(source, { trigger: "manual", force: true })
+      .then(async (outcome) => {
+        const failure = describeSyncFailure(getSourceSyncState(source.id), source);
+        const anySynced = Object.values(outcome.stages).some((status) => status === "synced");
+        if (failure && !anySynced) {
+          setToast({ tone: "error", message: `Refresh failed: ${failure.message} Press Refresh Playlist to try again.` });
+          return;
+        }
+        if (failure) {
+          setToast({ tone: "error", message: `Updated, except ${failure.message}` });
+          return;
+        }
+        const counts = formatCounts(await readSyncSummary(source));
+        setToast({ tone: "success", message: counts ? `Playlist updated · ${counts}` : "Playlist updated" });
+      })
+      .finally(() => {
+        isRefreshingRef.current = false;
+        setIsRefreshing(false);
+      });
   }, [source]);
+
+  // Footer status: what's syncing right now, why the last sync failed, or how fresh the data is.
+  const syncState = useSourceSyncState(source.id);
+  const syncSummary = useSyncSummary(source);
+  const runningLabel = describeRunningSync(syncState, source);
+  const failure = describeSyncFailure(syncState, source);
+  const syncStatus = runningLabel
+    ? runningLabel
+    : failure
+      ? "Last refresh failed · press Refresh Playlist to retry"
+      : syncSummary.lastSyncedAt !== null
+        ? `Updated ${formatSyncedAgo(syncSummary.lastSyncedAt)}`
+        : null;
 
   const mountedAtRef = useRef(Date.now());
   const handleBack = useCallback(() => {
@@ -252,10 +295,12 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
         <div>
           <div>Current Playlist: {playlistInfo.name || source.name || "—"}</div>
           <div>Current playlist expires: {playlistInfo.name ? formatExpiry(playlistInfo.expiresAt) : "—"}</div>
+          {syncStatus && <div style={{ color: failure && !runningLabel ? "#ff8a8a" : undefined }}>{syncStatus}</div>}
         </div>
         <div>v{__APP_VERSION__}</div>
       </footer>
     </div>
+    {toast && <Toast message={toast.message} tone={toast.tone} onDismiss={dismissToast} />}
     </MeshBackground>
   );
 }

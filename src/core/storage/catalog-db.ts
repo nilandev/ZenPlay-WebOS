@@ -33,7 +33,7 @@ export interface CatalogRecord {
   streamUrl?: string;
   logoUrl?: string;
   posterUrl?: string;
-  /** Bumped once per completed sync (see catalog-sync.ts) — lets a sync that dies partway through be told apart from the previous complete generation, so readers never see a half-populated table. */
+  /** Bumped once per completed sync (see catalog-sync.ts) — lets a sync that dies partway through be told apart from the previous complete generation, so its leftovers are swept by the next one. */
   generation: number;
 }
 
@@ -119,7 +119,9 @@ export function putRecordsBatch(catalogDb: CatalogDb, kind: CatalogKind, records
  * `currentGeneration` — the cleanup half of the shadow-write-then-swap sync
  * strategy (see catalog-sync.ts): the new generation's records are written
  * first, sync_meta is flipped to point at it, and only then does the old
- * generation get deleted, so a reader never sees a half-populated table.
+ * generation get deleted. A refresh is therefore a full replace: titles the
+ * provider dropped disappear, the rest are upserted. While a sync runs a
+ * reader can briefly see a mix of old and new rows — never a title missing.
  */
 export async function deleteStaleGeneration(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, currentGeneration: number): Promise<void> {
   const tx = catalogDb.db.transaction(storeName(kind), "readwrite");
@@ -142,6 +144,23 @@ export async function deleteStaleGeneration(catalogDb: CatalogDb, kind: CatalogK
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error ?? new Error("Stale-generation cleanup transaction failed"));
+  });
+}
+
+/** Every record and the sync_meta entry for one source+kind — used when a source's data is reset or the source is removed. */
+export async function deleteSourceCatalog(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string): Promise<void> {
+  const tx = catalogDb.db.transaction([storeName(kind), SYNC_META_STORE], "readwrite");
+  const cursorRequest = tx.objectStore(storeName(kind)).index(BY_SOURCE_INDEX).openCursor(IDBKeyRange.only(sourceId));
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (!cursor) return;
+    cursor.delete();
+    cursor.continue();
+  };
+  tx.objectStore(SYNC_META_STORE).delete(catalogSyncMetaKey(sourceId, kind));
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("Catalog source purge failed"));
   });
 }
 

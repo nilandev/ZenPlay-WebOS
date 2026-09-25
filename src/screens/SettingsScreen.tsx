@@ -1,23 +1,57 @@
 import { useEffect, useRef, useState } from "react";
-import type { PlatformId } from "@core";
-import { ChevronRight, Check } from "lucide-react";
+import type { PlatformId, PlaylistSource } from "@core";
+import { Check } from "lucide-react";
 import { BROWSE_SIDE_PADDING, Focusable, MeshBackground, TV_TEXT, useFocusStore, useIsFocused, useRemoteInput, type FocusNode } from "@ui";
-import { loadSettings, updateSettings, type AppSettings, type PlaybackSpeed, type VideoQuality } from "../settings-store.js";
+import {
+  loadSettings,
+  updateSettings,
+  type AppSettings,
+  type GuideDaysToKeep,
+  type GuideRefreshHours,
+  type LiveStreamFormat,
+  type PlaybackSpeed,
+  type UpdateOnLaunch,
+} from "../settings-store.js";
+import { AddSourceScreen } from "./AddSourceScreen.js";
+import { dismissPlaylistDialog, PlaylistCards, playlistCardId, playlistsEntryFromBelow, ADD_PLAYLIST_ID } from "./PlaylistCards.js";
 
-const MANAGE_PLAYLISTS_ID = "settings-manage-playlists";
 const AUTO_REFRESH_ID = "settings-auto-refresh";
 const SCOPE = "settings";
-const videoQualityId = (value: VideoQuality) => `settings-video-quality:${value}`;
+const updateOnLaunchId = (value: UpdateOnLaunch) => `settings-update-on-launch:${value}`;
+const guideRefreshId = (value: GuideRefreshHours) => `settings-guide-refresh:${value}`;
+const guideDaysId = (value: GuideDaysToKeep) => `settings-guide-days:${value}`;
+const liveFormatId = (value: LiveStreamFormat) => `settings-live-format:${value}`;
 const playbackSpeedId = (value: PlaybackSpeed) => `settings-playback-speed:${value}`;
 
-const VIDEO_QUALITY_OPTIONS: { value: VideoQuality; label: string }[] = [
-  { value: "auto", label: "Auto" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
+interface Option<T> {
+  value: T;
+  label: string;
+}
+
+const UPDATE_ON_LAUNCH_OPTIONS: Option<UpdateOnLaunch>[] = [
+  { value: "off", label: "Off" },
+  { value: "when-stale", label: "When out of date" },
+  { value: "always", label: "Always" },
 ];
 
-const PLAYBACK_SPEED_OPTIONS: { value: PlaybackSpeed; label: string }[] = [
+const GUIDE_REFRESH_OPTIONS: Option<GuideRefreshHours>[] = [
+  { value: 6, label: "6 hours" },
+  { value: 12, label: "12 hours" },
+  { value: 24, label: "24 hours" },
+];
+
+const GUIDE_DAYS_OPTIONS: Option<GuideDaysToKeep>[] = [
+  { value: 1, label: "1 day" },
+  { value: 3, label: "3 days" },
+  { value: 7, label: "7 days" },
+];
+
+const LIVE_FORMAT_OPTIONS: Option<LiveStreamFormat>[] = [
+  { value: "m3u8", label: "HLS (.m3u8)" },
+  { value: "ts", label: "MPEG-TS (.ts)" },
+];
+
+const PLAYBACK_SPEED_OPTIONS: Option<PlaybackSpeed>[] = [
   { value: 0.5, label: "0.5x" },
   { value: 1, label: "1x" },
   { value: 1.25, label: "1.25x" },
@@ -25,25 +59,73 @@ const PLAYBACK_SPEED_OPTIONS: { value: PlaybackSpeed; label: string }[] = [
   { value: 2, label: "2x" },
 ];
 
-/** Settings list width — a comfortable reading measure on a 16:9 TV, left-aligned like tvOS Settings. */
-const LIST_MAX_WIDTH = "76rem";
+/** One row of pickable options: its focus ids, and the settings patch each option applies. */
+function pickerRow<T>(options: Option<T>[], getId: (value: T) => string, key: keyof AppSettings): Array<{ id: string; patch: Partial<AppSettings> }> {
+  return options.map((option) => ({ id: getId(option.value), patch: { [key]: option.value } as Partial<AppSettings> }));
+}
 
 export interface SettingsScreenProps {
   platform: PlatformId;
-  onManagePlaylists: () => void;
+  sources: PlaylistSource[];
+  activeSourceId: string | undefined;
+  onAddSource: (source: PlaylistSource) => void;
+  onRemoveSource: (sourceId: string) => void;
+  onSetActiveSource: (sourceId: string) => void;
   onBack: () => void;
 }
 
 /**
- * App Settings, sized for TV: a wide, left-aligned list of large rows
- * grouped into sections (Playlists, Playback, About). The focused row or
- * option is solid white — the app-wide focus style — and the chosen option
- * in a picker carries a ✓.
- *
- * Values in the first two sections are persisted via settings-store.ts but
- * not yet read by the player/refresh scheduler.
+ * App Settings. Adding a playlist takes over the whole screen with the Add
+ * Playlist form; everything else happens in
+ * SettingsView — the same single-input-owner split ManageProfilesScreen
+ * uses, since two mounted screens both handling the remote would
+ * double-fire every press.
  */
-export function SettingsScreen({ platform, onManagePlaylists, onBack }: SettingsScreenProps): JSX.Element {
+export function SettingsScreen({ onAddSource, platform, ...props }: SettingsScreenProps): JSX.Element {
+  const [isAdding, setIsAdding] = useState(false);
+
+  if (isAdding) {
+    return (
+      <AddSourceScreen
+        platform={platform}
+        onSourceAdded={(source) => {
+          onAddSource(source);
+          setIsAdding(false);
+        }}
+        onCancel={() => setIsAdding(false)}
+      />
+    );
+  }
+  return <SettingsView {...props} platform={platform} onAddPlaylist={() => setIsAdding(true)} />;
+}
+
+/**
+ * The settings page, full screen like the app's other screens, in three
+ * sections: Playlists (every playlist as a card, three to a row — see
+ * PlaylistCards), Content Settings (keeping playlists and the guide up to
+ * date) and Playback, then the app's version and build ID as plain text.
+ * The focused card, row or option is solid white — the app-wide focus
+ * style — and the chosen option in a picker carries a ✓.
+ *
+ * Focus starts on the active playlist and moves through the page in
+ * order: across and down the cards, then down the settings rows (Left/
+ * Right within a row of options, Up/Down keeping the column where the next
+ * row has one). One remote handler covers the whole page; Back closes an
+ * open Delete/Reset dialog first, then leaves.
+ *
+ * Every setting is read when it next matters (see settings-store.ts) —
+ * the sync scheduler and guide sync on their next check, the player when
+ * the next stream starts.
+ */
+function SettingsView({
+  platform,
+  sources,
+  activeSourceId,
+  onRemoveSource,
+  onSetActiveSource,
+  onBack,
+  onAddPlaylist,
+}: Omit<SettingsScreenProps, "onAddSource"> & { onAddPlaylist: () => void }): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focus = useFocusStore((state) => state.focus);
@@ -55,100 +137,128 @@ export function SettingsScreen({ platform, onManagePlaylists, onBack }: Settings
   // rebuilding (and re-focusing) on every toggle would undo navigation.
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const onManagePlaylistsRef = useRef(onManagePlaylists);
-  onManagePlaylistsRef.current = onManagePlaylists;
 
   function patch(update: Partial<AppSettings>): void {
     setSettings(updateSettings(update));
   }
 
+  // Up from the first settings row goes back into the playlist cards.
+  const cardsEntryFromBelow = playlistsEntryFromBelow(sources);
+
   useEffect(() => {
-    const qualityIds = VIDEO_QUALITY_OPTIONS.map((o) => videoQualityId(o.value));
-    const speedIds = PLAYBACK_SPEED_OPTIONS.map((o) => playbackSpeedId(o.value));
-    // Up/Down between the two picker rows keep the column position (clamped).
-    const at = (ids: string[], index: number) => ids[Math.min(index, ids.length - 1)];
-
-    const nodes: FocusNode[] = [
-      { id: MANAGE_PLAYLISTS_ID, neighbors: { down: AUTO_REFRESH_ID }, onSelect: () => onManagePlaylistsRef.current() },
-      {
-        id: AUTO_REFRESH_ID,
-        neighbors: { up: MANAGE_PLAYLISTS_ID, down: qualityIds[0] },
-        onSelect: () => patch({ automaticRefresh: !settingsRef.current.automaticRefresh }),
-      },
-      ...qualityIds.map((id, index) => ({
-        id,
-        neighbors: {
-          up: AUTO_REFRESH_ID,
-          down: at(speedIds, index),
-          left: qualityIds[index - 1],
-          right: qualityIds[index + 1],
-        },
-        onSelect: () => patch({ videoQuality: VIDEO_QUALITY_OPTIONS[index].value }),
-      })),
-      ...speedIds.map((id, index) => ({
-        id,
-        neighbors: {
-          up: at(qualityIds, index),
-          left: speedIds[index - 1],
-          right: speedIds[index + 1],
-        },
-        onSelect: () => patch({ playbackSpeed: PLAYBACK_SPEED_OPTIONS[index].value }),
-      })),
+    // Every focusable settings row, top to bottom; each row is one or more items left to right.
+    const rows: Array<Array<{ id: string; onSelect: () => void }>> = [
+      [{ id: AUTO_REFRESH_ID, onSelect: () => patch({ automaticRefresh: !settingsRef.current.automaticRefresh }) }],
+      ...[
+        pickerRow(UPDATE_ON_LAUNCH_OPTIONS, updateOnLaunchId, "updateOnLaunch"),
+        pickerRow(GUIDE_REFRESH_OPTIONS, guideRefreshId, "guideRefreshHours"),
+        pickerRow(GUIDE_DAYS_OPTIONS, guideDaysId, "guideDaysToKeep"),
+        pickerRow(LIVE_FORMAT_OPTIONS, liveFormatId, "liveStreamFormat"),
+        pickerRow(PLAYBACK_SPEED_OPTIONS, playbackSpeedId, "playbackSpeed"),
+      ].map((row) => row.map(({ id, patch: update }) => ({ id, onSelect: () => patch(update) }))),
     ];
+    // Up/Down keep the column position, clamped to the neighbouring row's length.
+    const at = (row: Array<{ id: string }> | undefined, index: number) => row?.[Math.min(index, row.length - 1)]?.id;
 
-    setGraph(SCOPE, nodes, MANAGE_PLAYLISTS_ID);
+    const nodes: FocusNode[] = rows.flatMap((row, r) =>
+      row.map((item, index) => ({
+        id: item.id,
+        neighbors: {
+          up: r === 0 ? cardsEntryFromBelow : at(rows[r - 1], index),
+          down: at(rows[r + 1], index),
+          left: row[index - 1]?.id,
+          right: row[index + 1]?.id,
+        },
+        onSelect: item.onSelect,
+      })),
+    );
+
+    setGraph(SCOPE, nodes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setGraph]);
+  }, [setGraph, cardsEntryFromBelow]);
   useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
   useEffect(() => {
-    focus(MANAGE_PLAYLISTS_ID);
+    // Start on the active playlist (the cards register their focus nodes before this parent effect runs).
+    const activeCard =
+      activeSourceId && sources.some((s) => s.id === activeSourceId) ? playlistCardId(activeSourceId) : sources[0] ? playlistCardId(sources[0].id) : ADD_PLAYLIST_ID;
+    focus(activeCard);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useRemoteInput(platform, { onBack });
+  useRemoteInput(platform, {
+    onBack: () => {
+      if (!dismissPlaylistDialog()) onBack();
+    },
+  });
 
   return (
     <MeshBackground>
       <div style={{ minHeight: "100vh", padding: `3rem ${BROWSE_SIDE_PADDING} 4rem`, boxSizing: "border-box" }}>
-        <div style={{ maxWidth: LIST_MAX_WIDTH }}>
-          <h1 style={{ fontSize: "3rem", fontWeight: 800, color: "#fff", margin: 0 }}>App Settings</h1>
-          <p style={{ fontSize: TV_TEXT, color: "var(--text-dim)", margin: "0.5rem 0 2.5rem" }}>Playlists, playback preferences and app information.</p>
+        <h1 style={{ fontSize: "3rem", fontWeight: 800, color: "#fff", margin: 0 }}>App Settings</h1>
+        <p style={{ fontSize: TV_TEXT, color: "var(--text-dim)", margin: "0.5rem 0 2.5rem" }}>Your playlists, how they stay up to date, and playback.</p>
 
-          <SettingsSection title="Playlists">
-            <NavRow id={MANAGE_PLAYLISTS_ID} label="Manage Playlists" description="Add, remove, refresh or switch your playlists" onSelect={onManagePlaylists} />
-            <ToggleRow
-              id={AUTO_REFRESH_ID}
-              label="Automatic Refresh"
-              description="Periodically refresh channel and programme data"
-              value={settings.automaticRefresh}
-              onToggle={() => patch({ automaticRefresh: !settings.automaticRefresh })}
-            />
-          </SettingsSection>
+        <SettingsSection title="Playlist">
+          <PlaylistCards
+            sources={sources}
+            activeSourceId={activeSourceId}
+            exitDownId={AUTO_REFRESH_ID}
+            onAdd={onAddPlaylist}
+            onRemoveSource={onRemoveSource}
+            onSetActiveSource={onSetActiveSource}
+          />
+          <ToggleRow
+            id={AUTO_REFRESH_ID}
+            label="Automatic Refresh"
+            description="Keep channels, movies and the guide up to date in the background"
+            value={settings.automaticRefresh}
+            onToggle={() => patch({ automaticRefresh: !settings.automaticRefresh })}
+          />
+          <PickerRow
+            label="Update Playlist on Launch"
+            description="What to download when the app starts"
+            options={UPDATE_ON_LAUNCH_OPTIONS}
+            value={settings.updateOnLaunch}
+            getId={updateOnLaunchId}
+            onSelect={(value) => patch({ updateOnLaunch: value })}
+          />
+          <PickerRow
+            label="Guide Sync Interval"
+            options={GUIDE_REFRESH_OPTIONS}
+            value={settings.guideRefreshHours}
+            getId={guideRefreshId}
+            onSelect={(value) => patch({ guideRefreshHours: value })}
+          />
+          <PickerRow
+            label="Days of Guide to Keep"
+            description="More days use more storage · applies from the next guide update"
+            options={GUIDE_DAYS_OPTIONS}
+            value={settings.guideDaysToKeep}
+            getId={guideDaysId}
+            onSelect={(value) => patch({ guideDaysToKeep: value })}
+          />
+        </SettingsSection>
 
-          <SettingsSection title="Playback">
-            <PickerRow
-              label="Video Quality"
-              options={VIDEO_QUALITY_OPTIONS}
-              value={settings.videoQuality}
-              getId={videoQualityId}
-              onSelect={(value) => patch({ videoQuality: value })}
-            />
-            <PickerRow
-              label="Default Speed"
-              options={PLAYBACK_SPEED_OPTIONS}
-              value={settings.playbackSpeed}
-              getId={playbackSpeedId}
-              onSelect={(value) => patch({ playbackSpeed: value })}
-            />
-          </SettingsSection>
+        <SettingsSection title="Playback">
+          <PickerRow
+            label="Live Stream Format"
+            description="Xtream live channels · if a channel won't play, the player offers the other format"
+            options={LIVE_FORMAT_OPTIONS}
+            value={settings.liveStreamFormat}
+            getId={liveFormatId}
+            onSelect={(value) => patch({ liveStreamFormat: value })}
+          />
+          <PickerRow
+            label="Default Speed"
+            description="Films, episodes and catch-up · live TV always plays at normal speed"
+            options={PLAYBACK_SPEED_OPTIONS}
+            value={settings.playbackSpeed}
+            getId={playbackSpeedId}
+            onSelect={(value) => patch({ playbackSpeed: value })}
+          />
+        </SettingsSection>
 
-          <SettingsSection title="About">
-            <InfoRow label="Version" value={__APP_VERSION__} />
-            <InfoRow label="Build" value={__BUILD_ID__} />
-            <InfoRow label="Developer" value="Nilanchal Panigrahy" />
-          </SettingsSection>
-        </div>
+        <AboutSection />
       </div>
     </MeshBackground>
   );
@@ -195,18 +305,6 @@ function RowText({ label, description, isFocused }: { label: string; description
   );
 }
 
-function NavRow({ id, label, description, onSelect }: { id: string; label: string; description: string; onSelect: () => void }): JSX.Element {
-  const isFocused = useIsFocused(id);
-  return (
-    <Focusable id={id} style={{ height: "auto" }}>
-      <button type="button" onClick={onSelect} style={rowStyle(isFocused)}>
-        <RowText label={label} description={description} isFocused={isFocused} />
-        <ChevronRight size="2rem" strokeWidth={2} style={{ flexShrink: 0, opacity: 0.7 }} />
-      </button>
-    </Focusable>
-  );
-}
-
 function ToggleRow({ id, label, description, value, onToggle }: { id: string; label: string; description: string; value: boolean; onToggle: () => void }): JSX.Element {
   const isFocused = useIsFocused(id);
   return (
@@ -247,20 +345,22 @@ function ToggleRow({ id, label, description, value, onToggle }: { id: string; la
 
 function PickerRow<T extends string | number>({
   label,
+  description,
   options,
   value,
   getId,
   onSelect,
 }: {
   label: string;
-  options: { value: T; label: string }[];
+  description?: string;
+  options: Option<T>[];
   value: T;
   getId: (value: T) => string;
   onSelect: (value: T) => void;
 }): JSX.Element {
   return (
     <div style={{ ...rowStyle(false), cursor: "default", flexWrap: "wrap" }}>
-      <RowText label={label} isFocused={false} />
+      <RowText label={label} description={description} isFocused={false} />
       <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
         {options.map((option) => (
           <PickerOption key={String(option.value)} id={getId(option.value)} label={option.label} isSelected={option.value === value} onClick={() => onSelect(option.value)} />
@@ -302,21 +402,26 @@ function PickerOption({ id, label, isSelected, onClick }: { id: string; label: s
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }): JSX.Element {
+/**
+ * App version and build ID, as plain read-only text at the end of the list
+ * — deliberately not a row surface like the settings above (no card, no
+ * heading, no focus, nothing to press), so it doesn't read as selectable.
+ */
+function AboutSection(): JSX.Element {
+  const items: Array<[string, string]> = [
+    ["Version", __APP_VERSION__],
+    ["Build ID", __BUILD_ID__],
+  ];
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "1.125rem 1.75rem",
-        borderRadius: "1.125rem",
-        background: "rgba(255,255,255,0.03)",
-        boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.05)",
-      }}
-    >
-      <span style={{ fontSize: TV_TEXT, color: "rgba(235,236,242,0.6)" }}>{label}</span>
-      <span style={{ fontSize: TV_TEXT, fontWeight: 700, color: "#fff" }}>{value}</span>
-    </div>
+    <section aria-label="About" style={{ marginTop: "1rem" }}>
+      <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", columnGap: "2.5rem", rowGap: "0.625rem", margin: 0, fontSize: "1.25rem" }}>
+        {items.map(([label, value]) => (
+          <div key={label} style={{ display: "contents" }}>
+            <dt style={{ color: "rgba(235,236,242,0.55)" }}>{label}</dt>
+            <dd style={{ margin: 0, color: "rgba(235,236,242,0.9)", fontVariantNumeric: "tabular-nums", userSelect: "text" }}>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }

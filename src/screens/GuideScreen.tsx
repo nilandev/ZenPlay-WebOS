@@ -21,6 +21,7 @@ import { loadFavorites } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useGuideProgrammes } from "../use-guide-programmes.js";
 import { useLiveChannels } from "../use-live-channels.js";
+import { liveStreamUrl } from "../live-stream-url.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 
 export interface GuideScreenProps {
@@ -144,7 +145,7 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
     ({ channel, programme }: GuideSelection) => {
       const now = Date.now();
       if (!programme || (programme.start.getTime() <= now && now < programme.stop.getTime())) {
-        onPlay(channel.streamUrl);
+        onPlay(liveStreamUrl(channel));
         return;
       }
       if (programme.start.getTime() > now) {

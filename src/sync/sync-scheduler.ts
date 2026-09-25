@@ -1,4 +1,5 @@
 import type { PlaylistSource } from "@core";
+import { loadSettings } from "../settings-store.js";
 import { cancelSync, syncSource } from "./sync-manager.js";
 import { getSourceSyncState, type SyncTrigger } from "./sync-store.js";
 
@@ -26,15 +27,27 @@ const DEFAULTS: Required<SyncSchedulerOptions> = {
  * sync-manager.ts, so each only syncs stages that are actually stale (and
  * overlapping triggers share one job).
  *
+ * App Settings decide which triggers fire, read at the moment each one
+ * would (so a change applies straight away): "Update playlist on launch"
+ * turns the launch sync off, limits it to what's out of date, or forces
+ * everything; "Automatic Refresh" off silences the interval, resume and
+ * online triggers. A first-time download is never affected — screens that
+ * find their data missing ask for it themselves.
+ *
  * Started by App for the active source once a profile is chosen. The
  * returned stop function removes every timer and listener and cancels the
  * source's running job — which is how switching sources stops the old one.
  */
 export function startSyncScheduler(source: PlaylistSource, options: SyncSchedulerOptions = {}): () => void {
   const { launchDelayMs, intervalMs, resumeAfterMs } = { ...DEFAULTS, ...options };
-  const run = (trigger: SyncTrigger) => void syncSource(source, { trigger });
+  const run = (trigger: SyncTrigger) => {
+    if (loadSettings().automaticRefresh) void syncSource(source, { trigger });
+  };
 
-  const launchTimer = setTimeout(() => run("launch"), launchDelayMs);
+  const launchTimer = setTimeout(() => {
+    const { updateOnLaunch } = loadSettings();
+    if (updateOnLaunch !== "off") void syncSource(source, { trigger: "launch", ...(updateOnLaunch === "always" ? { force: true } : {}) });
+  }, launchDelayMs);
   const interval = setInterval(() => {
     if (document.visibilityState !== "hidden") run("interval");
   }, intervalMs);

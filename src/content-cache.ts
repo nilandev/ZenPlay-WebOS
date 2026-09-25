@@ -137,14 +137,15 @@ export function clearCachedContentMatching(matches: (key: string) => boolean): v
 }
 
 /**
- * Drops every cached entry belonging to one playlist source. Every cache key
- * in this app ends in `:${sourceId}` (see the screens' useCachedContent
- * keys), so matching that suffix catches all of them. Used by
- * ManagePlaylistsScreen's per-source "Clear Cache" action.
+ * Drops every cached entry belonging to one playlist source. Cache keys
+ * carry the source id as a whole `:`-separated segment — at the end
+ * (`vod-categories:${sourceId}`) or in the middle (`vod:${sourceId}:cat:7`,
+ * `series-details:${sourceId}:42`) — so matching that segment catches all
+ * of them. Used when a source's data is reset or the source is removed.
  */
 export function clearCachedContentForSource(sourceId: string): void {
-  const suffix = `:${sourceId}`;
-  clearCachedContentMatching((key) => key.endsWith(suffix));
+  const segment = `:${sourceId}`;
+  clearCachedContentMatching((key) => key.endsWith(segment) || key.includes(`${segment}:`));
 }
 
 /** Drops every cached entry (memory + IndexedDB). */

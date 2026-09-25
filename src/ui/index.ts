@@ -32,3 +32,5 @@ export * from "./components/TvButton.js";
 export * from "./components/TvTextField.js";
 export * from "./components/ProfileAvatarTile.js";
 export * from "./components/LiveGuideInfo.js";
+export * from "./components/Toast.js";
+export * from "./components/SyncPill.js";

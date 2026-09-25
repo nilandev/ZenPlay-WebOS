@@ -163,7 +163,8 @@ async function runJob(source: PlaylistSource, request: Required<SyncRequest>, jo
 
   const runStage = async (stage: SyncStage): Promise<boolean> => {
     if (job.cancelled) {
-      report(stage, { status: "skipped", error: "Cancelled" });
+      // Not a failure — nothing to report as an error (the source was switched away from, reset or removed).
+      report(stage, { status: "skipped" });
       return false;
     }
     report(stage, { status: "running", done: 0 });
@@ -269,6 +270,14 @@ export function syncSource(source: PlaylistSource, request: SyncRequest): Promis
 export function cancelSync(sourceId: string): void {
   const job = jobs.get(sourceId);
   if (job) job.cancelled = true;
+}
+
+/** Resolves once the source has no running job (including any follow-up it queued) — never rejects. */
+export async function whenIdle(sourceId: string): Promise<void> {
+  for (let job = jobs.get(sourceId); job; job = jobs.get(sourceId)) {
+    await job.promise;
+    if (job.followUp) await job.followUp.promise;
+  }
 }
 
 export function isSyncRunning(sourceId: string): boolean {

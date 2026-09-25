@@ -4,7 +4,8 @@ import { useCacheInvalidationStore } from "./cache-invalidation-store.js";
 import { __clearEpgDbForTests, __resetEpgDbForTests } from "./core/storage/epg-db.js";
 import { __resetEpgCacheForTests, loadChannelGuide } from "./epg-cache.js";
 import { epgVersionKey } from "./epg-store.js";
-import { __resetEpgSyncForTests, clearEpgForSource, epgUrlFor, isEpgSyncDue, syncEpg, EPG_STALE_AFTER_MS } from "./epg-sync.js";
+import { __resetEpgSyncForTests, clearEpgForSource, epgUrlFor, isEpgSyncDue, syncEpg } from "./epg-sync.js";
+import { updateSettings } from "./settings-store.js";
 
 const { loadStreamEpgMock } = vi.hoisted(() => ({ loadStreamEpgMock: vi.fn() }));
 vi.mock("./content-loader.js", () => ({ loadStreamEpg: loadStreamEpgMock }));
@@ -24,6 +25,7 @@ describe("epg-sync (main-thread path — jsdom has no Worker)", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
+    localStorage.clear(); // default settings
     __resetEpgSyncForTests({ workerAvailable: false });
     __resetEpgCacheForTests();
     __resetEpgDbForTests();
@@ -80,8 +82,28 @@ describe("epg-sync (main-thread path — jsdom has no Worker)", () => {
     expect(await isEpgSyncDue(xtream)).toBe(false);
 
     const realNow = Date.now();
-    vi.spyOn(Date, "now").mockReturnValue(realNow + EPG_STALE_AFTER_MS + 1);
+    vi.spyOn(Date, "now").mockReturnValue(realNow + 6 * 60 * 60 * 1000 + 1); // default: every 6h
     expect(await isEpgSyncDue(xtream)).toBe(true);
+  });
+
+  it("follows the guide settings: how often to update, and how many days to keep", async () => {
+    updateSettings({ guideRefreshHours: 24, guideDaysToKeep: 1 });
+    const hour = 60 * 60 * 1000;
+    const fmt = (d: Date) => d.toISOString().replace(/[-:T]/g, "").slice(0, 14) + " +0000";
+    const at = (offsetHours: number) => fmt(new Date(Date.now() + offsetHours * hour));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        `<tv><programme start="${at(0)}" stop="${at(1)}" channel="bbc.uk"><title>Tonight</title></programme>` +
+        `<programme start="${at(48)}" stop="${at(49)}" channel="bbc.uk"><title>In two days</title></programme></tv>`,
+    });
+
+    await expect(syncEpg(xtream)).resolves.toMatchObject({ programmeCount: 1 }); // 1 day kept: the show in two days is dropped
+
+    const realNow = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(realNow + 12 * hour);
+    expect(await isEpgSyncDue(xtream)).toBe(false); // 24h interval: not due at 12h
   });
 
   it("passes progress through while it writes", async () => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource } from "@core";
 import { startSyncScheduler } from "./sync-scheduler.js";
+import { updateSettings } from "../settings-store.js";
 import { __resetSyncStoreForTests, useSyncStore } from "./sync-store.js";
 
 const m = vi.hoisted(() => ({ syncSource: vi.fn(), cancelSync: vi.fn() }));
@@ -22,6 +23,7 @@ describe("sync scheduler", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    localStorage.clear(); // default settings
     __resetSyncStoreForTests();
     m.syncSource.mockResolvedValue({ stages: {}, errors: {} });
     visibility = "visible";
@@ -96,5 +98,41 @@ describe("sync scheduler", () => {
     setVisibility("visible");
     expect(m.syncSource).not.toHaveBeenCalled();
     stop = () => {};
+  });
+
+  describe("following App Settings", () => {
+    it("Update on launch: Always forces a full sync", async () => {
+      updateSettings({ updateOnLaunch: "always" });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(m.syncSource).toHaveBeenCalledWith(source, { trigger: "launch", force: true });
+    });
+
+    it("Update on launch: Off skips the launch sync, but background checks still run", async () => {
+      updateSettings({ updateOnLaunch: "off" });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(m.syncSource).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(30 * MIN);
+      expect(triggers()).toEqual(["interval"]);
+    });
+
+    it("Automatic Refresh off silences the interval, resume and online triggers — not the launch sync", async () => {
+      updateSettings({ automaticRefresh: false });
+      await vi.advanceTimersByTimeAsync(30 * MIN);
+      setVisibility("hidden");
+      await vi.advanceTimersByTimeAsync(60 * MIN);
+      setVisibility("visible");
+      useSyncStore.getState().setStage(source.id, "vod", { status: "failed" });
+      window.dispatchEvent(new Event("online"));
+      expect(triggers()).toEqual(["launch"]);
+    });
+
+    it("a changed setting applies straight away, without restarting", async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+      updateSettings({ automaticRefresh: false });
+      await vi.advanceTimersByTimeAsync(30 * MIN);
+      updateSettings({ automaticRefresh: true });
+      await vi.advanceTimersByTimeAsync(30 * MIN);
+      expect(triggers()).toEqual(["launch", "interval"]);
+    });
   });
 });

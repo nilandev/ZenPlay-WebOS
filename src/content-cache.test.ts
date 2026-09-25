@@ -123,7 +123,9 @@ describe("content cache", () => {
       setCachedContent("vod-categories:source-1", 1, "category");
       setCachedContent("playlist-info:source-1", 2, "playlist-info");
       setCachedContent("vod-categories:source-2", 3, "category");
-      await expectStoredKeys(["vod-categories:source-1", "playlist-info:source-1", "vod-categories:source-2"]);
+      setCachedContent("vod:source-1:cat:7", 4, "catalog");
+      setCachedContent("series-details:source-1:42", 5, "catalog");
+      await expectStoredKeys(["vod-categories:source-1", "playlist-info:source-1", "vod-categories:source-2", "vod:source-1:cat:7", "series-details:source-1:42"]);
 
       clearCachedContentForSource("source-1");
       expect(getCachedContent("vod-categories:source-1")).toBeUndefined();

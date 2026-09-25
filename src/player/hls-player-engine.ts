@@ -124,6 +124,12 @@ export class HlsPlayerEngine implements PlayerEngine {
 
     this.destroyHlsInstance();
     this.lastRecoveryAt = 0;
+    // The default rate is what a new source starts at (setting src resets
+    // playbackRate to it), so it holds for every path below — hls.js,
+    // native HLS and direct-play files alike.
+    const playbackRate = options.playbackRate && options.playbackRate > 0 ? options.playbackRate : 1;
+    this.video.defaultPlaybackRate = playbackRate;
+    this.video.playbackRate = playbackRate;
     const startPosition = options.startPositionSeconds && options.startPositionSeconds > 0 ? options.startPositionSeconds : undefined;
     this.clearPendingStartSeek();
     if (startPosition !== undefined) {

@@ -39,6 +39,8 @@ export interface PlayerError {
 export interface LoadOptions {
   /** Start playback here instead of at the beginning (resuming a film or episode). Ignored for live streams. */
   startPositionSeconds?: number;
+  /** 1 = normal speed. Callers pass 1 for live TV — there's nothing ahead of the live edge to speed through. */
+  playbackRate?: number;
 }
 
 export interface PlayerEngine {

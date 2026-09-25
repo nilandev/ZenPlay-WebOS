@@ -1,6 +1,7 @@
 import { XtreamClient, type Channel, type PlaylistSource, type SeriesInfo } from "@core";
 import {
   catalogSyncMetaKey,
+  deleteSourceCatalog,
   deleteStaleGeneration,
   getSyncMeta,
   openCatalogDb,
@@ -83,9 +84,10 @@ export async function hasCompletedSync(sourceId: string, kind: CatalogKind): Pro
  * failure), then streams the catalog worker's batches straight into
  * IndexedDB tagged with a new generation, and only once every batch has
  * landed does it flip sync_meta to that generation and delete the old one —
- * see catalog-db.ts's deleteStaleGeneration doc comment for why the order
- * matters (a sync that dies partway through must never leave readers
- * looking at a half-populated table).
+ * see catalog-db.ts's deleteStaleGeneration doc comment. A refresh is a
+ * full replace (dropped titles disappear); during it readers may briefly
+ * see old and new rows side by side, but never a title missing, and a sync
+ * that dies partway leaves the previous generation fully readable.
  */
 async function runSync(source: PlaylistSource, kind: CatalogKind, onProgress?: (written: number) => void): Promise<void> {
   if (source.kind !== "xtream") return;
@@ -137,6 +139,18 @@ export function syncCatalog(source: PlaylistSource, kind: CatalogKind, options: 
   const promise = runSync(source, kind, options.onProgress).finally(() => inFlightSyncs.delete(key));
   inFlightSyncs.set(key, promise);
   return promise;
+}
+
+/** Drops a source's movie and series tables and their sync records (reset / removal — see sync/purge.ts). */
+export async function clearCatalogForSource(sourceId: string): Promise<void> {
+  try {
+    const catalogDb = await openCatalogDb();
+    await Promise.all([deleteSourceCatalog(catalogDb, "vod", sourceId), deleteSourceCatalog(catalogDb, "series", sourceId)]);
+  } catch {
+    // Storage unavailable — nothing stored to clear.
+  }
+  bumpCacheVersion(catalogVersionKey(sourceId, "vod"));
+  bumpCacheVersion(catalogVersionKey(sourceId, "series"));
 }
 
 /** Test-only escape hatch: clears in-flight sync tracking between tests, mirroring xtream-client.ts's __resetRequestDedupeCacheForTests. */
