@@ -73,6 +73,8 @@ export interface SeriesInfo {
   name: string;
   posterUrl?: string;
   groupTitle?: string;
+  /** Genre text from the provider's series list (Xtream get_series), when given — used by the Kids tagger. */
+  genre?: string;
   episodes: SeriesEpisode[];
 }
 

@@ -111,3 +111,20 @@ describe("mapEpgListing", () => {
     expect(mapped.description).toBeUndefined();
   });
 });
+
+describe("live stream format", () => {
+  it("switches an Xtream live URL between HLS and MPEG-TS, keeping any query string", async () => {
+    const { withLiveStreamFormat, liveStreamFormatOf } = await import("./xtream-mappers.js");
+    expect(withLiveStreamFormat("http://tv.example:8080/live/me/pw/42.m3u8", "ts")).toBe("http://tv.example:8080/live/me/pw/42.ts");
+    expect(withLiveStreamFormat("http://tv.example/live/me/pw/42.ts?token=abc", "m3u8")).toBe("http://tv.example/live/me/pw/42.m3u8?token=abc");
+    expect(liveStreamFormatOf("http://tv.example/live/me/pw/42.ts")).toBe("ts");
+  });
+
+  it("leaves anything that isn't an Xtream live URL alone", async () => {
+    const { withLiveStreamFormat, liveStreamFormatOf } = await import("./xtream-mappers.js");
+    expect(withLiveStreamFormat("http://tv.example/movie/me/pw/42.mkv", "ts")).toBeUndefined();
+    expect(withLiveStreamFormat("http://tv.example/timeshift/me/pw/60/2026-09-25:20-00/42.ts", "m3u8")).toBeUndefined();
+    expect(withLiveStreamFormat("http://cdn.example/news/index.m3u8", "ts")).toBeUndefined();
+    expect(liveStreamFormatOf("http://cdn.example/news/index.m3u8")).toBeUndefined();
+  });
+});

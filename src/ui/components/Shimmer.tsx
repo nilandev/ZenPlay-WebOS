@@ -65,6 +65,10 @@ export function ShimmerStyles(): JSX.Element {
         0% { transform: translateX(-100%); }
         100% { transform: translateX(100%); }
       }
+      @keyframes iptv-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
     `}</style>
   );
 }

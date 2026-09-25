@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { XtreamClient, type Category, type Channel, type EpgProgramme, type PlatformId, type PlaylistSource, type Profile } from "@core";
+import { getDefaultKidsRules, XtreamClient, type Category, type Channel, type PlatformId, type PlaylistSource, type Profile } from "@core";
 import {
   CATEGORY_RAIL_COLLAPSED_WIDTH,
   CategoryRail,
@@ -14,10 +14,13 @@ import {
   useRemoteInput,
   type GuideSelection,
 } from "@ui";
-import { loadChannelsByKind, loadEpg, loadLiveCategories } from "../content-loader.js";
+import { useCacheInvalidationStore } from "../cache-invalidation-store.js";
+import { epgVersionKey } from "../epg-store.js";
 import { loadFavorites } from "../profile-store.js";
-import { useCachedContent } from "../use-cached-content.js";
 import { useGuideProgrammes } from "../use-guide-programmes.js";
+import { useContentPolicy } from "../content-policy.js";
+import { usePolicyLiveChannels } from "../use-policy-live-channels.js";
+import { liveStreamUrl } from "../live-stream-url.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 
 export interface GuideScreenProps {
@@ -33,8 +36,6 @@ export interface GuideScreenProps {
 }
 
 const EMPTY_CHANNELS: Channel[] = [];
-const EMPTY_CATEGORIES: Category[] = [];
-const EMPTY_PROGRAMMES: EpgProgramme[] = [];
 const ALL_CATEGORY_ID = "__all__";
 const MY_LIST_CATEGORY_ID = "__favourites__";
 
@@ -75,30 +76,21 @@ function formatDuration(ms: number): string {
  * where the channel supports it.
  */
 export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlaybackOpen = false }: GuideScreenProps): JSX.Element {
-  const loadChannels = useCallback(() => loadChannelsByKind(source, "live"), [source]);
-  const { data: channels, isInitialLoading: isChannelsLoading, error: loadError } = useCachedContent(
-    `guide-channels:${source.id}`,
-    "catalog",
-    loadChannels,
-    EMPTY_CHANNELS,
-  );
+  // The same local live table Live TV reads (see use-live-channels.ts) — one list, one download.
+  // A Kids profile sees only allowed channels, minus any airing something mature right now (docs/kids-profile.md §3.6).
+  const policy = useContentPolicy(profile, source.id);
+  const {
+    channels,
+    fetchedCategories,
+    isInitialLoading: isChannelsLoading,
+    isCategoriesLoading,
+    error: loadError,
+  } = usePolicyLiveChannels(source, policy);
 
-  const loadCategories = useCallback(() => loadLiveCategories(source), [source]);
-  const { data: fetchedCategories, isInitialLoading: isCategoriesLoading } = useCachedContent(
-    `guide-categories:${source.id}`,
-    "category",
-    loadCategories,
-    EMPTY_CATEGORIES,
-  );
-
-  // M3U sources have no per-channel EPG request — their guide is the bulk
-  // XMLTV file, fetched once and sliced per channel (epg-cache.ts reads it
-  // from this cache key). Xtream sources fetch per channel as rows come on
-  // screen instead, so this stays disabled for them.
-  const loadBulkEpg = useCallback(() => loadEpg(source), [source]);
-  const { data: bulkProgrammes } = useCachedContent(`guide-epg:${source.id}`, "epg", loadBulkEpg, EMPTY_PROGRAMMES, {
-    enabled: source.kind !== "xtream",
-  });
+  // The source's XMLTV guide lives in the local EPG table, kept fresh in a
+  // worker by epg-sync.ts (started from App). This version bumps when a sync
+  // lands, so rows already looked up re-read the new guide.
+  const epgVersion = useCacheInvalidationStore((state) => state.versions[epgVersionKey(source.id)]);
 
   const categories = useMemo(
     () => (fetchedCategories.length > 0 ? fetchedCategories : groupByCategory(channels)),
@@ -126,10 +118,12 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
     [profile, favoriteChannels.length, channels.length, categories],
   );
 
-  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(source.id) ?? ALL_CATEGORY_ID);
+  // Remembered per profile, so a Kids profile never reopens a category a parent was browsing.
+  const memoryKey = `${profile?.id ?? ""}:${source.id}`;
+  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(memoryKey) ?? ALL_CATEGORY_ID);
   useEffect(() => {
-    lastCategoryBySource.set(source.id, activeCategoryId);
-  }, [source.id, activeCategoryId]);
+    lastCategoryBySource.set(memoryKey, activeCategoryId);
+  }, [memoryKey, activeCategoryId]);
 
   const visibleChannels = useMemo(() => {
     if (activeCategoryId === ALL_CATEGORY_ID) return channels;
@@ -138,7 +132,7 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
   }, [activeCategoryId, channels, favoriteChannels]);
 
   const [renderedChannels, setRenderedChannels] = useState<Channel[]>(EMPTY_CHANNELS);
-  const programmesByChannel = useGuideProgrammes(source, renderedChannels, bulkProgrammes);
+  const programmesByChannel = useGuideProgrammes(source, renderedChannels, epgVersion);
 
   const [selection, setSelection] = useState<GuideSelection | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -150,8 +144,13 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
   const handleSelect = useCallback(
     ({ channel, programme }: GuideSelection) => {
       const now = Date.now();
+      // Kids: a mature programme on an allowed channel (live or catch-up) isn't played.
+      if (policy.isKids && programme && getDefaultKidsRules().matureProgrammeReason(programme)) {
+        setNotice("This show isn't available right now");
+        return;
+      }
       if (!programme || (programme.start.getTime() <= now && now < programme.stop.getTime())) {
-        onPlay(channel.streamUrl);
+        onPlay(liveStreamUrl(channel));
         return;
       }
       if (programme.start.getTime() > now) {
@@ -166,7 +165,7 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
       }
       setNotice("Catch-up isn't available for this channel");
     },
-    [onPlay, source],
+    [onPlay, source, policy.isKids],
   );
 
   const [gridEntryId, setGridEntryId] = useState<string | undefined>(undefined);

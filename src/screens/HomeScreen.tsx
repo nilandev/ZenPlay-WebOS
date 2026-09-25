@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, type LucideIcon } from "lucide-react";
+import { ListVideo, RefreshCw, type LucideIcon } from "lucide-react";
 import type { PlatformId, PlaylistSource, Profile } from "@core";
 import {
   Clock,
@@ -12,10 +12,14 @@ import {
   useFocusStore,
   useRemoteInput,
   useIsFocused,
+  Toast,
 } from "@ui";
 import type { FocusNode } from "@ui";
-import { buildRevalidationTargets, revalidateStaleTargets } from "../cache-revalidator.js";
 import { loadPlaylistInfo } from "../content-loader.js";
+import { syncSource } from "../sync/sync-manager.js";
+import { PLAYLIST_CHIP_ID, PlaylistChip, PlaylistPicker } from "./PlaylistPicker.js";
+import { getSourceSyncState, useSourceSyncState } from "../sync/sync-store.js";
+import { describeRunningSync, describeSyncFailure, formatCounts, formatSyncedAgo, readSyncSummary, useSyncSummary } from "../sync/sync-summary.js";
 import { useCachedContent } from "../use-cached-content.js";
 
 export interface HomeTile {
@@ -85,25 +89,38 @@ export function __resetHomeFocusMemoryForTests(): void {
 }
 
 /**
- * Header (profile switcher) and both tile rows as one focus graph. Left/Right move within a row, Up/Down move between rows within the
- * same column; Up from the primary row reaches the profile switcher and
- * Down from the header reaches the first tile.
+ * Header (profile chip, and the playlist chip when there's more than one
+ * playlist) and both tile rows as one focus graph. Left/Right move within
+ * a row, Up/Down move between rows within the same column; Up from the
+ * primary row reaches the header chip on that side (the playlist chip sits
+ * over the right half) and Down from either chip reaches the tiles.
  */
-function buildHomeFocusGraph(onOpenProfiles: () => void, onRefresh: () => void, onSelectTile: (id: string) => void): FocusNode[] {
+function buildHomeFocusGraph(
+  onOpenProfiles: () => void,
+  onRefresh: () => void,
+  onSelectTile: (id: string) => void,
+  onOpenPlaylists: (() => void) | null,
+): FocusNode[] {
   // Both rows are the same width with the same column count, so Up/Down
   // simply link the tiles in the same column.
   const primaryIds = PRIMARY_TILES.map((tile) => tile.id);
   const secondaryIds = SECONDARY_TILES.map((tile) => tile.id);
 
+  const hasPlaylistChip = onOpenPlaylists !== null;
   const profileNode: FocusNode = {
     id: PROFILE_SWITCHER_FOCUS_ID,
-    neighbors: { down: primaryIds[0] },
+    neighbors: { down: primaryIds[0], right: hasPlaylistChip ? PLAYLIST_CHIP_ID : undefined },
     onSelect: onOpenProfiles,
   };
+  const headerNodes: FocusNode[] = hasPlaylistChip
+    ? [profileNode, { id: PLAYLIST_CHIP_ID, neighbors: { left: PROFILE_SWITCHER_FOCUS_ID, down: primaryIds[primaryIds.length - 1] }, onSelect: onOpenPlaylists }]
+    : [profileNode];
+  // Up from a tile reaches the header chip above its half of the screen.
+  const headerAbove = (index: number) => (hasPlaylistChip && index >= primaryIds.length / 2 ? PLAYLIST_CHIP_ID : PROFILE_SWITCHER_FOCUS_ID);
 
   const primaryNodes: FocusNode[] = primaryIds.map((id, index) => ({
     id,
-    neighbors: { left: primaryIds[index - 1], right: primaryIds[index + 1], up: PROFILE_SWITCHER_FOCUS_ID, down: secondaryIds[index] },
+    neighbors: { left: primaryIds[index - 1], right: primaryIds[index + 1], up: headerAbove(index), down: secondaryIds[index] },
     onSelect: () => onSelectTile(id),
   }));
 
@@ -113,11 +130,14 @@ function buildHomeFocusGraph(onOpenProfiles: () => void, onRefresh: () => void, 
     onSelect: () => (id === REFRESH_TILE_ID ? onRefresh() : onSelectTile(id)),
   }));
 
-  return [profileNode, ...primaryNodes, ...secondaryNodes];
+  return [...headerNodes, ...primaryNodes, ...secondaryNodes];
 }
 
 export interface HomeScreenProps {
   source: PlaylistSource;
+  /** Every configured playlist — the header offers switching between them when there's more than one. */
+  sources?: PlaylistSource[];
+  onSelectSource?: (sourceId: string) => void;
   platform: PlatformId;
   profile: Profile;
   onSelectTile: (tileId: string) => void;
@@ -136,11 +156,12 @@ export interface HomeScreenProps {
  * never starved. The one network call it can make is the user-initiated
  * Refresh action.
  *
- * The footer's playlist name/expiry is read from the cache only (whatever
- * App's profile-select revalidation or an earlier visit stored) — it never
- * triggers a fetch of its own.
+ * The footer's playlist name/expiry comes from the cache the sync
+ * manager's sign-in stage keeps, and its sync line ("Updated 2h ago",
+ * "Syncing Movies…", a failure) from sync-store.ts and the tables' own sync
+ * records — local reads only; Home never triggers a fetch of its own.
  */
-export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProfiles }: HomeScreenProps): JSX.Element {
+export function HomeScreen({ source, sources = [], onSelectSource, platform, profile, onSelectTile, onOpenProfiles }: HomeScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
 
@@ -148,12 +169,52 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
   // spinning affordance instead of looking like a no-op click.
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // In-place revalidation of this source's caches, forced regardless of
-  // staleness so Refresh always does real work — never a page reload.
+  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
+  const dismissToast = useCallback(() => setToast(null), []);
+
+  // A forced sync of every stage (see sync/sync-manager.ts) — real work
+  // regardless of freshness, never a page reload. Joins a sync that's
+  // already running rather than downloading everything twice. The result is
+  // reported in a toast: what's now stored, or what failed and why.
+  const isRefreshingRef = useRef(false);
   const handleRefresh = useCallback(() => {
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
     setIsRefreshing(true);
-    void revalidateStaleTargets(buildRevalidationTargets(source), { force: true }).finally(() => setIsRefreshing(false));
+    setToast(null);
+    void syncSource(source, { trigger: "manual", force: true })
+      .then(async (outcome) => {
+        const failure = describeSyncFailure(getSourceSyncState(source.id), source);
+        const anySynced = Object.values(outcome.stages).some((status) => status === "synced");
+        if (failure && !anySynced) {
+          setToast({ tone: "error", message: `Refresh failed: ${failure.message} Press Refresh Playlist to try again.` });
+          return;
+        }
+        if (failure) {
+          setToast({ tone: "error", message: `Updated, except ${failure.message}` });
+          return;
+        }
+        const counts = formatCounts(await readSyncSummary(source));
+        setToast({ tone: "success", message: counts ? `Playlist updated · ${counts}` : "Playlist updated" });
+      })
+      .finally(() => {
+        isRefreshingRef.current = false;
+        setIsRefreshing(false);
+      });
   }, [source]);
+
+  // Footer status: what's syncing right now, why the last sync failed, or how fresh the data is.
+  const syncState = useSourceSyncState(source.id);
+  const syncSummary = useSyncSummary(source);
+  const runningLabel = describeRunningSync(syncState, source);
+  const failure = describeSyncFailure(syncState, source);
+  const syncStatus = runningLabel
+    ? runningLabel
+    : failure
+      ? "Last refresh failed · press Refresh Playlist to retry"
+      : syncSummary.lastSyncedAt !== null
+        ? `Updated ${formatSyncedAgo(syncSummary.lastSyncedAt)}`
+        : null;
 
   const mountedAtRef = useRef(Date.now());
   const handleBack = useCallback(() => {
@@ -174,15 +235,42 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
     [onSelectTile],
   );
 
+  // Playlist switching: a header chip, shown only when there's something to switch to.
+  const canSwitchPlaylist = sources.length > 1 && onSelectSource !== undefined;
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const openPicker = useCallback(() => setIsPickerOpen(true), []);
+  // Back on the chip once the picker closes — applied after the graph is rebuilt (focus() ignores ids not in it).
+  const refocusChipRef = useRef(false);
+  const closePicker = useCallback(() => {
+    refocusChipRef.current = true;
+    setIsPickerOpen(false);
+  }, []);
+  const selectPlaylist = useCallback(
+    (sourceId: string) => {
+      setIsPickerOpen(false);
+      onSelectSource?.(sourceId);
+    },
+    [onSelectSource],
+  );
+
   useEffect(() => {
-    setGraph(SCOPE, buildHomeFocusGraph(onOpenProfiles, handleRefresh, handleSelectTile), lastSelectedTileId);
-    return () => clearGraph(SCOPE);
-  }, [setGraph, clearGraph, onOpenProfiles, handleRefresh, handleSelectTile]);
+    // The picker takes the D-pad while open: nothing behind it is reachable.
+    if (isPickerOpen) {
+      setGraph(SCOPE, []);
+      return;
+    }
+    setGraph(SCOPE, buildHomeFocusGraph(onOpenProfiles, handleRefresh, handleSelectTile, canSwitchPlaylist ? openPicker : null), lastSelectedTileId);
+    if (refocusChipRef.current) {
+      refocusChipRef.current = false;
+      useFocusStore.getState().focus(PLAYLIST_CHIP_ID);
+    }
+  }, [setGraph, onOpenProfiles, handleRefresh, handleSelectTile, canSwitchPlaylist, openPicker, isPickerOpen]);
+  useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
   // Tiles and the profile switcher carry their own node onSelect (see
   // buildHomeFocusGraph), which the focus store's select() invokes — so the
   // only screen-level handler is Back, which exits the app.
-  useRemoteInput(platform, { onBack: handleBack });
+  useRemoteInput(platform, { onBack: () => (isPickerOpen ? closePicker() : handleBack()) });
 
   return (
     // Animated even on TVs: the mesh drifts on the compositor only (see
@@ -216,6 +304,11 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
         <div style={{ position: "absolute", left: "50%", top: 0, transform: "translateX(-50%)" }}>
           <Clock />
         </div>
+        {canSwitchPlaylist && (
+          <Focusable id={PLAYLIST_CHIP_ID} style={{ width: "auto", height: "auto" }}>
+            <PlaylistChip source={source} onOpen={openPicker} />
+          </Focusable>
+        )}
       </header>
 
       <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: MENU_GAP }}>
@@ -236,32 +329,145 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
         </div>
       </main>
 
-      <footer
-        style={{
-          display: "flex",
-          alignItems: "flex-end",
-          justifyContent: "space-between",
-          flexShrink: 0,
-          fontSize: "1.125rem",
-          fontWeight: 500,
-          color: "var(--text-dim)",
-          lineHeight: 1.6,
-        }}
-      >
-        <div>
-          <div>Current Playlist: {playlistInfo.name || source.name || "—"}</div>
-          <div>Current playlist expires: {playlistInfo.name ? formatExpiry(playlistInfo.expiresAt) : "—"}</div>
-        </div>
-        <div>v{__APP_VERSION__}</div>
+      <footer style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "2rem", flexShrink: 0 }}>
+        <PlaylistStatusBar
+          // Only when there's no playlist chip in the header to show it.
+          name={canSwitchPlaylist ? undefined : playlistInfo.name || source.name || undefined}
+          expiresAt={playlistInfo.name ? playlistInfo.expiresAt : undefined}
+          syncStatus={syncStatus}
+          syncTone={runningLabel ? "running" : failure ? "failed" : "ok"}
+        />
+        <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "rgba(235,236,242,0.4)" }}>Version: {__APP_VERSION__}</div>
       </footer>
     </div>
+    {toast && <Toast message={toast.message} tone={toast.tone} onDismiss={dismissToast} />}
+    {isPickerOpen && <PlaylistPicker sources={sources} activeSourceId={source.id} onSelect={selectPlaylist} onClose={closePicker} />}
     </MeshBackground>
   );
 }
 
-function formatExpiry(expiresAt: Date | null): string {
-  if (expiresAt === null) return "Unlimited";
-  return expiresAt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+const DAY_MS = 86_400_000;
+/** Within this many days of expiry the chip turns amber, so there's time to renew. */
+const EXPIRY_WARNING_DAYS = 30;
+
+type ExpiryTone = "ok" | "soon" | "expired" | "unknown";
+
+/** The expiry chip's wording and tone — "Expires Sep 15, 2027", "Expires in 12 days", "Expired Sep 1, 2026", "No expiry". */
+export function describeExpiry(expiresAt: Date | null | undefined, now = Date.now()): { label: string; tone: ExpiryTone } {
+  if (expiresAt === undefined) return { label: "Expiry unknown", tone: "unknown" };
+  if (expiresAt === null) return { label: "No expiry", tone: "ok" };
+  const date = expiresAt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const daysLeft = Math.ceil((expiresAt.getTime() - now) / DAY_MS);
+  if (daysLeft <= 0) return { label: `Expired ${date}`, tone: "expired" };
+  if (daysLeft <= EXPIRY_WARNING_DAYS) return { label: daysLeft === 1 ? "Expires tomorrow" : `Expires in ${daysLeft} days`, tone: "soon" };
+  return { label: `Expires ${date}`, tone: "ok" };
+}
+
+/** Plain text while the expiry is fine; a pulsing dot and coloured text only when it needs attention (amber in the last month, red once expired). */
+const EXPIRY_STYLES: Record<ExpiryTone, { dot?: string; text?: string }> = {
+  ok: {},
+  soon: { dot: "#f5b83d", text: "#f5c46b" },
+  expired: { dot: "#ff5c5c", text: "#ff8a8a" },
+  unknown: {},
+};
+
+/**
+ * Home's footer: the current playlist as one quiet, informational line —
+ * expiry · sync status, each led by a small status dot. The playlist's
+ * name leads the line only when there's a single playlist — otherwise it's
+ * already in the header's playlist chip. Colour is kept to the dots unless
+ * something needs attention (expiry within a month or past, a failed
+ * refresh); a sync in progress shows a small spinning icon instead of a
+ * dot. No surface or glow, so it never competes with the tiles above it.
+ */
+function PlaylistStatusBar({
+  name,
+  expiresAt,
+  syncStatus,
+  syncTone,
+}: {
+  /** Set only when the header has no playlist chip (a single playlist). */
+  name?: string;
+  expiresAt: Date | null | undefined;
+  syncStatus: string | null;
+  syncTone: "running" | "failed" | "ok";
+}): JSX.Element {
+  const expiry = describeExpiry(expiresAt);
+  const expiryStyle = EXPIRY_STYLES[expiry.tone];
+
+  return (
+    <div
+      role="status"
+      aria-label="Current playlist"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.875rem",
+        minWidth: 0,
+        maxWidth: "75vw",
+        fontSize: "1.125rem",
+        fontWeight: 500,
+        color: "rgba(235,236,242,0.55)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <style>{`
+        @keyframes home-status-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes home-status-pulse { 0% { transform: scale(1); opacity: 0.55; } 70%, 100% { transform: scale(2.6); opacity: 0; } }
+      `}</style>
+      {name && (
+        <>
+          <StatusItem indicator={<ListVideo size="1.125rem" strokeWidth={2} aria-hidden style={{ flexShrink: 0, opacity: 0.8 }} />}>
+            <span style={{ color: "rgba(235,236,242,0.8)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+          </StatusItem>
+          <Dot />
+        </>
+      )}
+      <StatusItem indicator={expiryStyle.dot ? <StatusDot color={expiryStyle.dot} pulse /> : null} color={expiryStyle.text}>
+        {expiry.label}
+      </StatusItem>
+      {syncStatus && (
+        <>
+          <Dot />
+          <StatusItem
+            indicator={
+              syncTone === "running" ? (
+                <RefreshCw size="1.125rem" strokeWidth={2} aria-hidden style={{ flexShrink: 0, opacity: 0.8, animation: "home-status-spin 1.1s linear infinite" }} />
+              ) : (
+                <StatusDot color={syncTone === "failed" ? "#ff5c5c" : "#2ecc8a"} pulse={syncTone === "ok"} />
+              )
+            }
+            color={syncTone === "failed" ? "#ff8a8a" : undefined}
+          >
+            {syncStatus}
+          </StatusItem>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatusItem({ indicator, color, children }: { indicator: React.ReactNode; color?: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: "0.625rem", minWidth: 0, color }}>
+      {indicator}
+      {children}
+    </span>
+  );
+}
+
+/** A small coloured dot; `pulse` adds a soft expanding ring (transform/opacity only — cheap on TV GPUs). */
+function StatusDot({ color, pulse }: { color: string; pulse: boolean }): JSX.Element {
+  return (
+    <span aria-hidden style={{ position: "relative", width: "0.625rem", height: "0.625rem", flexShrink: 0 }}>
+      {pulse && <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: color, animation: "home-status-pulse 2.4s ease-out infinite" }} />}
+      <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: color }} />
+    </span>
+  );
+}
+
+function Dot(): JSX.Element {
+  return <span aria-hidden style={{ flexShrink: 0, opacity: 0.5 }}>·</span>;
 }
 
 /**

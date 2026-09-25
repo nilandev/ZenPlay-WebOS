@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getCachedContent, setCachedContent } from "./content-cache.js";
 import type { XtreamCredentials } from "@core";
 import { __resetRequestDedupeCacheForTests } from "./core/xtream/xtream-client.js";
 import { __clearCatalogDbForTests, __resetCatalogDbForTests, getSyncMeta, openCatalogDb, queryPage } from "./core/storage/catalog-db.js";
@@ -109,6 +110,23 @@ describe("catalog-sync", () => {
       const catalogDb = await openCatalogDb();
       const page = await queryPage(catalogDb, "vod", { sourceId: "source-1", offset: 0, limit: 10 });
       expect(page.map((r) => r.name).sort()).toEqual(["Alpha", "Beta", "Gamma"]);
+    });
+
+    it("frees the fallback path's cached VOD blobs once the table holds the catalog", async () => {
+      setCachedContent("vod:source-1", [{ id: "old" }], "catalog");
+      setCachedContent("vod:source-1:cat:7", [{ id: "old" }], "catalog");
+      setCachedContent("vod-categories:source-1", [{ id: "7" }], "category");
+      fetchMock.mockResolvedValueOnce(AUTH_OK);
+      syncCatalogMock.mockImplementation(async (_req, onBatch) => {
+        onBatch([{ id: "1", name: "Alpha", streamUrl: "http://x/1", kind: "movie" }]);
+        return { total: 1 };
+      });
+
+      await syncCatalog(xtreamSource, "vod");
+
+      expect(getCachedContent("vod:source-1")).toBeUndefined();
+      expect(getCachedContent("vod:source-1:cat:7")).toBeUndefined();
+      expect(getCachedContent("vod-categories:source-1")).toEqual([{ id: "7" }]); // categories are still needed
     });
 
     it("records sync_meta with the total count and a bumped generation", async () => {

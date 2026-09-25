@@ -56,9 +56,7 @@ export function LiveChannelPreview({
           boxShadow: "0 1.5rem 3rem rgba(0,0,0,0.45)",
         }}
       >
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Tv size="5rem" strokeWidth={1.25} color="rgba(255,255,255,0.18)" />
-        </div>
+        {/* Just the dark frame behind the video — VideoSurface draws its own loading animation, so no placeholder icon here. */}
         <VideoSurface streamUrl={streamUrl} />
       </div>
 

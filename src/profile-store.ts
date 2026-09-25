@@ -1,4 +1,5 @@
-import type { ContinueWatchingEntry, FavoriteEntry, FavoriteKind, Profile, WatchHistoryEntry } from "@core";
+import { migrateAvatarUrl, type ContinueWatchingEntry, type FavoriteEntry, type FavoriteKind, type Profile, type WatchHistoryEntry } from "@core";
+import { removeKidsProfileRules } from "./parental-store.js";
 
 const PROFILES_KEY = "iptv.profiles.v1";
 const ACTIVE_PROFILE_KEY = "iptv.active-profile-id.v1";
@@ -19,7 +20,17 @@ function readJson<T>(key: string, fallback: T): T {
 }
 
 export function loadProfiles(): Profile[] {
-  return readJson<Profile[]>(PROFILES_KEY, []);
+  const stored = readJson<Profile[]>(PROFILES_KEY, []);
+  // Old static avatars move to their animated counterparts, saved once so this only ever runs one time.
+  const profiles = stored.map((p) => ({ ...p, avatarUrl: migrateAvatarUrl(p.avatarUrl) }));
+  if (profiles.some((p, i) => p.avatarUrl !== stored[i].avatarUrl)) {
+    try {
+      saveProfiles(profiles);
+    } catch {
+      // Storage unavailable — the mapping still applies on every read.
+    }
+  }
+  return profiles;
 }
 
 export function saveProfiles(profiles: Profile[]): void {
@@ -42,6 +53,7 @@ export function deleteProfile(profileId: string): Profile[] {
   const profiles = loadProfiles().filter((p) => p.id !== profileId);
   saveProfiles(profiles);
   writeWatchHistory(readWatchHistory().filter((e) => e.profileId !== profileId));
+  removeKidsProfileRules(profileId);
   return profiles;
 }
 
@@ -175,4 +187,21 @@ export function removeWatchHistory(entry: Pick<WatchHistoryEntry, "profileId" | 
 
 export function clearWatchHistory(profileId: string, sourceId: string): void {
   writeWatchHistory(readWatchHistory().filter((e) => !(e.profileId === profileId && e.sourceId === sourceId)));
+}
+
+/**
+ * Removes one playlist's favourites and Recently Watched entries for every
+ * profile — used when the playlist itself is removed (see sync/purge.ts).
+ * Continue Watching entries don't record their playlist, so they stay; a
+ * resume point for a title that no longer exists is simply never offered.
+ */
+export function removeSourceUserData(sourceId: string): void {
+  const favorites = readJson<FavoriteEntry[]>(FAVORITES_KEY, []);
+  const keptFavorites = favorites.filter((f) => f.sourceId !== sourceId);
+  if (keptFavorites.length !== favorites.length) {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(keptFavorites));
+    favoritesRevision += 1;
+    for (const listener of favoriteListeners) listener();
+  }
+  writeWatchHistory(readWatchHistory().filter((e) => e.sourceId !== sourceId));
 }

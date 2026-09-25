@@ -19,7 +19,7 @@ export default defineConfig({
     setupFiles: ["./src/test-setup.ts"],
   },
   // Mirrors vite.config.ts's path aliases so test files (e.g.
-  // cache-revalidator.ts, which imports PlaylistSource from "@core") resolve
+  // sync/sync-manager.ts, which imports PlaylistSource from "@core") resolve
   // the same way under Vitest as they do in the real app build.
   resolve: {
     alias: {

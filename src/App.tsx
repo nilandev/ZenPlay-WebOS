@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Channel, PlaylistSource, Profile, SeriesEpisode, WatchHistoryEntry } from "@core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isKidsProfile, type Channel, type PlaylistSource, type Profile, type SeriesEpisode, type WatchHistoryEntry } from "@core";
 import {
   addPlaylistSource,
+  forgetProfileSource,
   getActivePlaylistSourceId,
   loadPlaylistSources,
+  playlistForProfile,
+  rememberProfileSource,
   removePlaylistSource,
   setActivePlaylistSourceId,
 } from "./playlist-store.js";
@@ -18,19 +21,28 @@ import {
   getResumePoint,
   type ResumePoint,
 } from "./profile-store.js";
-import { buildRevalidationTargets, revalidateStaleTargets } from "./cache-revalidator.js";
+import { MeshBackground, SyncPill, Toast } from "@ui";
+import { useContentPolicy } from "./content-policy.js";
+import { useMatureNowChannelIds } from "./use-policy-live-channels.js";
+import { getLocalLiveMeta } from "./live-store.js";
+import { liveStreamUrl } from "./live-stream-url.js";
+import { purgeSourceData } from "./sync/purge.js";
+import { startSyncScheduler } from "./sync/sync-scheduler.js";
+import { useSourceSyncState } from "./sync/sync-store.js";
+import { describeRunningSync } from "./sync/sync-summary.js";
+import { FirstSyncScreen } from "./screens/FirstSyncScreen.js";
 import { loadMovieDetails, loadSeriesDetails } from "./content-loader.js";
 import type { ChannelLineup } from "./channel-lineup.js";
 import type { WatchTarget } from "./use-watch-history-recorder.js";
 import { AddSourceScreen } from "./screens/AddSourceScreen.js";
 import { HomeScreen } from "./screens/HomeScreen.js";
+import { KidsHomeScreen } from "./screens/KidsHomeScreen.js";
 import { LiveTvScreen } from "./screens/LiveTvScreen.js";
 import { VodScreen } from "./screens/VodScreen.js";
 import { SeriesScreen, type EpisodePlayContext } from "./screens/SeriesScreen.js";
 import { yearFromDate, type PlaybackInfo } from "./screens/PlayerOverlays.js";
 import { GuideScreen } from "./screens/GuideScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
-import { ManagePlaylistsScreen } from "./screens/ManagePlaylistsScreen.js";
 import { FavouritesScreen } from "./screens/FavouritesScreen.js";
 import { HistoryScreen } from "./screens/HistoryScreen.js";
 import { ProfilesScreen } from "./screens/ProfilesScreen.js";
@@ -47,7 +59,6 @@ const TABS = [
   { id: "favourites", label: "My Favourite" },
   { id: "history", label: "History" },
   { id: "settings", label: "Settings" },
-  { id: "manage-playlists", label: "Manage Playlists" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -74,6 +85,11 @@ export function App(): JSX.Element {
   const [profiles, setProfiles] = useState<Profile[]>(() => loadProfiles());
   const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
   const [isManagingProfiles, setIsManagingProfiles] = useState(false);
+  // "Who's watching?" was opened from a Kids profile — picking a parent profile then needs the PIN (docs/kids-profile.md §2.3).
+  const [isLeavingKids, setIsLeavingKids] = useState(false);
+  // Shown when a Kids profile's live channel was stopped because what's on turned mature (§3.6).
+  const [kidsNotice, setKidsNotice] = useState<string | null>(null);
+  const dismissKidsNotice = useCallback(() => setKidsNotice(null), []);
   const [activeTab, setActiveTab] = useState<TabId>("home");
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const playbackUrlRef = useRef(playbackUrl);
@@ -123,33 +139,89 @@ export function App(): JSX.Element {
   // Bumped every time the player closes (live too), so Recently Watched re-reads what was just watched.
   const [historyVersion, setHistoryVersion] = useState(0);
 
+  // What the active profile may see — everything for a standard profile, the Kids whitelist for a Kids profile.
+  const policy = useContentPolicy(activeProfile, activeSource?.id);
+  const isKids = isKidsProfile(activeProfile);
+
+  // Kids + live: re-check the playing channel and its lineup against what's on
+  // now. CH+/CH− skip channels airing something mature, and the playing channel
+  // stops if its programme turns mature (docs/kids-profile.md §3.6).
+  const guardedChannels = useMemo(() => {
+    const list = channelLineup?.lineup ?? [];
+    return playbackChannel && !list.some((c) => c.id === playbackChannel.id) ? [...list, playbackChannel] : list;
+  }, [channelLineup, playbackChannel]);
+  const matureNowIds = useMatureNowChannelIds(activeSource?.id ?? "", guardedChannels, isKids && isPlaybackLive && guardedChannels.length > 0);
+  const playerLineup = useMemo(() => {
+    if (!channelLineup || matureNowIds.size === 0) return channelLineup;
+    return {
+      lineup: channelLineup.lineup.filter((c) => !matureNowIds.has(c.id)),
+      directory: channelLineup.directory.filter((c) => !matureNowIds.has(c.id)),
+    };
+  }, [channelLineup, matureNowIds]);
+  // Settings (playlists, reset data, Parental Controls) doesn't exist in a Kids profile.
+  useEffect(() => {
+    if (isKids && activeTab === "settings") setActiveTab("home");
+  }, [isKids, activeTab]);
+  const closePlaybackRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (!isKids || !isPlaybackLive || !playbackChannel || !matureNowIds.has(playbackChannel.id)) return;
+    closePlaybackRef.current();
+    setKidsNotice("This show isn't available right now — pick another channel.");
+  }, [isKids, isPlaybackLive, playbackChannel, matureNowIds]);
+
+  /** Makes `profile` the active one, switching to the playlist it last used (see playlist-store's per-profile memory). */
+  function activateProfile(profile: Profile): void {
+    const remembered = playlistForProfile(profile.id, sources);
+    if (remembered && remembered !== activeSourceId) {
+      setActivePlaylistSourceId(remembered);
+      setActiveSourceIdState(remembered);
+    }
+    setActiveProfile(profile);
+  }
+
   useEffect(() => {
     const savedId = getActiveProfileId();
     const saved = savedId ? profiles.find((p) => p.id === savedId) : undefined;
-    if (saved) setActiveProfile(saved);
+    if (saved) activateProfile(saved);
     // Only re-check localStorage-persisted active profile once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Kicks off HomeScreen's usual content fetches (live channels, VOD/series
-  // categories, EPG, playlist info — see buildRevalidationTargets) as soon
-  // as a profile is selected/restored, rather than waiting for HomeScreen to
-  // mount and start them itself. This is what actually delivers spec
-  // Scenario A's "data ready the millisecond Home renders": previously,
-  // Home's own skeletons covered the wait, but the wait only started once
-  // Home was already on screen. Firing it here means the fetches are
-  // in-flight during the login/profile-select transition instead. This is
-  // now the only automatic revalidation: HomeScreen no longer runs its own
-  // background revalidator/prefetch/catalog-sync jobs (it's a static menu
-  // that does no data work — see its doc comment). A brand-new source's
-  // local VOD/series catalog tables aren't included here (see
-  // buildRevalidationTargets' doc comment on why they're excluded from this
-  // revalidator entirely) — VodScreen/SeriesScreen start their own catalog's
-  // sync while open (see catalog-sync.ts's startCatalogBackgroundSync).
+  // Whatever playlist the active profile ends up on — picked on Home,
+  // switched in Settings, or newly added — is the one it opens on next time.
   useEffect(() => {
-    if (!activeSource || !activeProfile) return;
-    void revalidateStaleTargets(buildRevalidationTargets(activeSource));
-  }, [activeSource, activeProfile]);
+    if (activeProfile && activeSource) rememberProfileSource(activeProfile.id, activeSource.id);
+  }, [activeProfile, activeSource]);
+
+  // Keeps the active source's data fresh — a launch sync a few seconds in,
+  // then on an interval, on return from the background and when the network
+  // comes back (see sync/sync-scheduler.ts). Everything downloads and parses
+  // in the sync worker, so none of it stalls Home's remote input. Keyed on
+  // the source id: switching sources stops (and cancels) the old scheduler.
+  const hasActiveProfile = activeProfile !== null;
+  const activeSourceRef = useRef(activeSource);
+  activeSourceRef.current = activeSource;
+  useEffect(() => {
+    const source = activeSourceRef.current;
+    if (!source || !hasActiveProfile) return;
+    return startSyncScheduler(source);
+  }, [activeSource?.id, hasActiveProfile]);
+
+  // Whether each source still needs its first download, which gets its own
+  // screen (FirstSyncScreen) instead of dropping the user onto empty tabs.
+  // "done" once its live channels have synced before, or the user continued.
+  const [firstSyncBySource, setFirstSyncBySource] = useState<Record<string, "checking" | "needed" | "done">>({});
+  const activeSourceId_ = activeSource?.id;
+  useEffect(() => {
+    if (!activeSourceId_ || firstSyncBySource[activeSourceId_]) return;
+    setFirstSyncBySource((prev) => ({ ...prev, [activeSourceId_]: "checking" }));
+    void getLocalLiveMeta(activeSourceId_).then((meta) => setFirstSyncBySource((prev) => ({ ...prev, [activeSourceId_]: meta ? "done" : "needed" })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSourceId_]);
+
+  // Browse screens show a small corner badge while the active source syncs in the background.
+  const activeSyncState = useSourceSyncState(activeSource?.id ?? "");
+  const syncPillLabel = activeSource ? describeRunningSync(activeSyncState, activeSource) : null;
 
   function handleSourceAdded(source: PlaylistSource): void {
     const updated = addPlaylistSource(source);
@@ -159,6 +231,8 @@ export function App(): JSX.Element {
   }
 
   function handleRemoveSource(sourceId: string): void {
+    // Everything stored for it goes too — downloaded data and every profile's favourites/history (see sync/purge.ts).
+    void purgeSourceData(sourceId);
     const updated = removePlaylistSource(sourceId);
     setSources(updated);
     if (activeSourceId === sourceId) {
@@ -178,6 +252,7 @@ export function App(): JSX.Element {
   }
 
   function handleCreateProfile(profile: Profile): void {
+    setIsLeavingKids(false);
     const updated = addProfile(profile);
     setProfiles(updated);
     setActiveProfile(profile);
@@ -185,7 +260,8 @@ export function App(): JSX.Element {
   }
 
   function handleSelectProfile(profile: Profile): void {
-    setActiveProfile(profile);
+    setIsLeavingKids(false);
+    activateProfile(profile);
     setActiveProfileId(profile.id);
   }
 
@@ -195,6 +271,7 @@ export function App(): JSX.Element {
 
   function handleDeleteProfile(profileId: string): void {
     setProfiles(deleteProfile(profileId));
+    forgetProfileSource(profileId);
     if (getActiveProfileId() === profileId) clearActiveProfile();
   }
 
@@ -221,6 +298,22 @@ export function App(): JSX.Element {
         onSelectProfile={handleSelectProfile}
         onCreateProfile={handleCreateProfile}
         onManageProfiles={() => setIsManagingProfiles(true)}
+        isLeavingKids={isLeavingKids}
+      />
+    );
+  }
+
+  const firstSync = firstSyncBySource[activeSource.id];
+  if (firstSync === undefined || firstSync === "checking") {
+    // A few milliseconds while IndexedDB answers — blank rather than a flash of Home before the first-sync screen.
+    return <MeshBackground>{null}</MeshBackground>;
+  }
+  if (firstSync === "needed") {
+    return (
+      <FirstSyncScreen
+        source={activeSource}
+        platform={platform}
+        onContinue={() => setFirstSyncBySource((prev) => ({ ...prev, [activeSource.id]: "done" }))}
       />
     );
   }
@@ -243,6 +336,7 @@ export function App(): JSX.Element {
       title: movie.name,
       imageUrl: movie.logoUrl,
       streamUrl: movie.streamUrl,
+      categoryId: movie.groupTitle,
     });
     setPlaybackEpisodeId(undefined);
     setPlaybackInfo({ posterUrl: movie.logoUrl });
@@ -305,6 +399,7 @@ export function App(): JSX.Element {
       episodeId: episode.id,
       season: episode.season,
       episode: episode.episode,
+      categoryId: context.categoryId,
       nextEpisode: next
         ? { episodeId: next.id, season: next.season, episode: next.episode, subtitle: `Up next: ${episodeLine(next)}`, streamUrl: next.streamUrl }
         : undefined,
@@ -345,12 +440,14 @@ export function App(): JSX.Element {
       imageUrl: channel.logoUrl,
       streamUrl: channel.streamUrl,
       channelNumber: channel.number,
+      categoryId: channel.groupTitle,
     });
     setPlaybackTitle(channel.name);
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
     setIsPlaybackLive(true);
-    setPlaybackUrl(channel.streamUrl);
+    // In the Live Stream Format from App Settings (Xtream only — see live-stream-url.ts).
+    setPlaybackUrl(liveStreamUrl(channel));
   };
   // Recently Watched → a series: play its saved episode with the full episode
   // list (for Next Episode and the Episodes panel). If the episode is gone
@@ -391,20 +488,28 @@ export function App(): JSX.Element {
     // no need to force a re-read after closing live TV/catch-up.
     if (playbackIdentity) setPlaybackCloseVersion((v) => v + 1);
   };
+  closePlaybackRef.current = closePlayback;
 
-  if (activeTab === "home") {
+  if (activeTab === "home" && !isKids) {
     // Home is a static menu with nothing playable on it, so unlike every
-    // other tab below it never hosts a PlayerScreen overlay.
+    // other tab below it never hosts a PlayerScreen overlay. (A Kids
+    // profile's Home has recommendation rails, so it's rendered below with
+    // the other tabs.)
     return (
       <HomeScreen
         source={activeSource}
+        sources={sources}
+        onSelectSource={handleSetActiveSource}
         platform={platform}
         profile={activeProfile}
         onSelectTile={(tileId) => {
           setPendingSeriesId(null);
           setActiveTab(tileId as TabId);
         }}
-        onOpenProfiles={() => setActiveProfile(null)}
+        onOpenProfiles={() => {
+          setIsLeavingKids(isKids);
+          setActiveProfile(null);
+        }}
       />
     );
   }
@@ -416,6 +521,33 @@ export function App(): JSX.Element {
 
   return (
     <div style={{ minHeight: "100vh" }}>
+      {activeTab === "home" && (
+        <KidsHomeScreen
+          source={activeSource}
+          sources={sources}
+          onSelectSource={handleSetActiveSource}
+          platform={platform}
+          profile={activeProfile}
+          policy={policy}
+          onSelectTile={(tileId) => {
+            setPendingSeriesId(null);
+            setActiveTab(tileId as TabId);
+          }}
+          onOpenProfiles={() => {
+            setIsLeavingKids(true);
+            setActiveProfile(null);
+          }}
+          onPlayMovie={playMovie}
+          onPlayChannel={playLive}
+          onContinueSeries={continueSeries}
+          onOpenSeries={(seriesId) => {
+            setPendingSeriesId(seriesId);
+            setActiveTab("series");
+          }}
+          refreshKey={historyVersion}
+          isPlaybackOpen={Boolean(playbackUrl)}
+        />
+      )}
       {activeTab === "live" && (
         <LiveTvScreen
           source={activeSource}
@@ -463,6 +595,7 @@ export function App(): JSX.Element {
         <FavouritesScreen
           source={activeSource}
           profileId={activeProfile.id}
+          policy={policy}
           platform={platform}
           onBack={goHome}
           onPlayChannel={playLive}
@@ -478,6 +611,7 @@ export function App(): JSX.Element {
         <HistoryScreen
           source={activeSource}
           profileId={activeProfile.id}
+          policy={policy}
           platform={platform}
           onBack={goHome}
           onPlayChannel={playLive}
@@ -491,20 +625,21 @@ export function App(): JSX.Element {
           isPlaybackOpen={Boolean(playbackUrl)}
         />
       )}
-      {activeTab === "settings" && (
-        <SettingsScreen platform={platform} onManagePlaylists={() => setActiveTab("manage-playlists")} onBack={goHome} />
-      )}
-      {activeTab === "manage-playlists" && (
-        <ManagePlaylistsScreen
+      {activeTab === "settings" && !isKids && (
+        <SettingsScreen
+          platform={platform}
           sources={sources}
           activeSourceId={activeSource?.id}
-          platform={platform}
-          onBack={() => setActiveTab("settings")}
           onAddSource={handleSourceAdded}
           onRemoveSource={handleRemoveSource}
           onSetActiveSource={handleSetActiveSource}
+          onBack={goHome}
+          profiles={profiles}
         />
       )}
+
+      {!playbackUrl && syncPillLabel && <SyncPill label={syncPillLabel} />}
+      {!playbackUrl && kidsNotice && <Toast message={kidsNotice} tone="error" onDismiss={dismissKidsNotice} />}
 
       {playbackUrl && (
         <PlayerScreen
@@ -519,9 +654,10 @@ export function App(): JSX.Element {
             isLive={isPlaybackLive}
             liveChannel={playbackChannel}
             guideSource={activeSource}
-            channelLineup={channelLineup}
+            channelLineup={playerLineup}
             watchTarget={watchTarget}
             onTuneChannel={(channel) => playLive(channel)}
+            onPlayAlternateStream={(url) => setPlaybackUrl(url)}
             resumeFrom={playbackResume}
             autoResume={playbackAutoResume}
             info={playbackInfo}

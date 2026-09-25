@@ -14,10 +14,11 @@ import {
   useIsFocused,
   useRemoteInput,
 } from "@ui";
-import { loadChannelsByKind, loadLiveCategories } from "../content-loader.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
-import { useCachedContent } from "../use-cached-content.js";
+import { useContentPolicy } from "../content-policy.js";
+import { usePolicyLiveChannels } from "../use-policy-live-channels.js";
 import { useNowNext } from "../use-now-next.js";
+import { liveStreamUrl } from "../live-stream-url.js";
 import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 
@@ -32,8 +33,6 @@ export interface LiveTvScreenProps {
   isPlaybackOpen?: boolean;
 }
 
-const EMPTY_CHANNELS: Channel[] = [];
-const EMPTY_CATEGORIES: Category[] = [];
 const ALL_CATEGORY_ID = "__all__";
 const FAVOURITES_CATEGORY_ID = "__favourites__";
 /** Focus id of the favourite button in the preview's channel line. */
@@ -65,21 +64,16 @@ function groupByCategory(channels: Channel[]): Category[] {
 }
 
 export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlaybackOpen = false }: LiveTvScreenProps): JSX.Element {
-  const loadChannels = useCallback(() => loadChannelsByKind(source, "live"), [source]);
-  const { data: channels, isInitialLoading: isChannelsLoading, error: loadError } = useCachedContent(
-    `live:${source.id}`,
-    "catalog",
-    loadChannels,
-    EMPTY_CHANNELS,
-  );
-
-  const loadCategories = useCallback(() => loadLiveCategories(source), [source]);
-  const { data: fetchedCategories, isInitialLoading: isCategoriesLoading } = useCachedContent(
-    `live-categories:${source.id}`,
-    "category",
-    loadCategories,
-    EMPTY_CATEGORIES,
-  );
+  // Read from the local live table; fetched and parsed in the sync worker (see use-live-channels.ts).
+  // A Kids profile sees only allowed channels, minus any airing something mature right now (docs/kids-profile.md §3.6).
+  const policy = useContentPolicy(profile, source.id);
+  const {
+    channels,
+    fetchedCategories,
+    isInitialLoading: isChannelsLoading,
+    isCategoriesLoading,
+    error: loadError,
+  } = usePolicyLiveChannels(source, policy);
 
   // Xtream sources get real provider categories; M3U sources (fetchedCategories
   // always empty there — see loadLiveCategories) fall back to grouping the
@@ -93,10 +87,12 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
   // position in the full list — so every row has a stable number to show.
   const numberById = useMemo(() => new Map(channels.map((channel, index) => [channel.id, channel.number ?? index + 1])), [channels]);
 
-  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(source.id) ?? ALL_CATEGORY_ID);
+  // Remembered per profile, so a Kids profile never reopens a category a parent was browsing.
+  const memoryKey = `${profile.id}:${source.id}`;
+  const [activeCategoryId, setActiveCategoryId] = useState(() => lastCategoryBySource.get(memoryKey) ?? ALL_CATEGORY_ID);
   useEffect(() => {
-    lastCategoryBySource.set(source.id, activeCategoryId);
-  }, [source.id, activeCategoryId]);
+    lastCategoryBySource.set(memoryKey, activeCategoryId);
+  }, [memoryKey, activeCategoryId]);
   const [previewChannel, setPreviewChannel] = useState<Channel | null>(null);
   // Bumped on every favourite toggle to force a re-read of localStorage —
   // toggleFavorite persists synchronously but isn't itself reactive state,
@@ -241,7 +237,7 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
   // underneath, and without this its preview would keep streaming and
   // decoding the same channel in parallel with the fullscreen player —
   // two MSE pipelines competing for the TV's few hardware decoders.
-  const previewStreamUrl = isPlaybackOpen ? null : (previewChannel?.streamUrl ?? null);
+  const previewStreamUrl = isPlaybackOpen || !previewChannel ? null : liveStreamUrl(previewChannel);
 
   const isInitialLoading = isChannelsLoading || isCategoriesLoading;
 

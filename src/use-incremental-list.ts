@@ -14,9 +14,9 @@ export interface IncrementalList<T> {
  * Pages an already-in-memory array the way use-catalog-page.ts pages the
  * local table: render the first page, and grow by a page each time
  * loadMore() is called (screens call it as focus nears the end of what's
- * rendered). Used by VodScreen/SeriesScreen's legacy fallback path, which
- * has the whole catalog in hand but must not mount thousands of cards at
- * once. Returns null when `items` is null (nothing to page).
+ * rendered). Used by VodScreen/SeriesScreen's single-category fetch while
+ * the local table is still being built, which has a whole category in hand
+ * but must not mount thousands of cards at once. Returns null when `items` is null (nothing to page).
  *
  * Resets to one page whenever `items` changes (a new category or search) —
  * during render rather than in an effect, so the first render of a new list

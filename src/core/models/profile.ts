@@ -1,19 +1,52 @@
 export interface Profile {
   id: string;
   name: string;
-  /** Path under public/avatar (e.g. "avatar/toon_1.png") chosen from AVATAR_CHOICES at creation. */
+  /** Path under public/avatar-svg (e.g. "avatar-svg/hoot-the-owl.svg") chosen from AVATAR_CHOICES. */
   avatarUrl: string;
+  /** A Kids profile only sees content the Kids engine (or a parent) allows — see docs/kids-profile.md. Missing means "standard". */
+  kind?: ProfileKind;
+}
+
+export type ProfileKind = "standard" | "kids";
+
+export function isKidsProfile(profile: Pick<Profile, "kind"> | null | undefined): boolean {
+  return profile?.kind === "kids";
 }
 
 /**
- * The fixed set of avatar images users pick from at profile creation — see
- * public/avatar/. Deliberately root-relative without a leading slash (not
- * "/avatar/...") to match Vite's `base: "./"` (see vite.config.ts): webOS TV
- * loads the packaged app from its own local directory rather than a server
- * root, so a leading-slash path 404s there even though it works under
- * `vite dev`, which happens to serve everything from "/" regardless.
+ * The fixed set of avatars users pick from — animated SVGs in
+ * public/avatar-svg/. Their motion is SVG SMIL (<animate>), which plays
+ * even when the file is shown through a plain <img>, so every place that
+ * draws an avatar animates it with no extra code. Deliberately
+ * root-relative without a leading slash (not "/avatar-svg/...") to match
+ * Vite's `base: "./"` (see vite.config.ts): webOS TV loads the packaged app
+ * from its own local directory rather than a server root, so a
+ * leading-slash path 404s there even though it works under `vite dev`,
+ * which happens to serve everything from "/" regardless.
  */
-export const AVATAR_CHOICES: string[] = Array.from({ length: 10 }, (_, i) => `avatar/toon_${i + 1}.png`);
+export const AVATAR_CHOICES: string[] = [
+  "hoot-the-owl",
+  "rexy-the-dino",
+  "beep-the-robot",
+  "waddle-the-penguin",
+  "zib-the-alien",
+  "berry-the-strawberry",
+  "snap-the-crocodile",
+  "gloop-the-monster",
+  "putt-the-car",
+  "wisp-the-ghost",
+].map((name) => `avatar-svg/${name}.svg`);
+
+/**
+ * Profiles saved before the animated avatars pointed at the old static
+ * images ("avatar/toon_3.png") — mapped onto the animated set by position,
+ * so every existing profile animates too. Anything else is kept as is.
+ */
+export function migrateAvatarUrl(avatarUrl: string): string {
+  const match = /^avatar\/toon_(\d+)\.png$/.exec(avatarUrl);
+  if (!match) return avatarUrl;
+  return AVATAR_CHOICES[(Number(match[1]) - 1) % AVATAR_CHOICES.length] ?? AVATAR_CHOICES[0];
+}
 
 export interface ContinueWatchingEntry {
   profileId: string;
@@ -48,6 +81,8 @@ export interface WatchHistoryEntry {
   streamUrl?: string;
   /** Live channels: the number shown in the channel list. */
   channelNumber?: number;
+  /** The title's category id (Channel.groupTitle), when known at play time — Kids recommendations group by it. */
+  categoryId?: string;
   /** Series: the episode to continue with (the next one, once an episode is finished). */
   episodeId?: string;
   season?: number;

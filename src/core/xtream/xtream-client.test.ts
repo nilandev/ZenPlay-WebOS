@@ -274,6 +274,21 @@ describe("XtreamClient", () => {
     expect(episodes).toEqual([]);
   });
 
+  it("throws XtreamAuthError when the panel answers HTTP 401 (INVALID_AUTH)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: "INVALID_AUTH", status: 401 }) });
+    const client = new XtreamClient({ ...credentials, id: "src-401" }, fetchMock as unknown as typeof fetch);
+    await expect(client.authenticate()).rejects.toBeInstanceOf(XtreamAuthError);
+  });
+
+  it("getAccountInfo reports connection usage, treating max_connections 0 as unlimited", async () => {
+    const userInfo = (extra: Record<string, unknown>) => ({ ok: true, status: 200, json: async () => ({ user_info: { auth: 1, status: "Active", exp_date: null, ...extra } }) });
+    const limited = new XtreamClient({ ...credentials, id: "src-cons-1" }, vi.fn().mockResolvedValue(userInfo({ active_cons: "1", max_connections: "2" })) as unknown as typeof fetch);
+    await expect(limited.getAccountInfo()).resolves.toMatchObject({ activeConnections: 1, maxConnections: 2 });
+
+    const unlimited = new XtreamClient({ ...credentials, id: "src-cons-2" }, vi.fn().mockResolvedValue(userInfo({ active_cons: 0, max_connections: "0" })) as unknown as typeof fetch);
+    await expect(unlimited.getAccountInfo()).resolves.toMatchObject({ activeConnections: 0, maxConnections: null });
+  });
+
   it("throws on a non-OK HTTP response", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({}, false));
     const client = new XtreamClient(credentials);

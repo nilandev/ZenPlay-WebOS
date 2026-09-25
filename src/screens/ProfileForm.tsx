@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AVATAR_CHOICES, type PlatformId, type Profile } from "@core";
+import { AVATAR_CHOICES, type PlatformId, type Profile, type ProfileKind } from "@core";
 import {
   BROWSE_SIDE_PADDING,
   Focusable,
@@ -14,12 +14,14 @@ import {
   type FocusNode,
 } from "@ui";
 import { Check, Trash2 } from "lucide-react";
+import { ParentalDisclaimer } from "./ParentalDisclaimer.js";
 
 const SCOPE = "profile-form";
 const CONFIRM_SCOPE = "profile-form-confirm";
 const AVATAR_GRID_COLUMNS = 5;
 const AVATAR_SIZE = "10rem";
 const NAME_FIELD_ID = "profile-form-name";
+const KIDS_TOGGLE_ID = "profile-form-kids";
 const CANCEL_ID = "profile-form-cancel";
 const SAVE_ID = "profile-form-save";
 const DELETE_ID = "profile-form-delete";
@@ -29,6 +31,7 @@ const CONFIRM_DELETE_ID = "profile-form-confirm-delete";
 export interface ProfileFormFields {
   name: string;
   avatarUrl: string;
+  kind: ProfileKind;
 }
 
 export interface ProfileFormProps {
@@ -38,6 +41,11 @@ export interface ProfileFormProps {
   title: string;
   saveLabel: string;
   canDelete?: boolean;
+  /**
+   * False when this is the last standard profile — it can't become a Kids
+   * profile, so a parent can always get back in (docs/kids-profile.md §2.1).
+   */
+  canBeKids?: boolean;
   onSave: (fields: ProfileFormFields) => void;
   onDelete?: () => void;
   onCancel: () => void;
@@ -50,27 +58,30 @@ export interface ProfileFormProps {
  * right. Everything is on the remote's focus graph: Name → avatars (a 5-wide
  * grid) → Save / Cancel / Delete in one row.
  */
-export function ProfileForm({ platform, profile, title, saveLabel, canDelete, onSave, onDelete, onCancel }: ProfileFormProps): JSX.Element {
+export function ProfileForm({ platform, profile, title, saveLabel, canDelete, canBeKids = true, onSave, onDelete, onCancel }: ProfileFormProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const focus = useFocusStore((state) => state.focus);
 
   const [draftName, setDraftName] = useState(profile?.name ?? "");
   const [draftAvatar, setDraftAvatar] = useState(profile?.avatarUrl ?? AVATAR_CHOICES[0]);
+  const [draftKind, setDraftKind] = useState<ProfileKind>(profile?.kind ?? "standard");
+  // The toggle is offered unless this is the last standard profile (a Kids profile can always switch back).
+  const canToggleKids = canBeKids || draftKind === "kids";
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
   // The graph's closures read drafts and callbacks through refs, so it's
   // only rebuilt when its shape changes — not on every keystroke or parent
   // render (a rebuild while the delete dialog was open used to reset its
   // focus to the first button).
-  const draftRef = useRef({ draftName, draftAvatar });
-  draftRef.current = { draftName, draftAvatar };
+  const draftRef = useRef({ draftName, draftAvatar, draftKind });
+  draftRef.current = { draftName, draftAvatar, draftKind };
   const callbacksRef = useRef({ onSave, onDelete, onCancel, fallbackName: profile?.name });
   callbacksRef.current = { onSave, onDelete, onCancel, fallbackName: profile?.name };
 
   function save(): void {
-    const { draftName: name, draftAvatar: avatarUrl } = draftRef.current;
-    callbacksRef.current.onSave({ name: name.trim() || callbacksRef.current.fallbackName || "New Profile", avatarUrl });
+    const { draftName: name, draftAvatar: avatarUrl, draftKind: kind } = draftRef.current;
+    callbacksRef.current.onSave({ name: name.trim() || callbacksRef.current.fallbackName || "New Profile", avatarUrl, kind });
   }
   const saveRef = useRef(save);
   const returnToDeleteRef = useRef(false);
@@ -97,7 +108,7 @@ export function ProfileForm({ platform, profile, title, saveLabel, canDelete, on
       return {
         id: url,
         neighbors: {
-          up: inRow2 ? row1[col] : NAME_FIELD_ID,
+          up: inRow2 ? row1[col] : canToggleKids ? KIDS_TOGGLE_ID : NAME_FIELD_ID,
           down: below ?? (col === bottomRow.length - 1 && canDelete ? DELETE_ID : col === 0 ? SAVE_ID : CANCEL_ID),
           left: col > 0 ? AVATAR_CHOICES[index - 1] : undefined,
           right: col < AVATAR_GRID_COLUMNS - 1 ? AVATAR_CHOICES[index + 1] : undefined,
@@ -120,12 +131,20 @@ export function ProfileForm({ platform, profile, title, saveLabel, canDelete, on
     // Coming back from the delete dialog, land on Delete again rather than the top.
     const initialFocusId = returnToDeleteRef.current && canDelete ? DELETE_ID : NAME_FIELD_ID;
     returnToDeleteRef.current = false;
+    const kidsNodes: FocusNode[] = canToggleKids
+      ? [{ id: KIDS_TOGGLE_ID, neighbors: { up: NAME_FIELD_ID, down: row1[0] }, onSelect: () => setDraftKind((kind) => (kind === "kids" ? "standard" : "kids")) }]
+      : [];
     setGraph(
       SCOPE,
-      [{ id: NAME_FIELD_ID, neighbors: { down: row1[0] }, onSelect: () => focusTvTextField(NAME_FIELD_ID) }, ...avatarNodes, ...actionNodes],
+      [
+        { id: NAME_FIELD_ID, neighbors: { down: canToggleKids ? KIDS_TOGGLE_ID : row1[0] }, onSelect: () => focusTvTextField(NAME_FIELD_ID) },
+        ...kidsNodes,
+        ...avatarNodes,
+        ...actionNodes,
+      ],
       initialFocusId,
     );
-  }, [isConfirmingDelete, canDelete, setGraph]);
+  }, [isConfirmingDelete, canDelete, canToggleKids, setGraph]);
 
   useEffect(() => {
     if (!isConfirmingDelete) return;
@@ -230,7 +249,18 @@ export function ProfileForm({ platform, profile, title, saveLabel, canDelete, on
         >
           <TvTextField id={NAME_FIELD_ID} label="Name" value={draftName} onChange={setDraftName} platform={platform} placeholder="New Profile" />
 
-          <div style={{ fontSize: TV_TEXT, fontWeight: 600, color: "var(--text-dim)", margin: "2rem 0 1.25rem" }}>Avatar</div>
+          <KidsToggle
+            isOn={draftKind === "kids"}
+            isAvailable={canToggleKids}
+            onToggle={() => setDraftKind((kind) => (kind === "kids" ? "standard" : "kids"))}
+          />
+          {draftKind === "kids" && (
+            <div style={{ marginTop: "1rem" }}>
+              <ParentalDisclaimer compact />
+            </div>
+          )}
+
+          <div style={{ fontSize: TV_TEXT, fontWeight: 600, color: "var(--text-dim)", margin: "1.5rem 0 1.25rem" }}>Avatar</div>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${AVATAR_GRID_COLUMNS}, ${AVATAR_SIZE})`, gap: "1.75rem", justifyContent: "space-between" }}>
             {AVATAR_CHOICES.map((url) => (
               <AvatarChoice key={url} url={url} isSelected={draftAvatar === url} onClick={() => setDraftAvatar(url)} />
@@ -312,6 +342,74 @@ function AvatarChoice({ url, isSelected, onClick }: { url: string; isSelected: b
           </span>
         )}
       </button>
+    </Focusable>
+  );
+}
+
+/** "Kids profile" switch — a Kids profile only sees content the Kids filter or a parent allows. */
+function KidsToggle({ isOn, isAvailable, onToggle }: { isOn: boolean; isAvailable: boolean; onToggle: () => void }): JSX.Element {
+  const isFocused = useIsFocused(KIDS_TOGGLE_ID);
+  const row = (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={isOn}
+      aria-label="Kids profile"
+      disabled={!isAvailable}
+      onClick={isAvailable ? onToggle : undefined}
+      style={{
+        marginTop: "1.5rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "1.5rem",
+        width: "100%",
+        padding: "1rem 1.5rem",
+        border: "none",
+        borderRadius: "1rem",
+        background: isFocused ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.07)",
+        color: isFocused ? "#0b0c10" : "#ffffff",
+        textAlign: "left",
+        opacity: isAvailable ? 1 : 0.55,
+        cursor: isAvailable ? "pointer" : "default",
+      }}
+    >
+      <span style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+        <span style={{ fontSize: TV_TEXT, fontWeight: 700 }}>Kids profile</span>
+        <span style={{ fontSize: "1.125rem", color: isFocused ? "rgba(11,12,16,0.65)" : "rgba(235,236,242,0.6)" }}>
+          {isAvailable ? "Only shows channels, movies and series suitable for children" : "At least one parent profile is needed"}
+        </span>
+      </span>
+      <span
+        aria-hidden
+        style={{
+          position: "relative",
+          flexShrink: 0,
+          width: "4.25rem",
+          height: "2.375rem",
+          borderRadius: 999,
+          background: isOn ? "var(--accent, #38bdf8)" : isFocused ? "rgba(11,12,16,0.2)" : "rgba(255,255,255,0.18)",
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: "0.25rem",
+            left: isOn ? "2.125rem" : "0.25rem",
+            width: "1.875rem",
+            height: "1.875rem",
+            borderRadius: "50%",
+            background: "#ffffff",
+            transition: "left 160ms ease-out",
+          }}
+        />
+      </span>
+    </button>
+  );
+  if (!isAvailable) return row;
+  return (
+    <Focusable id={KIDS_TOGGLE_ID} style={{ height: "auto" }}>
+      {row}
     </Focusable>
   );
 }

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512"><title>Wisp</title><defs><clipPath id="clip-wisp-the-ghost"><circle cx="100" cy="100" r="100"/></clipPath></defs><g clip-path="url(#clip-wisp-the-ghost)">
+<rect width="200" height="200" fill="#2B2D42"/>
+<circle cx="25" cy="30" r="2.5" fill="#FFE66D"><animate attributeName="opacity" values="1;.15;1" dur="2s" repeatCount="indefinite"/></circle><circle cx="172" cy="42" r="3" fill="#FFE66D"><animate attributeName="opacity" values="1;.15;1" dur="3s" repeatCount="indefinite"/></circle><circle cx="36" cy="160" r="2" fill="#FFE66D"><animate attributeName="opacity" values="1;.15;1" dur="2.5s" repeatCount="indefinite"/></circle><circle cx="178" cy="150" r="2.5" fill="#FFE66D"><animate attributeName="opacity" values="1;.15;1" dur="1.8s" repeatCount="indefinite"/></circle><circle cx="150" cy="18" r="2" fill="#FFE66D"><animate attributeName="opacity" values="1;.15;1" dur="2.2s" repeatCount="indefinite"/></circle>
+<path d="M168 70 A16 16 0 1 1 152 52 A12 12 0 1 0 168 70Z" fill="#FFE66D" opacity=".9"/>
+<g><animateTransform attributeName="transform" type="translate" values="0 0;0 -7;0 0" dur="2.6s" repeatCount="indefinite"/>
+ <ellipse cx="44" cy="132" rx="13" ry="8" fill="#F8F9FF" transform="rotate(-30 44 132)"/>
+ <ellipse cx="156" cy="132" rx="13" ry="8" fill="#F8F9FF" transform="rotate(30 156 132)"/>
+ <path d="M50 190 L50 92 A50 50 0 0 1 150 92 L150 190 Q137 176 125 190 Q112 176 100 190 Q87 176 75 190 Q62 176 50 190Z" fill="#F8F9FF"/>
+ <ellipse cx="82" cy="96" rx="8" ry="11" fill="#2B2D42"><animate attributeName="ry" values="11;11;1;11" keyTimes="0;0.9;0.95;1" dur="3s" begin="0s" repeatCount="indefinite"/></ellipse>
+ <ellipse cx="118" cy="96" rx="8" ry="11" fill="#2B2D42"><animate attributeName="ry" values="11;11;1;11" keyTimes="0;0.9;0.95;1" dur="3s" begin="0s" repeatCount="indefinite"/></ellipse>
+ <ellipse cx="100" cy="126" rx="11" ry="13" fill="#2B2D42"/>
+ <ellipse cx="100" cy="134" rx="7" ry="4.5" fill="#FF6B8B"/>
+ <ellipse cx="66" cy="114" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/><ellipse cx="134" cy="114" rx="9" ry="6" fill="#FF8FA3" opacity=".65"/>
+</g></g></svg>

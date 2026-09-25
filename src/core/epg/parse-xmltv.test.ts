@@ -60,3 +60,29 @@ describe("parseXmltv", () => {
     expect(first.value.title).toBe("News at Ten");
   });
 });
+
+describe("parseXmltv resilience", () => {
+  it("skips a programme with a malformed timestamp and keeps going", () => {
+    const xml = `<tv>
+      <programme start="not-a-date" stop="20240115210000 +0000" channel="a"><title>Broken</title></programme>
+      <programme start="20240115203000 +0000" stop="20240115210000 +0000" channel="a"><title>Fine</title></programme>
+    </tv>`;
+    expect(parseXmltvToArray(xml).map((p) => p.title)).toEqual(["Fine"]);
+  });
+});
+
+describe("parseXmltv — Kids check fields", () => {
+  it("keeps <category> values and the <rating> value", () => {
+    const xml = `<tv><programme start="20240115200000 +0000" stop="20240115210000 +0000" channel="c1"><title>Late Film</title><category lang="en">Movie</category><category>Horror</category><rating system="VCHIP"><value>TV-MA</value></rating></programme></tv>`;
+    const [programme] = parseXmltvToArray(xml);
+    expect(programme.categories).toEqual(["Movie", "Horror"]);
+    expect(programme.rating).toBe("TV-MA");
+  });
+
+  it("leaves them unset when the guide has none", () => {
+    const xml = `<tv><programme start="20240115200000 +0000" stop="20240115210000 +0000" channel="c1"><title>News</title></programme></tv>`;
+    const [programme] = parseXmltvToArray(xml);
+    expect(programme).not.toHaveProperty("categories");
+    expect(programme).not.toHaveProperty("rating");
+  });
+});

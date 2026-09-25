@@ -49,7 +49,9 @@ describe("Who's watching?", () => {
     expect(screen.getByText("New Profile", { selector: "h1" })).toBeDefined();
 
     fireEvent.change(screen.getByLabelText(/Name/, { selector: "input" }), { target: { value: "  Sam " } });
-    press("ArrowDown"); // Name → first avatar
+    press("ArrowDown"); // Name → Kids profile toggle
+    expect(focusedId()).toBe("profile-form-kids");
+    press("ArrowDown"); // → first avatar
     press("ArrowRight");
     press("Enter"); // choose the second avatar
     press("ArrowDown");
@@ -59,6 +61,7 @@ describe("Who's watching?", () => {
     expect(focusedId()).toBe("profile-form-save");
     press("Enter");
     expect(onCreateProfile).toHaveBeenCalledWith(expect.objectContaining({ name: "Sam", avatarUrl: AVATAR_CHOICES[1] }));
+    expect(onCreateProfile.mock.calls[0][0].kind).toBeUndefined(); // a standard profile
   });
 });
 

@@ -2,16 +2,12 @@ import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ShimmerStyles, SplashScreen } from "@ui";
 import { App } from "./App.js";
-import { initContentCacheFromIdb } from "./content-cache.js";
+import { purgeLegacyCacheEntries } from "./content-cache.js";
 
-// Warms the in-memory cache from IndexedDB in the background (see
-// content-cache.ts) — fired here rather than awaited before the first
-// render, so a cold start after webOS suspended/killed the app never delays
-// first paint on a storage round-trip. Screens that mount before this
-// resolves still render from sessionStorage/empty state as before, then
-// pick up any restored data via cache-invalidation-store's version bump
-// once this finishes.
-void initContentCacheFromIdb();
+// Background housekeeping only — deletes pre-table cache blobs by key (see
+// content-cache.ts). Nothing is preloaded at boot: cached values are read
+// from IndexedDB lazily, per key, when a screen first asks for one.
+void purgeLegacyCacheEntries();
 
 /**
  * Root component: renders the real App immediately (never blocked on the

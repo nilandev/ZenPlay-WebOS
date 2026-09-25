@@ -33,7 +33,15 @@ export interface CatalogRecord {
   streamUrl?: string;
   logoUrl?: string;
   posterUrl?: string;
-  /** Bumped once per completed sync (see catalog-sync.ts) — lets a sync that dies partway through be told apart from the previous complete generation, so readers never see a half-populated table. */
+  /** Series genre from the provider's list (Xtream get_series), when given — tagged like the title. */
+  genre?: string;
+  /** Kids tags from the title (and genre), computed at write time — see catalog-records.ts. */
+  tags?: string[];
+  /** 1 when the title (or genre) has a mature keyword, else 0. */
+  mature?: 0 | 1;
+  /** `${sourceId}|${tag}` per tag — multiEntry-indexed, so "every animation title in this playlist" is one index range. */
+  tagKeys?: string[];
+  /** Bumped once per completed sync (see catalog-sync.ts) — lets a sync that dies partway through be told apart from the previous complete generation, so its leftovers are swept by the next one. */
   generation: number;
 }
 
@@ -42,19 +50,27 @@ export interface SyncMeta {
   lastSyncedAt: number;
   recordCount: number;
   generation: number;
+  /** The Kids rules version the records were tagged with (see KIDS_RULES_VERSION) — an older one makes the sync due. */
+  rulesVersion?: number;
 }
+
+/** A row filter applied while walking a cursor — a Kids profile's content policy (see content-policy.ts). */
+export type CatalogRecordPredicate = (record: CatalogRecord) => boolean;
 
 export interface CatalogDb {
   db: IDBDatabase;
 }
 
 const DB_NAME = "iptv-catalog-v1";
-const DB_VERSION = 1;
+// v2: the multiEntry by_tag_key index (Kids tags). Rows written before it
+// simply aren't in the index until the next sync re-tags them.
+const DB_VERSION = 2;
 const SYNC_META_STORE = "sync_meta";
 
 const BY_SOURCE_INDEX = "by_source";
 const BY_SOURCE_CATEGORY_INDEX = "by_source_category";
 const BY_SOURCE_NAME_INDEX = "by_source_name";
+const BY_TAG_KEY_INDEX = "by_tag_key";
 
 /** Upper bound for a same-prefix IDBKeyRange scan — the highest code point IndexedDB's default key comparator will ever sort a real string below. */
 const MAX_UTF16_SUFFIX = "￿";
@@ -78,11 +94,16 @@ export function openCatalogDb(): Promise<CatalogDb> {
         const db = request.result;
         for (const kind of ["vod", "series"] as CatalogKind[]) {
           const name = storeName(kind);
-          if (db.objectStoreNames.contains(name)) continue;
-          const store = db.createObjectStore(name, { keyPath: "id" });
-          store.createIndex(BY_SOURCE_INDEX, "sourceId");
-          store.createIndex(BY_SOURCE_CATEGORY_INDEX, ["sourceId", "groupTitle"]);
-          store.createIndex(BY_SOURCE_NAME_INDEX, ["sourceId", "nameLower"]);
+          let store: IDBObjectStore;
+          if (db.objectStoreNames.contains(name)) {
+            store = request.transaction!.objectStore(name);
+          } else {
+            store = db.createObjectStore(name, { keyPath: "id" });
+            store.createIndex(BY_SOURCE_INDEX, "sourceId");
+            store.createIndex(BY_SOURCE_CATEGORY_INDEX, ["sourceId", "groupTitle"]);
+            store.createIndex(BY_SOURCE_NAME_INDEX, ["sourceId", "nameLower"]);
+          }
+          if (!store.indexNames.contains(BY_TAG_KEY_INDEX)) store.createIndex(BY_TAG_KEY_INDEX, "tagKeys", { multiEntry: true });
         }
         if (!db.objectStoreNames.contains(SYNC_META_STORE)) {
           db.createObjectStore(SYNC_META_STORE, { keyPath: "key" });
@@ -119,7 +140,9 @@ export function putRecordsBatch(catalogDb: CatalogDb, kind: CatalogKind, records
  * `currentGeneration` — the cleanup half of the shadow-write-then-swap sync
  * strategy (see catalog-sync.ts): the new generation's records are written
  * first, sync_meta is flipped to point at it, and only then does the old
- * generation get deleted, so a reader never sees a half-populated table.
+ * generation get deleted. A refresh is therefore a full replace: titles the
+ * provider dropped disappear, the rest are upserted. While a sync runs a
+ * reader can briefly see a mix of old and new rows — never a title missing.
  */
 export async function deleteStaleGeneration(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, currentGeneration: number): Promise<void> {
   const tx = catalogDb.db.transaction(storeName(kind), "readwrite");
@@ -145,11 +168,30 @@ export async function deleteStaleGeneration(catalogDb: CatalogDb, kind: CatalogK
   });
 }
 
+/** Every record and the sync_meta entry for one source+kind — used when a source's data is reset or the source is removed. */
+export async function deleteSourceCatalog(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string): Promise<void> {
+  const tx = catalogDb.db.transaction([storeName(kind), SYNC_META_STORE], "readwrite");
+  const cursorRequest = tx.objectStore(storeName(kind)).index(BY_SOURCE_INDEX).openCursor(IDBKeyRange.only(sourceId));
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (!cursor) return;
+    cursor.delete();
+    cursor.continue();
+  };
+  tx.objectStore(SYNC_META_STORE).delete(catalogSyncMetaKey(sourceId, kind));
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("Catalog source purge failed"));
+  });
+}
+
 export interface QueryPageOptions {
   sourceId: string;
   categoryId?: string;
   /** Case-insensitive prefix to match against the record's name — lowercased by the caller (catalog-store.ts) before this is used as an IDBKeyRange bound. */
   namePrefixLower?: string;
+  /** Only rows it accepts are returned and counted — `offset` counts accepted rows, not rows walked. */
+  predicate?: CatalogRecordPredicate;
   offset: number;
   limit: number;
 }
@@ -162,7 +204,7 @@ export interface QueryPageOptions {
  * screens off a single big in-memory array.
  */
 export function queryPage(catalogDb: CatalogDb, kind: CatalogKind, options: QueryPageOptions): Promise<CatalogRecord[]> {
-  const { sourceId, categoryId, namePrefixLower, offset, limit } = options;
+  const { sourceId, categoryId, namePrefixLower, predicate, offset, limit } = options;
   const tx = catalogDb.db.transaction(storeName(kind), "readonly");
   const store = tx.objectStore(storeName(kind));
 
@@ -187,6 +229,10 @@ export function queryPage(catalogDb: CatalogDb, kind: CatalogKind, options: Quer
       const cursor = cursorRequest.result;
       if (!cursor || results.length >= limit) {
         resolve(results);
+        return;
+      }
+      if (predicate && !predicate(cursor.value as CatalogRecord)) {
+        cursor.continue();
         return;
       }
       if (skipped < offset) {
@@ -220,9 +266,20 @@ export async function getRecordsByIds(catalogDb: CatalogDb, kind: CatalogKind, i
 
 /** Total matching record count for the same filter shape queryPage uses, via IDBObjectStore/IDBIndex.count() rather than reading every row — backs "N results" affordances and hasMore checks. */
 export function countRecords(catalogDb: CatalogDb, kind: CatalogKind, options: Omit<QueryPageOptions, "offset" | "limit">): Promise<number> {
-  const { sourceId, categoryId, namePrefixLower } = options;
+  const { sourceId, categoryId, namePrefixLower, predicate } = options;
   const tx = catalogDb.db.transaction(storeName(kind), "readonly");
   const store = tx.objectStore(storeName(kind));
+
+  if (predicate) {
+    // A filtered count has to look at each row — still bounded by the same index range.
+    const [source, range] =
+      namePrefixLower !== undefined
+        ? [store.index(BY_SOURCE_NAME_INDEX), IDBKeyRange.bound([sourceId, namePrefixLower], [sourceId, namePrefixLower + MAX_UTF16_SUFFIX])]
+        : categoryId !== undefined
+          ? [store.index(BY_SOURCE_CATEGORY_INDEX), IDBKeyRange.only([sourceId, categoryId])]
+          : [store.index(BY_SOURCE_INDEX), IDBKeyRange.only(sourceId)];
+    return countMatching(source, range, predicate);
+  }
 
   if (namePrefixLower !== undefined) {
     const range = IDBKeyRange.bound([sourceId, namePrefixLower], [sourceId, namePrefixLower + MAX_UTF16_SUFFIX]);
@@ -232,6 +289,97 @@ export function countRecords(catalogDb: CatalogDb, kind: CatalogKind, options: O
     return runRequest(store.index(BY_SOURCE_CATEGORY_INDEX).count(IDBKeyRange.only([sourceId, categoryId])));
   }
   return runRequest(store.index(BY_SOURCE_INDEX).count(IDBKeyRange.only(sourceId)));
+}
+
+function countMatching(source: IDBIndex, range: IDBKeyRange, predicate: CatalogRecordPredicate): Promise<number> {
+  let count = 0;
+  return new Promise((resolve, reject) => {
+    const cursorRequest = source.openCursor(range);
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor) {
+        resolve(count);
+        return;
+      }
+      if (predicate(cursor.value as CatalogRecord)) count++;
+      cursor.continue();
+    };
+    cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Filtered count failed"));
+  });
+}
+
+/**
+ * Rows carrying any of `tags` (via the multiEntry by_tag_key index), in
+ * tag order and without duplicates, that `predicate` accepts — backs the
+ * Kids profile's "More for Kids" category and tag rails. Reads at most
+ * `offset + limit` accepted rows.
+ */
+export async function queryByTags(
+  catalogDb: CatalogDb,
+  kind: CatalogKind,
+  sourceId: string,
+  tags: string[],
+  predicate: CatalogRecordPredicate,
+  offset: number,
+  limit: number,
+): Promise<CatalogRecord[]> {
+  const seen = new Set<string>();
+  const accepted: CatalogRecord[] = [];
+  const wanted = offset + limit;
+  for (const tag of tags) {
+    if (accepted.length >= wanted) break;
+    // One transaction per tag: awaiting between cursors would let a shared transaction auto-commit.
+    const index = catalogDb.db.transaction(storeName(kind), "readonly").objectStore(storeName(kind)).index(BY_TAG_KEY_INDEX);
+    await new Promise<void>((resolve, reject) => {
+      const cursorRequest = index.openCursor(IDBKeyRange.only(`${sourceId}|${tag}`));
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor || accepted.length >= wanted) {
+          resolve();
+          return;
+        }
+        const record = cursor.value as CatalogRecord;
+        if (!seen.has(record.id) && predicate(record)) {
+          seen.add(record.id);
+          accepted.push(record);
+        }
+        cursor.continue();
+      };
+      cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Tag query failed"));
+    });
+  }
+  return accepted.slice(offset, wanted);
+}
+
+/**
+ * The distinct category ids a source's catalog uses — walked off the
+ * by_source_category index's unique keys, never the rows. M3U playlists
+ * have no category API, so this is where their movie categories come from
+ * (see content-loader.ts's loadVodCategories).
+ */
+export function getCategoryIds(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string): Promise<string[]> {
+  const tx = catalogDb.db.transaction(storeName(kind), "readonly");
+  const index = tx.objectStore(storeName(kind)).index(BY_SOURCE_CATEGORY_INDEX);
+  const range = IDBKeyRange.bound([sourceId, ""], [sourceId, MAX_UTF16_SUFFIX]);
+  const ids: string[] = [];
+  return new Promise((resolve, reject) => {
+    const cursorRequest = index.openKeyCursor(range, "nextunique");
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor) {
+        resolve(ids);
+        return;
+      }
+      ids.push((cursor.key as [string, string])[1]);
+      cursor.continue();
+    };
+    cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Category listing failed"));
+  });
+}
+
+/** sync_meta key for one source+kind's catalog — shared by catalog-sync.ts and the worker's M3U path (live-sync-core.ts). */
+export function catalogSyncMetaKey(sourceId: string, kind: CatalogKind): string {
+  return `${kind}:${sourceId}`;
 }
 
 export function getSyncMeta(catalogDb: CatalogDb, key: string): Promise<SyncMeta | undefined> {

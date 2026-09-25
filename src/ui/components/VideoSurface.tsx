@@ -19,6 +19,8 @@ export interface VideoSurfaceProps {
   onPlayStateChange?: (state: { isPlaying: boolean; didEnd: boolean }) => void;
   /** Where to start the stream (resume) — read when the stream loads. */
   startPositionSeconds?: number;
+  /** Speed the stream starts at (1 = normal) — read when the stream loads. */
+  playbackRate?: number;
   /** Mirrors the buffering indicator — used by PlayerScreen to give up on a stream that never recovers. */
   onBufferingChange?: (isBuffering: boolean) => void;
 }
@@ -41,6 +43,7 @@ export function VideoSurface({
   onEngineReady,
   onPlayStateChange,
   startPositionSeconds,
+  playbackRate,
   onBufferingChange,
 }: VideoSurfaceProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -54,6 +57,8 @@ export function VideoSurface({
   onPlayStateChangeRef.current = onPlayStateChange;
   const startPositionRef = useRef(startPositionSeconds);
   startPositionRef.current = startPositionSeconds;
+  const playbackRateRef = useRef(playbackRate);
+  playbackRateRef.current = playbackRate;
   const onBufferingChangeRef = useRef(onBufferingChange);
   onBufferingChangeRef.current = onBufferingChange;
 
@@ -135,7 +140,7 @@ export function VideoSurface({
     let cancelled = false;
     setIsBuffering(true);
     engine
-      .load(streamUrl, { startPositionSeconds: startPositionRef.current })
+      .load(streamUrl, { startPositionSeconds: startPositionRef.current, playbackRate: playbackRateRef.current })
       .then(() => {
         if (!cancelled) return engine.play();
       })

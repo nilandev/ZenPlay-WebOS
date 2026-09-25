@@ -17,6 +17,8 @@ import {
 import { Check, History, Pencil, Trash2 } from "lucide-react";
 import type { ChannelLineup } from "../channel-lineup.js";
 import { clearWatchHistory, loadWatchHistory, removeWatchHistory } from "../profile-store.js";
+import { PASS_THROUGH_POLICY, type ContentPolicy } from "../content-policy.js";
+import { useKidsAllowedKeys } from "../use-kids-allowed.js";
 import { ChannelTile, RemoveBadge } from "./ListTiles.js";
 
 const SCOPE = "history";
@@ -43,6 +45,8 @@ export interface HistoryScreenProps {
   refreshKey?: number;
   /** True while PlayerScreen is open on top of this screen (see use-remote-input.ts's `enabled`). */
   isPlaybackOpen?: boolean;
+  /** The profile's content policy — a Kids profile's history only shows what's still allowed (docs/kids-profile.md §6). */
+  policy?: ContentPolicy;
 }
 
 interface Row {
@@ -103,16 +107,24 @@ export function HistoryScreen({
   onOpenSeries,
   refreshKey = 0,
   isPlaybackOpen = false,
+  policy = PASS_THROUGH_POLICY,
 }: HistoryScreenProps): JSX.Element {
   const [version, setVersion] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [isConfirmingClear, setIsConfirmingClear] = useState(false);
 
-  const history = useMemo(() => {
+  const fullHistory = useMemo(() => {
     void version;
     void refreshKey;
     return loadWatchHistory(profileId, source.id);
   }, [profileId, source.id, version, refreshKey]);
+  const savedItems = useMemo(() => fullHistory.map((e) => ({ kind: e.kind, id: e.contentId })), [fullHistory]);
+  // null for a standard profile: the whole history is shown.
+  const allowedKeys = useKidsAllowedKeys(source, policy, savedItems);
+  const history = useMemo(
+    () => (allowedKeys ? fullHistory.filter((e) => allowedKeys.has(`${e.kind}:${e.contentId}`)) : fullHistory),
+    [fullHistory, allowedKeys],
+  );
 
   const rows = useMemo<Row[]>(() => {
     const inProgress = history.filter((e) => e.kind !== "live" && !e.finished);

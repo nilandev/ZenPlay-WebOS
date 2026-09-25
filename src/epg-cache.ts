@@ -1,8 +1,8 @@
 import type { Channel, EpgProgramme, PlaylistSource } from "@core";
-import { getCachedContent } from "./content-cache.js";
 import { loadStreamEpg } from "./content-loader.js";
+import { getLocalChannelProgrammes } from "./epg-store.js";
 
-/** How long a channel's fetched guide is reused before asking the provider again. */
+/** How long a channel's looked-up guide is reused before looking again. */
 const GUIDE_TTL_MS = 10 * 60 * 1000;
 
 const cache = new Map<string, { programmes: EpgProgramme[]; fetchedAt: number }>();
@@ -10,39 +10,38 @@ const inFlight = new Map<string, Promise<EpgProgramme[]>>();
 
 const keyFor = (source: PlaylistSource, channel: Channel) => `${source.id}:${channel.id}`;
 
-/** Test-only: forgets every fetched guide. */
+/** Test-only: forgets every looked-up guide. */
 export function __resetEpgCacheForTests(): void {
   cache.clear();
   inFlight.clear();
 }
 
+/** Drops one source's looked-up guides — epg-sync.ts calls this when a fresh guide lands, so the next lookup reads the new data. */
+export function forgetSourceGuides(sourceId: string): void {
+  const prefix = `${sourceId}:`;
+  for (const key of cache.keys()) {
+    if (key.startsWith(prefix)) cache.delete(key);
+  }
+}
+
 /**
- * One channel's programmes from what's already in hand — a fresh cached
- * fetch, or the bulk XMLTV guide if one is cached for this source — without
- * making a request. Undefined when a fetch would be needed.
+ * One channel's programmes if they were looked up recently, without any
+ * I/O. Undefined when loadChannelGuide is needed.
  */
 export function peekChannelGuide(source: PlaylistSource, channel: Channel): EpgProgramme[] | undefined {
   const cached = cache.get(keyFor(source, channel));
   if (cached && Date.now() - cached.fetchedAt < GUIDE_TTL_MS) return cached.programmes;
-
-  const bulk = getCachedContent<EpgProgramme[]>(`guide-epg:${source.id}`);
-  if (bulk && bulk.length > 0) {
-    const epgId = channel.epgChannelId ?? channel.id;
-    const forChannel = bulk.filter((p) => p.channelId === epgId);
-    cache.set(keyFor(source, channel), { programmes: forChannel, fetchedAt: Date.now() });
-    return forChannel;
-  }
-
-  // M3U sources have no per-channel EPG request — without a bulk guide there's nothing to fetch.
-  if (source.kind !== "xtream") return [];
   return undefined;
 }
 
 /**
  * One channel's programmes, shared by Live TV's Now & Next panel and the
- * Program Guide grid: peekChannelGuide if possible, otherwise the
- * provider's per-channel short EPG (Xtream), deduped while in flight and
- * cached for GUIDE_TTL_MS. Never rejects — a failed lookup is "no guide".
+ * Program Guide grid. Looks in the local guide table first (filled by
+ * epg-sync.ts from the source's XMLTV); when that has nothing for this
+ * channel, Xtream sources fall back to the provider's per-channel short
+ * EPG (the bulk XMLTV and get_short_epg can disagree — see
+ * XtreamClient.getShortEpg). Deduped while in flight and cached for
+ * GUIDE_TTL_MS. Never rejects — a failed lookup is "no guide".
  */
 export function loadChannelGuide(source: PlaylistSource, channel: Channel): Promise<EpgProgramme[]> {
   const known = peekChannelGuide(source, channel);
@@ -52,7 +51,7 @@ export function loadChannelGuide(source: PlaylistSource, channel: Channel): Prom
   const pending = inFlight.get(key);
   if (pending) return pending;
 
-  const request = loadStreamEpg(source, channel.id)
+  const request = lookUp(source, channel)
     .catch(() => [] as EpgProgramme[])
     .then((programmes) => {
       cache.set(key, { programmes, fetchedAt: Date.now() });
@@ -61,4 +60,12 @@ export function loadChannelGuide(source: PlaylistSource, channel: Channel): Prom
     .finally(() => inFlight.delete(key));
   inFlight.set(key, request);
   return request;
+}
+
+async function lookUp(source: PlaylistSource, channel: Channel): Promise<EpgProgramme[]> {
+  const local = await getLocalChannelProgrammes(source.id, channel.epgChannelId ?? channel.id);
+  if (local && local.length > 0) return local;
+  // M3U sources have no per-channel EPG request — the local guide is all there is.
+  if (source.kind !== "xtream") return local ?? [];
+  return loadStreamEpg(source, channel.id);
 }

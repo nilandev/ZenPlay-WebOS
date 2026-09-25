@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Channel, PlaylistSource } from "@core";
 import { clearAllCachedContent } from "../content-cache.js";
-import { __clearCatalogDbForTests, __resetCatalogDbForTests } from "../core/storage/catalog-db.js";
+import { __clearCatalogDbForTests, __resetCatalogDbForTests, openCatalogDb, putRecordsBatch, putSyncMeta } from "../core/storage/catalog-db.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { useFocusStore } from "../ui/focus/focus-store.js";
 import { FavouritesScreen } from "./FavouritesScreen.js";
@@ -20,10 +20,13 @@ const { live, movies, series } = vi.hoisted(() => ({
   series: [{ id: "s-1", name: "The Night Agent" }],
 }));
 
-vi.mock("../content-loader.js", () => ({
-  loadChannelsByKind: vi.fn((_source: unknown, kind: string) => Promise.resolve(kind === "live" ? live : movies)),
-  loadSeriesList: vi.fn().mockResolvedValue(series),
+vi.mock("../use-live-channels.js", () => ({
+  useLiveChannels: () => ({ channels: live, isInitialLoading: false, error: null }),
 }));
+
+// Saved movies/series resolve from the local catalog table (seeded below); a
+// missing table is requested from the sync manager — see the last test.
+vi.mock("../sync/sync-manager.js", () => ({ syncSource: vi.fn().mockResolvedValue({ stages: {}, errors: {} }) }));
 
 const source: PlaylistSource = { kind: "xtream", id: "src-1", name: "My Source", baseUrl: "http://x", username: "u", password: "p" };
 const PROFILE = "profile-1";
@@ -53,6 +56,20 @@ describe("FavouritesScreen (My List)", () => {
     __resetCatalogDbForTests();
     await __clearCatalogDbForTests();
     useFocusStore.getState().clearGraph("favourites");
+    vi.clearAllMocks();
+    const catalogDb = await openCatalogDb();
+    await putRecordsBatch(
+      catalogDb,
+      "vod",
+      movies.map((m) => ({ id: `${source.id}:${m.id}`, sourceId: source.id, streamId: m.id, name: m.name, nameLower: m.name.toLowerCase(), streamUrl: m.streamUrl, generation: 1 })),
+    );
+    await putRecordsBatch(
+      catalogDb,
+      "series",
+      series.map((x) => ({ id: `${source.id}:${x.id}`, sourceId: source.id, streamId: x.id, name: x.name, nameLower: x.name.toLowerCase(), generation: 1 })),
+    );
+    await putSyncMeta(catalogDb, { key: `vod:${source.id}`, lastSyncedAt: Date.now(), recordCount: movies.length, generation: 1 });
+    await putSyncMeta(catalogDb, { key: `series:${source.id}`, lastSyncedAt: Date.now(), recordCount: series.length, generation: 1 });
   });
 
   afterEach(() => {
@@ -165,5 +182,16 @@ describe("FavouritesScreen (My List)", () => {
     await settle();
     expect(screen.getByText("Your list is empty")).toBeDefined();
     expect(screen.queryByRole("button", { name: /Edit My List/ })).toBeNull();
+  });
+
+  it("asks the sync manager for a movie table that hasn't been built yet, instead of downloading the catalog", async () => {
+    __resetCatalogDbForTests();
+    await __clearCatalogDbForTests(); // no synced tables at all
+    toggleFavorite(PROFILE, source.id, "movie", "m-1");
+    const { syncSource } = await import("../sync/sync-manager.js");
+
+    renderList();
+    await vi.waitFor(() => expect(syncSource).toHaveBeenCalledWith(source, { trigger: "first-run", stages: ["vod"] }));
+    expect(screen.queryByText("Inception")).toBeNull();
   });
 });

@@ -1,14 +1,21 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource, Profile } from "@core";
-import { clearAllCachedContent, getCachedContent } from "../content-cache.js";
+import { clearAllCachedContent } from "../content-cache.js";
+import { __clearLiveDbForTests, __resetLiveDbForTests, openLiveDb, putLiveSyncMeta } from "../core/storage/live-db.js";
+import { __resetCatalogDbForTests } from "../core/storage/catalog-db.js";
+import { __resetEpgDbForTests } from "../core/storage/epg-db.js";
+import { __resetSyncStoreForTests, useSyncStore } from "../sync/sync-store.js";
 import { useFocusStore } from "../ui/focus/focus-store.js";
-import { __resetHomeFocusMemoryForTests, HomeScreen } from "./HomeScreen.js";
+import { PROFILE_SWITCHER_FOCUS_ID } from "../ui/components/ProfileSwitcher.js";
+import { __resetHomeFocusMemoryForTests, describeExpiry, HomeScreen } from "./HomeScreen.js";
 
 // jsdom doesn't implement scrollIntoView; Focusable calls it whenever a node becomes focused.
 beforeEach(() => {
   Element.prototype.scrollIntoView = () => {};
 });
+
+vi.mock("../sync/sync-manager.js", () => ({ syncSource: vi.fn().mockResolvedValue({ stages: {}, errors: {} }) }));
 
 vi.mock("../content-loader.js", () => ({
   loadPlaylistInfo: vi.fn().mockResolvedValue({ name: "Test Playlist", expiresAt: null }),
@@ -154,14 +161,13 @@ describe("HomeScreen", () => {
     expect(useFocusStore.getState().focusedId).toBe("series");
   });
 
-  it("clicking Refresh revalidates the source's caches without reloading the page", async () => {
+  it("clicking Refresh forces a sync of every stage without reloading the page", async () => {
     const reloadSpy = vi.fn();
     Object.defineProperty(window, "location", {
       value: { ...window.location, reload: reloadSpy },
       writable: true,
     });
-
-    const { loadChannelsByKind } = await import("../content-loader.js");
+    const { syncSource } = await import("../sync/sync-manager.js");
 
     renderHome();
 
@@ -169,12 +175,170 @@ describe("HomeScreen", () => {
     await act(async () => {
       fireEvent.click(refreshButton);
       await vi.advanceTimersByTimeAsync(0);
-      await Promise.resolve();
-      await Promise.resolve();
     });
 
-    expect(getCachedContent(`live:${source.id}`)).toEqual([]);
-    expect(loadChannelsByKind).toHaveBeenCalled();
+    expect(syncSource).toHaveBeenCalledWith(source, { trigger: "manual", force: true });
     expect(reloadSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("HomeScreen sync status", () => {
+  beforeEach(async () => {
+    clearAllCachedContent();
+    __resetHomeFocusMemoryForTests();
+    __resetSyncStoreForTests();
+    useFocusStore.getState().clearGraph("home-grid");
+    // The fake-timer tests above opened these connections without ever letting them settle — start fresh.
+    __resetCatalogDbForTests();
+    __resetEpgDbForTests();
+    __resetLiveDbForTests();
+    await __clearLiveDbForTests();
+    vi.clearAllMocks();
+  });
+  afterEach(() => useFocusStore.getState().clearGraph("home-grid"));
+
+  it("shows how fresh the playlist is, or what's syncing right now", async () => {
+    await putLiveSyncMeta(await openLiveDb(), { sourceId: source.id, lastSyncedAt: Date.now() - 2 * 60 * 60 * 1000, generation: 1, channelCount: 5 });
+    renderHome();
+    expect(await screen.findByText("Updated 2h ago")).toBeTruthy();
+
+    act(() => {
+      useSyncStore.getState().beginRun(source.id, "interval");
+      useSyncStore.getState().setStage(source.id, "vod", { status: "running", done: 4000 });
+    });
+    expect(screen.getByText(`Syncing Movies… ${(4000).toLocaleString()}`)).toBeTruthy();
+  });
+
+  it("after Refresh, reports what's now stored", async () => {
+    await putLiveSyncMeta(await openLiveDb(), { sourceId: source.id, lastSyncedAt: Date.now(), generation: 1, channelCount: 12430 });
+    const { syncSource } = await import("../sync/sync-manager.js");
+    vi.mocked(syncSource).mockResolvedValue({ stages: { live: "synced" }, errors: {} });
+    renderHome();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Playlist" }));
+    expect(await screen.findByText(`Playlist updated · ${(12430).toLocaleString()} channels`)).toBeTruthy();
+  });
+
+  it("after a failed Refresh, says why and how to retry — without taking focus", async () => {
+    const { syncSource } = await import("../sync/sync-manager.js");
+    vi.mocked(syncSource).mockImplementation(async () => {
+      useSyncStore.getState().setStage(source.id, "auth", { status: "failed", error: "The provider didn't respond within 15 seconds." });
+      return { stages: { auth: "failed" }, errors: { auth: "The provider didn't respond within 15 seconds." } };
+    });
+    renderHome();
+    act(() => useFocusStore.getState().focus("refresh"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Playlist" }));
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Refresh failed: The provider didn't respond within 15 seconds. Press Refresh Playlist to try again.",
+    );
+    expect(useFocusStore.getState().focusedId).toBe("refresh");
+    expect(screen.getByText("Last refresh failed · press Refresh Playlist to retry")).toBeTruthy();
+  });
+});
+
+describe("HomeScreen playlist switching", () => {
+  const second: PlaylistSource = { kind: "m3u-url", id: "src-2", name: "Sports Playlist", url: "http://example.com/list.m3u" };
+
+  beforeEach(() => {
+    clearAllCachedContent();
+    __resetHomeFocusMemoryForTests();
+    useFocusStore.getState().clearGraph("home-grid");
+    Element.prototype.scrollIntoView = () => {};
+  });
+  afterEach(() => {
+    useFocusStore.getState().clearGraph("home-grid");
+    useFocusStore.getState().clearGraph("home-playlist-picker");
+  });
+
+  function renderWithPlaylists(sources: PlaylistSource[], onSelectSource = vi.fn()) {
+    render(
+      <HomeScreen source={source} sources={sources} onSelectSource={onSelectSource} platform="web" profile={profile} onSelectTile={() => {}} onOpenProfiles={() => {}} />,
+    );
+    return onSelectSource;
+  }
+
+  it("shows no playlist chip with a single playlist", () => {
+    renderWithPlaylists([source]);
+    expect(screen.queryByRole("button", { name: /Switch playlist/ })).toBeNull();
+    expect(useFocusStore.getState().nodes["home-playlist-chip"]).toBeUndefined();
+  });
+
+  it("with more than one, the header chip names the active playlist and sits above the right-hand tiles", () => {
+    renderWithPlaylists([source, second]);
+    expect(screen.getByRole("button", { name: "Playlist: My Source. Switch playlist" })).toBeTruthy();
+    act(() => useFocusStore.getState().focus("guide"));
+    press("ArrowUp");
+    expect(useFocusStore.getState().focusedId).toBe("home-playlist-chip");
+    press("ArrowLeft");
+    expect(useFocusStore.getState().focusedId).toBe(PROFILE_SWITCHER_FOCUS_ID);
+    act(() => useFocusStore.getState().focus("live"));
+    press("ArrowUp");
+    expect(useFocusStore.getState().focusedId).toBe(PROFILE_SWITCHER_FOCUS_ID); // the left half still goes to the profile chip
+  });
+
+  it("the chip opens a picker on the active playlist; OK on another switches to it", () => {
+    const onSelectSource = renderWithPlaylists([source, second]);
+    act(() => useFocusStore.getState().focus("home-playlist-chip"));
+    press("Enter");
+
+    expect(screen.getByRole("dialog", { name: "Switch playlist" })).toBeTruthy();
+    expect(useFocusStore.getState().focusedId).toBe(`home-playlist-option:${source.id}`);
+    expect(screen.getAllByText(/Not downloaded yet/)).toHaveLength(2);
+    expect(useFocusStore.getState().nodes.live).toBeUndefined(); // nothing behind the picker is reachable
+
+    press("ArrowDown");
+    press("Enter");
+    expect(onSelectSource).toHaveBeenCalledWith("src-2");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Back (or OK on the active playlist) closes the picker without switching, back on the chip", () => {
+    const onSelectSource = renderWithPlaylists([source, second]);
+    act(() => useFocusStore.getState().focus("home-playlist-chip"));
+    press("Enter");
+    press("Escape");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(useFocusStore.getState().focusedId).toBe("home-playlist-chip");
+
+    press("Enter");
+    press("Enter"); // OK on the active row
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onSelectSource).not.toHaveBeenCalled();
+  });
+});
+
+describe("describeExpiry", () => {
+  const now = Date.parse("2026-09-25T12:00:00Z");
+  it("reads as a date when far off, a countdown in the last month, and red once expired", () => {
+    expect(describeExpiry(new Date("2027-09-15T12:00:00Z"), now)).toMatchObject({ tone: "ok", label: expect.stringMatching(/^Expires /) });
+    expect(describeExpiry(new Date("2026-10-07T12:00:00Z"), now)).toEqual({ tone: "soon", label: "Expires in 12 days" });
+    expect(describeExpiry(new Date("2026-09-26T12:00:00Z"), now)).toEqual({ tone: "soon", label: "Expires tomorrow" });
+    expect(describeExpiry(new Date("2026-09-01T12:00:00Z"), now)).toMatchObject({ tone: "expired", label: expect.stringMatching(/^Expired /) });
+    expect(describeExpiry(null, now)).toEqual({ tone: "ok", label: "No expiry" });
+    expect(describeExpiry(undefined, now)).toEqual({ tone: "unknown", label: "Expiry unknown" });
+  });
+});
+
+describe("HomeScreen footer playlist name", () => {
+  beforeEach(() => {
+    clearAllCachedContent();
+    __resetHomeFocusMemoryForTests();
+    useFocusStore.getState().clearGraph("home-grid");
+  });
+  afterEach(() => useFocusStore.getState().clearGraph("home-grid"));
+
+  it("names the playlist in the footer only when there's no playlist chip", () => {
+    const status = () => screen.getByRole("status", { name: "Current playlist" });
+    const { unmount } = render(<HomeScreen source={source} platform="web" profile={profile} onSelectTile={() => {}} onOpenProfiles={() => {}} />);
+    expect(status().textContent).toContain(source.name);
+    unmount();
+
+    const other = { ...source, id: "other", name: "Second List" };
+    render(
+      <HomeScreen source={source} sources={[source, other]} onSelectSource={() => {}} platform="web" profile={profile} onSelectTile={() => {}} onOpenProfiles={() => {}} />,
+    );
+    expect(status().textContent).not.toContain(source.name);
   });
 });

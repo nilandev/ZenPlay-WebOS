@@ -49,6 +49,27 @@ function makeVideoElement(): HTMLVideoElement {
   return video;
 }
 
+describe("HlsPlayerEngine playback speed", () => {
+  beforeEach(() => {
+    hlsInstances.length = 0;
+    (Hls.isSupported as ReturnType<typeof vi.fn>).mockReturnValue(true);
+  });
+
+  it("starts a direct-play file at the requested speed, and resets to normal for the next stream", async () => {
+    const engine = new HlsPlayerEngine();
+    const video = makeVideoElement();
+    engine.attach(video);
+
+    await engine.load("http://example.com/movie/u/p/42.mkv", { playbackRate: 1.5 });
+    expect(video.playbackRate).toBe(1.5);
+    expect(video.defaultPlaybackRate).toBe(1.5); // survives the element picking up the new source
+
+    await engine.load("http://example.com/live/u/p/1.m3u8");
+    expect(video.playbackRate).toBe(1);
+  });
+
+});
+
 describe("HlsPlayerEngine.load", () => {
   beforeEach(() => {
     hlsInstances.length = 0;
