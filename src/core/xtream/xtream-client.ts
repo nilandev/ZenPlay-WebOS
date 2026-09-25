@@ -20,6 +20,10 @@ interface XtreamAuthResponse {
     username: string;
     /** Unix seconds as a string, or null/"0" for an account with no expiry ("Unlimited"). */
     exp_date: string | null;
+    /** Streams currently open on this account — panels send it as a string ("0") or a number. */
+    active_cons?: string | number;
+    /** Concurrent streams the account allows; "0"/missing means unlimited. */
+    max_connections?: string | number;
   };
   server_info: {
     url: string;
@@ -29,9 +33,20 @@ interface XtreamAuthResponse {
 }
 
 export interface XtreamAccountInfo {
+  /** Provider's account status — "Active", "Banned", "Disabled" or "Expired" on standard panels. */
   status: string;
   /** null when the account has no expiry ("Unlimited"). */
   expiresAt: Date | null;
+  /** null when the panel doesn't report it. */
+  activeConnections: number | null;
+  /** null when the panel doesn't report it or the account is unlimited. */
+  maxConnections: number | null;
+}
+
+function toCount(raw: string | number | undefined): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const num = Number(raw);
+  return Number.isFinite(num) && num >= 0 ? num : null;
 }
 
 interface XtreamCategory {
@@ -204,6 +219,8 @@ export class XtreamClient {
 
   private async performFetchJson<T>(params: Record<string, string>): Promise<T> {
     const response = await this.fetchImpl(this.buildApiUrl(params));
+    // Panels answer bad credentials with HTTP 401 ({"error":"INVALID_AUTH"}) rather than a 200 with auth: 0 — same meaning, so same error.
+    if (response.status === 401) throw new XtreamAuthError();
     if (!response.ok) {
       throw new Error(`Xtream request failed: HTTP ${response.status}`);
     }
@@ -229,9 +246,12 @@ export class XtreamClient {
   async getAccountInfo(): Promise<XtreamAccountInfo> {
     const { user_info } = await this.authenticate();
     const expSeconds = user_info.exp_date ? Number(user_info.exp_date) : 0;
+    const maxConnections = toCount(user_info.max_connections);
     return {
       status: user_info.status,
       expiresAt: expSeconds > 0 ? new Date(expSeconds * 1000) : null,
+      activeConnections: toCount(user_info.active_cons),
+      maxConnections: maxConnections === 0 ? null : maxConnections,
     };
   }
 

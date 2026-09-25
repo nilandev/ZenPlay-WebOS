@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 import { mapSeriesEntry, mapVodStream, type XtreamSeriesRaw, type XtreamVodStreamRaw } from "@core";
-import { proxyFetch } from "../proxy-fetch.js";
+import { proxyDownloadFetch } from "../proxy-fetch.js";
 
 /**
  * Runs the large VOD/series player_api.php fetch + JSON parse + reshape
@@ -75,14 +75,14 @@ function buildApiUrl(credentials: CatalogWorkerCredentials, action: CatalogWorke
 
 async function fetchAndMap(request: CatalogWorkerRequest): Promise<unknown[]> {
   const url = buildApiUrl(request.credentials, request.action, request.categoryId);
-  // Must go through proxyFetch, not a bare fetch() — under `vite dev` a
+  // Must go through proxyDownloadFetch, not a bare fetch() — under `vite dev` a
   // direct cross-origin request to the provider fails the browser's CORS
   // check (the same reason XtreamClient itself never calls fetch directly —
   // see its doc comment), and inside a Worker that failure surfaces as a
   // silently-rejected/never-resolving promise rather than a visible error,
   // which is what made this look like an indefinite freeze with no shimmer
   // and no error state rather than a clean failure.
-  const response = await proxyFetch(url);
+  const response = await proxyDownloadFetch(url);
   if (!response.ok) throw new Error(`Xtream request failed: HTTP ${response.status}`);
 
   if (request.action === "get_vod_streams") {

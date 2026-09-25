@@ -10,7 +10,7 @@ import {
   type SeriesDetails,
   type SeriesEpisode,
 } from "@core";
-import { proxyFetch } from "./proxy-fetch.js";
+import { proxyDownloadFetch, proxyFetch } from "./proxy-fetch.js";
 import { createCatalogWorkerClient } from "./workers/catalog-worker-client.js";
 
 /**
@@ -60,7 +60,8 @@ export async function loadPlaylistInfo(source: PlaylistSource): Promise<Playlist
  */
 export async function loadChannelsByKind(source: PlaylistSource, kind: Channel["kind"], categoryId?: string): Promise<Channel[]> {
   if (source.kind === "xtream") {
-    const client = new XtreamClient(source, proxyFetch);
+    // The full live list can run to several MB, so it gets the long download deadline.
+    const client = new XtreamClient(source, proxyDownloadFetch);
     await client.authenticate();
     if (kind === "live") return client.getLiveChannels(categoryId);
     if (kind === "movie") {
@@ -69,7 +70,7 @@ export async function loadChannelsByKind(source: PlaylistSource, kind: Channel["
     return []; // series are fetched via loadSeriesList/loadSeriesDetails instead.
   }
 
-  const content = source.kind === "m3u-file" ? source.content : await (await proxyFetch(source.url)).text();
+  const content = source.kind === "m3u-file" ? source.content : await (await proxyDownloadFetch(source.url)).text();
   const channels = parseM3u(content).filter((c) => c.kind === kind);
   return categoryId ? channels.filter((c) => c.groupTitle === categoryId) : channels;
 }
@@ -148,11 +149,11 @@ export async function loadEpg(source: PlaylistSource): Promise<EpgProgramme[]> {
   if (source.kind === "xtream") {
     const base = source.baseUrl.endsWith("/") ? source.baseUrl.slice(0, -1) : source.baseUrl;
     const url = `${base}/xmltv.php?username=${encodeURIComponent(source.username)}&password=${encodeURIComponent(source.password)}`;
-    const xml = await (await proxyFetch(url)).text();
+    const xml = await (await proxyDownloadFetch(url)).text();
     return parseXmltvToArray(xml);
   }
   if (!epgUrl) return [];
-  const xml = await (await proxyFetch(epgUrl)).text();
+  const xml = await (await proxyDownloadFetch(epgUrl)).text();
   return parseXmltvToArray(xml);
 }
 

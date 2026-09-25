@@ -13,7 +13,9 @@ import {
   useRemoteInput,
   type FocusNode,
 } from "@ui";
-import { Check, Radio, Rss, type LucideIcon } from "lucide-react";
+import { Check, LoaderCircle, Radio, Rss, type LucideIcon } from "lucide-react";
+import { setCachedContent } from "../content-cache.js";
+import { validateSource } from "../validate-source.js";
 
 export interface AddSourceScreenProps {
   onSourceAdded: (source: PlaylistSource) => void;
@@ -34,6 +36,7 @@ const FIELD_PASSWORD_ID = "add-source-field-password";
 const FIELD_M3U_URL_ID = "add-source-field-m3u-url";
 const SUBMIT_ID = "add-source-submit";
 const CANCEL_ID = "add-source-cancel";
+const SAVE_ANYWAY_ID = "add-source-save-anyway";
 
 const tabIdFor = (mode: Mode) => (mode === "xtream" ? TAB_XTREAM_ID : TAB_M3U_ID);
 const looksLikeUrl = (value: string) => /^https?:\/\/\S+$/i.test(value);
@@ -44,6 +47,12 @@ const looksLikeUrl = (value: string) => /^https?:\/\/\S+$/i.test(value);
  *
  * TV layout: the playlist type on the left as two large choice cards, the
  * form on the right (TvTextField handles typing with the remote).
+ *
+ * Submitting checks the source against the provider first (see
+ * validate-source.ts) and only saves it once that passes. While it runs the
+ * submit button shows "Connecting…" and focus is pinned to it; Back cancels
+ * the check and returns to the form. When the server simply didn't answer,
+ * "Save anyway" lets the user keep the source (the provider may just be down).
  */
 export function AddSourceScreen({ onSourceAdded, onCancel, platform }: AddSourceScreenProps): JSX.Element {
   const [mode, setMode] = useState<Mode>("xtream");
@@ -53,6 +62,13 @@ export function AddSourceScreen({ onSourceAdded, onCancel, platform }: AddSource
   const [password, setPassword] = useState("");
   const [m3uUrl, setM3uUrl] = useState("");
   const [error, setError] = useState("");
+  const [isValidating, setIsValidating] = useState(false);
+  // The source that failed validation for a possibly-transient reason — set means "Save anyway" is offered for exactly this source.
+  const [saveAnywaySource, setSaveAnywaySource] = useState<PlaylistSource | null>(null);
+  const validationRef = useRef<AbortController | null>(null);
+  // Where focus goes once a failed check hands the form back — applied after the graph effect restores the fields (focus() ignores ids not in the graph).
+  const pendingFocusRef = useRef<string | null>(null);
+  useEffect(() => () => validationRef.current?.abort(), []);
 
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
@@ -64,7 +80,13 @@ export function AddSourceScreen({ onSourceAdded, onCancel, platform }: AddSource
   const latestRef = useRef({ mode, name, baseUrl, username, password, m3uUrl });
   latestRef.current = { mode, name, baseUrl, username, password, m3uUrl };
 
+  function clearFeedback(): void {
+    setError("");
+    setSaveAnywaySource(null);
+  }
+
   function handleSubmit(): void {
+    if (validationRef.current) return; // already connecting
     const current = latestRef.current;
     const trimmed = {
       name: current.name.trim() || (current.mode === "xtream" ? "My Provider" : "My Playlist"),
@@ -96,16 +118,55 @@ export function AddSourceScreen({ onSourceAdded, onCancel, platform }: AddSource
       return;
     }
 
-    setError("");
+    clearFeedback();
     const id = crypto.randomUUID();
-    if (current.mode === "xtream") {
-      onSourceAdded({ kind: "xtream", id, name: trimmed.name, baseUrl: trimmed.baseUrl, username: trimmed.username, password: current.password });
-    } else {
-      onSourceAdded({ kind: "m3u-url", id, name: trimmed.name, url: trimmed.m3uUrl });
-    }
+    const source: PlaylistSource =
+      current.mode === "xtream"
+        ? { kind: "xtream", id, name: trimmed.name, baseUrl: trimmed.baseUrl, username: trimmed.username, password: current.password }
+        : { kind: "m3u-url", id, name: trimmed.name, url: trimmed.m3uUrl };
+
+    const controller = new AbortController();
+    validationRef.current = controller;
+    setIsValidating(true);
+    focus(SUBMIT_ID);
+
+    validateSource(source, { signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        if (result.ok) {
+          // Seed the footer's name/expiry so Home can show it without a second login round-trip.
+          setCachedContent(`playlist-info:${source.id}`, { name: source.name, expiresAt: result.expiresAt }, "playlist-info");
+          onSourceAdded(source);
+          return;
+        }
+        setError(result.message);
+        setSaveAnywaySource(result.canSaveAnyway ? source : null);
+        if (result.reason === "auth") pendingFocusRef.current = current.mode === "xtream" ? FIELD_USERNAME_ID : FIELD_M3U_URL_ID;
+        else if (!result.canSaveAnyway && result.reason !== "account") pendingFocusRef.current = current.mode === "xtream" ? FIELD_URL_ID : FIELD_M3U_URL_ID;
+      })
+      .catch(() => {
+        // Aborted by Back/unmount — cancelConnecting already reset the form.
+      })
+      .finally(() => {
+        if (validationRef.current !== controller) return;
+        validationRef.current = null;
+        setIsValidating(false);
+      });
+  }
+
+  function cancelConnecting(): void {
+    validationRef.current?.abort();
+    validationRef.current = null;
+    setIsValidating(false);
+  }
+
+  function handleSaveAnyway(): void {
+    if (saveAnywaySource) onSourceAdded(saveAnywaySource);
   }
   const handleSubmitRef = useRef(handleSubmit);
   handleSubmitRef.current = handleSubmit;
+  const handleSaveAnywayRef = useRef(handleSaveAnyway);
+  handleSaveAnywayRef.current = handleSaveAnyway;
 
   const fieldIds = useMemo(
     () => (mode === "xtream" ? [FIELD_NAME_ID, FIELD_URL_ID, FIELD_USERNAME_ID, FIELD_PASSWORD_ID] : [FIELD_NAME_ID, FIELD_M3U_URL_ID]),
@@ -114,14 +175,27 @@ export function AddSourceScreen({ onSourceAdded, onCancel, platform }: AddSource
 
   function chooseMode(next: Mode): void {
     setMode(next);
-    setError("");
+    clearFeedback();
     focus(FIELD_NAME_ID); // the type is picked — straight on to the form
   }
 
   // setGraph replaces the scope in place, so rebuilding when the mode
   // changes keeps focus; clearing happens only on unmount.
+  const canSaveAnyway = saveAnywaySource !== null;
+
   useEffect(() => {
+    if (isValidating) {
+      // Pinned to the button showing "Connecting…" — nothing else is actionable until the check finishes or Back cancels it.
+      setGraph(SCOPE, [{ id: SUBMIT_ID, neighbors: {} }], SUBMIT_ID);
+      return;
+    }
     const activeTab = tabIdFor(mode);
+    const actionIds = [SUBMIT_ID, ...(canSaveAnyway ? [SAVE_ANYWAY_ID] : []), ...(onCancel ? [CANCEL_ID] : [])];
+    const actionActions: Record<string, () => void> = {
+      [SUBMIT_ID]: () => handleSubmitRef.current(),
+      [SAVE_ANYWAY_ID]: () => handleSaveAnywayRef.current(),
+      [CANCEL_ID]: () => onCancel?.(),
+    };
     const nodes: FocusNode[] = [
       { id: TAB_XTREAM_ID, neighbors: { down: TAB_M3U_ID, right: FIELD_NAME_ID }, onSelect: () => chooseMode("xtream") },
       { id: TAB_M3U_ID, neighbors: { up: TAB_XTREAM_ID, right: FIELD_NAME_ID }, onSelect: () => chooseMode("m3u-url") },
@@ -134,21 +208,24 @@ export function AddSourceScreen({ onSourceAdded, onCancel, platform }: AddSource
         },
         onSelect: () => focusTvTextField(id),
       })),
-      {
-        id: SUBMIT_ID,
-        neighbors: { up: fieldIds[fieldIds.length - 1], left: activeTab, right: onCancel ? CANCEL_ID : undefined },
-        onSelect: () => handleSubmitRef.current(),
-      },
-      ...(onCancel ? [{ id: CANCEL_ID, neighbors: { up: fieldIds[fieldIds.length - 1], left: SUBMIT_ID }, onSelect: onCancel }] : []),
+      ...actionIds.map((id, index) => ({
+        id,
+        neighbors: { up: fieldIds[fieldIds.length - 1], left: actionIds[index - 1] ?? activeTab, right: actionIds[index + 1] },
+        onSelect: actionActions[id],
+      })),
     ];
     setGraph(SCOPE, nodes, TAB_XTREAM_ID);
+    if (pendingFocusRef.current) {
+      focus(pendingFocusRef.current);
+      pendingFocusRef.current = null;
+    }
     // chooseMode only calls stable store/state setters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, fieldIds, setGraph, onCancel]);
+  }, [mode, fieldIds, setGraph, onCancel, isValidating, canSaveAnyway]);
 
   useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
-  useRemoteInput(platform, { onBack: onCancel });
+  useRemoteInput(platform, { onBack: isValidating ? cancelConnecting : onCancel });
 
   function field(id: string, label: string, value: string, setValue: (value: string) => void, extra?: { placeholder?: string; type?: "password" }) {
     return (
@@ -159,7 +236,7 @@ export function AddSourceScreen({ onSourceAdded, onCancel, platform }: AddSource
         platform={platform}
         onChange={(next) => {
           setValue(next);
-          if (error) setError("");
+          if (error) clearFeedback();
         }}
         {...extra}
       />
@@ -235,8 +312,16 @@ export function AddSourceScreen({ onSourceAdded, onCancel, platform }: AddSource
           </p>
 
           <div style={{ display: "flex", gap: "1.25rem" }}>
-            <TvButton id={SUBMIT_ID} label="Save & Continue" icon={Check} variant="primary" onSelect={handleSubmit} />
-            {onCancel && <TvButton id={CANCEL_ID} label="Cancel" onSelect={onCancel} />}
+            <TvButton
+              id={SUBMIT_ID}
+              label={isValidating ? "Connecting…" : "Save & Continue"}
+              icon={isValidating ? LoaderCircle : Check}
+              variant="primary"
+              busy={isValidating}
+              onSelect={handleSubmit}
+            />
+            {canSaveAnyway && !isValidating && <TvButton id={SAVE_ANYWAY_ID} label="Save anyway" onSelect={handleSaveAnyway} />}
+            {onCancel && <TvButton id={CANCEL_ID} label="Cancel" onSelect={onCancel} disabled={isValidating} />}
           </div>
         </section>
       </div>

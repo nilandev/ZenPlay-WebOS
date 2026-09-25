@@ -13,6 +13,8 @@ export interface TvButtonProps {
   variant?: "default" | "primary" | "danger";
   /** Rendered dimmed and not focusable (the owner should leave it out of the graph). */
   disabled?: boolean;
+  /** Work in progress (e.g. "Connecting…"): the icon spins and presses are ignored, but the button keeps focus so the D-pad doesn't lose its place. */
+  busy?: boolean;
 }
 
 /**
@@ -21,7 +23,7 @@ export interface TvButtonProps {
  * detail actions, "+ My List" and "Edit My List"). Only transform animates.
  * The Focusable is sized to the button, not the default 100% width.
  */
-export function TvButton({ id, label, icon: Icon, onSelect, variant = "default", disabled = false }: TvButtonProps): JSX.Element {
+export function TvButton({ id, label, icon: Icon, onSelect, variant = "default", disabled = false, busy = false }: TvButtonProps): JSX.Element {
   const isFocused = useIsFocused(id);
   const idleBackground = variant === "danger" ? "rgba(224,51,47,0.2)" : variant === "primary" ? "var(--accent)" : "rgba(255,255,255,0.12)";
   const idleColor = variant === "danger" ? "#ff8a8a" : variant === "primary" ? "#062028" : "#ffffff";
@@ -29,8 +31,9 @@ export function TvButton({ id, label, icon: Icon, onSelect, variant = "default",
   const button = (
     <button
       type="button"
-      onClick={disabled ? undefined : onSelect}
+      onClick={disabled || busy ? undefined : onSelect}
       disabled={disabled}
+      aria-busy={busy || undefined}
       style={{
         display: "flex",
         alignItems: "center",
@@ -50,7 +53,7 @@ export function TvButton({ id, label, icon: Icon, onSelect, variant = "default",
         cursor: disabled ? "default" : "pointer",
       }}
     >
-      {Icon && <Icon size="1.5rem" strokeWidth={2.25} />}
+      {Icon && <Icon size="1.5rem" strokeWidth={2.25} style={busy ? { animation: "iptv-spin 900ms linear infinite" } : undefined} />}
       {label}
     </button>
   );
