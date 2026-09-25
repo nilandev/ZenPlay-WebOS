@@ -1,7 +1,6 @@
 import {
   XtreamClient,
   parseM3u,
-  parseXmltvToArray,
   type Category,
   type Channel,
   type EpgProgramme,
@@ -144,28 +143,12 @@ export function loadMovieDetails(source: PlaylistSource, movieId: string): Promi
   return pending;
 }
 
-export async function loadEpg(source: PlaylistSource): Promise<EpgProgramme[]> {
-  const epgUrl = source.kind === "m3u-url" || source.kind === "m3u-file" ? source.epgUrl : undefined;
-  if (source.kind === "xtream") {
-    const base = source.baseUrl.endsWith("/") ? source.baseUrl.slice(0, -1) : source.baseUrl;
-    const url = `${base}/xmltv.php?username=${encodeURIComponent(source.username)}&password=${encodeURIComponent(source.password)}`;
-    const xml = await (await proxyDownloadFetch(url)).text();
-    return parseXmltvToArray(xml);
-  }
-  if (!epgUrl) return [];
-  const xml = await (await proxyDownloadFetch(epgUrl)).text();
-  return parseXmltvToArray(xml);
-}
-
 /**
- * Per-channel EPG for the redesigned Guide screen's column 3 — Xtream's
- * get_epg&stream_id=X, one call per highlighted channel rather than the
- * bulk xmltv.php export loadEpg fetches (see XtreamClient.getShortEpg's
- * doc comment for why the two can disagree). M3U sources have no
- * per-stream EPG action, so this always returns [] there — callers should
- * fall back to loadEpg's bulk XMLTV result (keyed by
- * channel.epgChannelId) for M3U, same as GuideScreen already did before
- * this screen existed.
+ * Per-channel EPG — Xtream's get_epg&stream_id=X, one call per channel,
+ * used by epg-cache.ts when the local guide table (the bulk xmltv.php
+ * export, synced by epg-sync.ts) has nothing for that channel — see
+ * XtreamClient.getShortEpg's doc comment for why the two can disagree. M3U
+ * sources have no per-stream EPG action, so this always returns [] there.
  */
 export async function loadStreamEpg(source: PlaylistSource, streamId: string): Promise<EpgProgramme[]> {
   if (source.kind !== "xtream") return [];

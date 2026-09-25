@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { ChannelGuide, type Channel, type EpgProgramme, type NowNext, type PlaylistSource } from "@core";
+import { useCacheInvalidationStore } from "./cache-invalidation-store.js";
 import { __resetEpgCacheForTests, loadChannelGuide, peekChannelGuide } from "./epg-cache.js";
+import { epgVersionKey } from "./epg-store.js";
 
 /** How often "now" is re-evaluated, so the progress bar moves and a finished programme rolls over to the next. */
 const TICK_MS = 30 * 1000;
@@ -29,6 +31,8 @@ export function useNowNext(source: PlaylistSource | null, channel: Channel | nul
   const [programmes, setProgrammes] = useState<EpgProgramme[] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  // Bumped when a guide sync for this source lands (epg-sync.ts), so the panel picks up the new data.
+  const epgVersion = useCacheInvalidationStore((state) => (source ? state.versions[epgVersionKey(source.id)] : undefined));
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), TICK_MS);
@@ -59,7 +63,7 @@ export function useNowNext(source: PlaylistSource | null, channel: Channel | nul
     return () => {
       cancelled = true;
     };
-  }, [source, channel]);
+  }, [source, channel, epgVersion]);
 
   if (!programmes || programmes.length === 0) return { nowNext: null, isLoading };
   const nowNext = new ChannelGuide(programmes).getNowNext(new Date(now));

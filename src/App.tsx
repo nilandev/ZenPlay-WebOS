@@ -19,6 +19,7 @@ import {
   type ResumePoint,
 } from "./profile-store.js";
 import { buildRevalidationTargets, revalidateStaleTargets } from "./cache-revalidator.js";
+import { syncEpgIfDue } from "./epg-sync.js";
 import { loadMovieDetails, loadSeriesDetails } from "./content-loader.js";
 import type { ChannelLineup } from "./channel-lineup.js";
 import type { WatchTarget } from "./use-watch-history-recorder.js";
@@ -149,6 +150,9 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!activeSource || !activeProfile) return;
     void revalidateStaleTargets(buildRevalidationTargets(activeSource));
+    // The guide (often 50MB+ of XMLTV) downloads, parses and stores in a
+    // worker — see epg-sync.ts — so this never stalls Home's remote input.
+    void syncEpgIfDue(activeSource);
   }, [activeSource, activeProfile]);
 
   function handleSourceAdded(source: PlaylistSource): void {

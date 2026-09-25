@@ -60,3 +60,13 @@ describe("parseXmltv", () => {
     expect(first.value.title).toBe("News at Ten");
   });
 });
+
+describe("parseXmltv resilience", () => {
+  it("skips a programme with a malformed timestamp and keeps going", () => {
+    const xml = `<tv>
+      <programme start="not-a-date" stop="20240115210000 +0000" channel="a"><title>Broken</title></programme>
+      <programme start="20240115203000 +0000" stop="20240115210000 +0000" channel="a"><title>Fine</title></programme>
+    </tv>`;
+    expect(parseXmltvToArray(xml).map((p) => p.title)).toEqual(["Fine"]);
+  });
+});

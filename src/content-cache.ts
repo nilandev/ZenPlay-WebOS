@@ -170,6 +170,8 @@ export function clearAllCachedContent(): void {
 import { deleteAllBySuffix, deleteKey, getAllEntries, openIdbStore, putEntry, clearStore } from "./core/storage/indexeddb-store.js";
 import { bumpCacheVersion } from "./cache-invalidation-store.js";
 
+const LEGACY_GUIDE_KEY_PREFIX = "guide-epg:";
+
 function writeToIdbStore<T>(key: string, entry: CacheEntry<T>): void {
   openIdbStore()
     .then((store) => putEntry(store, key, entry))
@@ -219,6 +221,12 @@ export async function initContentCacheFromIdb(): Promise<void> {
       // very fast cold start that raced its own first screen's fetch) —
       // only fill in what's genuinely missing from the in-memory tier.
       if (MEMORY_CACHE.has(key)) continue;
+      // Pre-table guide blobs (now kept in epg-db.ts's own table): never
+      // revive one into memory — they can be 100k+ programmes — just delete.
+      if (key.startsWith(LEGACY_GUIDE_KEY_PREFIX)) {
+        void deleteKey(store, key).catch(() => {});
+        continue;
+      }
       MEMORY_CACHE.set(key, entry as CacheEntry<unknown>);
       bumpCacheVersion(key);
     }

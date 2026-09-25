@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { XtreamClient, type Category, type Channel, type EpgProgramme, type PlatformId, type PlaylistSource, type Profile } from "@core";
+import { XtreamClient, type Category, type Channel, type PlatformId, type PlaylistSource, type Profile } from "@core";
 import {
   CATEGORY_RAIL_COLLAPSED_WIDTH,
   CategoryRail,
@@ -14,7 +14,9 @@ import {
   useRemoteInput,
   type GuideSelection,
 } from "@ui";
-import { loadChannelsByKind, loadEpg, loadLiveCategories } from "../content-loader.js";
+import { useCacheInvalidationStore } from "../cache-invalidation-store.js";
+import { loadChannelsByKind, loadLiveCategories } from "../content-loader.js";
+import { epgVersionKey } from "../epg-store.js";
 import { loadFavorites } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useGuideProgrammes } from "../use-guide-programmes.js";
@@ -34,7 +36,6 @@ export interface GuideScreenProps {
 
 const EMPTY_CHANNELS: Channel[] = [];
 const EMPTY_CATEGORIES: Category[] = [];
-const EMPTY_PROGRAMMES: EpgProgramme[] = [];
 const ALL_CATEGORY_ID = "__all__";
 const MY_LIST_CATEGORY_ID = "__favourites__";
 
@@ -91,14 +92,10 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
     EMPTY_CATEGORIES,
   );
 
-  // M3U sources have no per-channel EPG request — their guide is the bulk
-  // XMLTV file, fetched once and sliced per channel (epg-cache.ts reads it
-  // from this cache key). Xtream sources fetch per channel as rows come on
-  // screen instead, so this stays disabled for them.
-  const loadBulkEpg = useCallback(() => loadEpg(source), [source]);
-  const { data: bulkProgrammes } = useCachedContent(`guide-epg:${source.id}`, "epg", loadBulkEpg, EMPTY_PROGRAMMES, {
-    enabled: source.kind !== "xtream",
-  });
+  // The source's XMLTV guide lives in the local EPG table, kept fresh in a
+  // worker by epg-sync.ts (started from App). This version bumps when a sync
+  // lands, so rows already looked up re-read the new guide.
+  const epgVersion = useCacheInvalidationStore((state) => state.versions[epgVersionKey(source.id)]);
 
   const categories = useMemo(
     () => (fetchedCategories.length > 0 ? fetchedCategories : groupByCategory(channels)),
@@ -138,7 +135,7 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
   }, [activeCategoryId, channels, favoriteChannels]);
 
   const [renderedChannels, setRenderedChannels] = useState<Channel[]>(EMPTY_CHANNELS);
-  const programmesByChannel = useGuideProgrammes(source, renderedChannels, bulkProgrammes);
+  const programmesByChannel = useGuideProgrammes(source, renderedChannels, epgVersion);
 
   const [selection, setSelection] = useState<GuideSelection | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

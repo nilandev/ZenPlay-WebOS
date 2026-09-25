@@ -42,6 +42,17 @@ export function* parseXmltv(xml: string): Generator<EpgProgramme> {
 
     if (!attrs.start || !attrs.stop || !attrs.channel) continue;
 
+    // One malformed timestamp skips that programme rather than ending the
+    // generator (a throw can't be resumed past) and losing the whole guide.
+    let start: Date;
+    let stop: Date;
+    try {
+      start = parseXmltvTimestamp(attrs.start);
+      stop = parseXmltvTimestamp(attrs.stop);
+    } catch {
+      continue;
+    }
+
     const titleMatch = titleRe.exec(body);
     const descMatch = descRe.exec(body);
 
@@ -49,8 +60,8 @@ export function* parseXmltv(xml: string): Generator<EpgProgramme> {
       channelId: attrs.channel,
       title: decodeXmlEntities(titleMatch?.[1]?.trim() ?? "Untitled"),
       description: descMatch ? decodeXmlEntities(descMatch[1].trim()) : undefined,
-      start: parseXmltvTimestamp(attrs.start),
-      stop: parseXmltvTimestamp(attrs.stop),
+      start,
+      stop,
     };
   }
 }

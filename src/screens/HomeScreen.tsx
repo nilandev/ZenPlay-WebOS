@@ -16,6 +16,7 @@ import {
 import type { FocusNode } from "@ui";
 import { buildRevalidationTargets, revalidateStaleTargets } from "../cache-revalidator.js";
 import { loadPlaylistInfo } from "../content-loader.js";
+import { syncEpg } from "../epg-sync.js";
 import { useCachedContent } from "../use-cached-content.js";
 
 export interface HomeTile {
@@ -152,7 +153,9 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
   // staleness so Refresh always does real work — never a page reload.
   const handleRefresh = useCallback(() => {
     setIsRefreshing(true);
-    void revalidateStaleTargets(buildRevalidationTargets(source), { force: true }).finally(() => setIsRefreshing(false));
+    void Promise.allSettled([revalidateStaleTargets(buildRevalidationTargets(source), { force: true }), syncEpg(source)]).finally(() =>
+      setIsRefreshing(false),
+    );
   }, [source]);
 
   const mountedAtRef = useRef(Date.now());

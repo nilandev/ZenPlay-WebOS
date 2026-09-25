@@ -1,7 +1,7 @@
 import type { PlaylistSource } from "@core";
 import { bumpCacheVersion } from "./cache-invalidation-store.js";
 import { type CacheKind, isCacheStale, setCachedContent } from "./content-cache.js";
-import { loadChannelsByKind, loadPlaylistInfo, loadSeriesCategories, loadVodCategories, loadEpg } from "./content-loader.js";
+import { loadChannelsByKind, loadPlaylistInfo, loadSeriesCategories, loadVodCategories } from "./content-loader.js";
 
 export interface RevalidationTarget {
   key: string;
@@ -27,13 +27,15 @@ export interface RevalidationTarget {
  * first catalog sync yet still gets its full catalog via
  * content-loader.ts's direct fetch path — see those screens' fallback
  * logic — so nothing here is needed to keep that path populated either.
+ *
+ * The programme guide isn't here either: it lives in its own local table,
+ * synced off the main thread by epg-sync.ts (see syncEpgIfDue/syncEpg).
  */
 export function buildRevalidationTargets(source: PlaylistSource): RevalidationTarget[] {
   return [
     { key: `live:${source.id}`, kind: "catalog", load: () => loadChannelsByKind(source, "live") },
     { key: `vod-categories:${source.id}`, kind: "category", load: () => loadVodCategories(source) },
     { key: `series-categories:${source.id}`, kind: "category", load: () => loadSeriesCategories(source) },
-    { key: `guide-epg:${source.id}`, kind: "epg", load: () => loadEpg(source) },
     { key: `playlist-info:${source.id}`, kind: "playlist-info", load: () => loadPlaylistInfo(source) },
   ];
 }
