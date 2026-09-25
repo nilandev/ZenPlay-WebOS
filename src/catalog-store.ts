@@ -1,6 +1,7 @@
-import type { Channel, SeriesInfo } from "@core";
+import type { Category, Channel, SeriesInfo } from "@core";
 import {
   countRecords,
+  getCategoryIds,
   getRecordsByIds as getCatalogDbRecordsByIds,
   openCatalogDb,
   queryPage,
@@ -101,11 +102,20 @@ export async function getRecordsByIds(sourceId: string, kind: CatalogKind, strea
   return kind === "vod" ? records.map((r) => recordToChannel(r, "movie")) : records.map(recordToSeriesSummary);
 }
 
+/** The categories a source's local catalog uses, named after their ids — for M3U sources, whose groups are the only categories they have. */
+export async function getCatalogCategories(sourceId: string, kind: CatalogKind): Promise<Category[]> {
+  try {
+    const ids = await getCategoryIds(await openCatalogDb(), kind, sourceId);
+    return ids.map((id) => ({ id, name: id, kind: kind === "vod" ? "movie" : "series" }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Whether this source+kind has a local catalog ready to read from at all —
- * screens use this to decide between the local paginated path and falling
- * back to content-loader.ts's direct fetch for a source that's never
- * completed a background sync yet (see catalog-sync.ts's doc comment).
+ * screens show the sync manager's progress instead until it does (see
+ * use-local-catalog-ready.ts).
  */
 export function hasLocalCatalog(sourceId: string, kind: CatalogKind): Promise<boolean> {
   return hasCompletedSync(sourceId, kind);

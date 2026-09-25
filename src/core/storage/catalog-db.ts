@@ -234,6 +234,37 @@ export function countRecords(catalogDb: CatalogDb, kind: CatalogKind, options: O
   return runRequest(store.index(BY_SOURCE_INDEX).count(IDBKeyRange.only(sourceId)));
 }
 
+/**
+ * The distinct category ids a source's catalog uses — walked off the
+ * by_source_category index's unique keys, never the rows. M3U playlists
+ * have no category API, so this is where their movie categories come from
+ * (see content-loader.ts's loadVodCategories).
+ */
+export function getCategoryIds(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string): Promise<string[]> {
+  const tx = catalogDb.db.transaction(storeName(kind), "readonly");
+  const index = tx.objectStore(storeName(kind)).index(BY_SOURCE_CATEGORY_INDEX);
+  const range = IDBKeyRange.bound([sourceId, ""], [sourceId, MAX_UTF16_SUFFIX]);
+  const ids: string[] = [];
+  return new Promise((resolve, reject) => {
+    const cursorRequest = index.openKeyCursor(range, "nextunique");
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor) {
+        resolve(ids);
+        return;
+      }
+      ids.push((cursor.key as [string, string])[1]);
+      cursor.continue();
+    };
+    cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Category listing failed"));
+  });
+}
+
+/** sync_meta key for one source+kind's catalog — shared by catalog-sync.ts and the worker's M3U path (live-sync-core.ts). */
+export function catalogSyncMetaKey(sourceId: string, kind: CatalogKind): string {
+  return `${kind}:${sourceId}`;
+}
+
 export function getSyncMeta(catalogDb: CatalogDb, key: string): Promise<SyncMeta | undefined> {
   const tx = catalogDb.db.transaction(SYNC_META_STORE, "readonly");
   return runRequest(tx.objectStore(SYNC_META_STORE).get(key));

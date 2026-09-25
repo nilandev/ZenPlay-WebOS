@@ -18,8 +18,7 @@ import {
   getResumePoint,
   type ResumePoint,
 } from "./profile-store.js";
-import { buildRevalidationTargets, revalidateStaleTargets } from "./cache-revalidator.js";
-import { syncEpgIfDue } from "./epg-sync.js";
+import { startSyncScheduler } from "./sync/sync-scheduler.js";
 import { loadMovieDetails, loadSeriesDetails } from "./content-loader.js";
 import type { ChannelLineup } from "./channel-lineup.js";
 import type { WatchTarget } from "./use-watch-history-recorder.js";
@@ -132,28 +131,19 @@ export function App(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Kicks off HomeScreen's usual content fetches (live channels, VOD/series
-  // categories, EPG, playlist info — see buildRevalidationTargets) as soon
-  // as a profile is selected/restored, rather than waiting for HomeScreen to
-  // mount and start them itself. This is what actually delivers spec
-  // Scenario A's "data ready the millisecond Home renders": previously,
-  // Home's own skeletons covered the wait, but the wait only started once
-  // Home was already on screen. Firing it here means the fetches are
-  // in-flight during the login/profile-select transition instead. This is
-  // now the only automatic revalidation: HomeScreen no longer runs its own
-  // background revalidator/prefetch/catalog-sync jobs (it's a static menu
-  // that does no data work — see its doc comment). A brand-new source's
-  // local VOD/series catalog tables aren't included here (see
-  // buildRevalidationTargets' doc comment on why they're excluded from this
-  // revalidator entirely) — VodScreen/SeriesScreen start their own catalog's
-  // sync while open (see catalog-sync.ts's startCatalogBackgroundSync).
+  // Keeps the active source's data fresh — a launch sync a few seconds in,
+  // then on an interval, on return from the background and when the network
+  // comes back (see sync/sync-scheduler.ts). Everything downloads and parses
+  // in the sync worker, so none of it stalls Home's remote input. Keyed on
+  // the source id: switching sources stops (and cancels) the old scheduler.
+  const hasActiveProfile = activeProfile !== null;
+  const activeSourceRef = useRef(activeSource);
+  activeSourceRef.current = activeSource;
   useEffect(() => {
-    if (!activeSource || !activeProfile) return;
-    void revalidateStaleTargets(buildRevalidationTargets(activeSource));
-    // The guide (often 50MB+ of XMLTV) downloads, parses and stores in a
-    // worker — see epg-sync.ts — so this never stalls Home's remote input.
-    void syncEpgIfDue(activeSource);
-  }, [activeSource, activeProfile]);
+    const source = activeSourceRef.current;
+    if (!source || !hasActiveProfile) return;
+    return startSyncScheduler(source);
+  }, [activeSource?.id, hasActiveProfile]);
 
   function handleSourceAdded(source: PlaylistSource): void {
     const updated = addPlaylistSource(source);

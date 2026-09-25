@@ -10,6 +10,8 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = () => {};
 });
 
+vi.mock("../sync/sync-manager.js", () => ({ syncSource: vi.fn().mockResolvedValue({ stages: {}, errors: {} }) }));
+
 vi.mock("../content-loader.js", () => ({
   loadPlaylistInfo: vi.fn().mockResolvedValue({ name: "Test Playlist", expiresAt: null }),
   loadChannelsByKind: vi.fn().mockResolvedValue([]),
@@ -154,14 +156,13 @@ describe("HomeScreen", () => {
     expect(useFocusStore.getState().focusedId).toBe("series");
   });
 
-  it("clicking Refresh revalidates the source's caches without reloading the page", async () => {
+  it("clicking Refresh forces a sync of every stage without reloading the page", async () => {
     const reloadSpy = vi.fn();
     Object.defineProperty(window, "location", {
       value: { ...window.location, reload: reloadSpy },
       writable: true,
     });
-
-    const { loadChannelsByKind } = await import("../content-loader.js");
+    const { syncSource } = await import("../sync/sync-manager.js");
 
     renderHome();
 
@@ -169,12 +170,9 @@ describe("HomeScreen", () => {
     await act(async () => {
       fireEvent.click(refreshButton);
       await vi.advanceTimersByTimeAsync(0);
-      await Promise.resolve();
-      await Promise.resolve();
     });
 
-    expect(getCachedContent(`live:${source.id}`)).toEqual([]);
-    expect(loadChannelsByKind).toHaveBeenCalled();
+    expect(syncSource).toHaveBeenCalledWith(source, { trigger: "manual", force: true });
     expect(reloadSpy).not.toHaveBeenCalled();
   });
 });

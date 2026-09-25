@@ -14,6 +14,8 @@
  * schemas can migrate independently.
  */
 
+import { completion, deleteByIndexRange, runRequest } from "./idb-utils.js";
+
 export interface EpgRecord {
   sourceId: string;
   /** XMLTV channel id — matched against Channel.epgChannelId (falling back to Channel.id). */
@@ -78,21 +80,6 @@ export function openEpgDb(): Promise<EpgDb> {
   return dbPromise;
 }
 
-function runRequest<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
-  });
-}
-
-function completion(tx: IDBTransaction, what: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error(`${what} failed`));
-    tx.onabort = () => reject(tx.error ?? new Error(`${what} aborted`));
-  });
-}
-
 /** Writes one batch of programmes in a single transaction. */
 export function putProgrammes(epgDb: EpgDb, records: EpgRecord[]): Promise<void> {
   if (records.length === 0) return Promise.resolve();
@@ -113,27 +100,15 @@ export function putProgrammes(epgDb: EpgDb, records: EpgRecord[]): Promise<void>
 export function deleteStaleProgrammes(epgDb: EpgDb, sourceId: string, currentGeneration: number): Promise<void> {
   const tx = epgDb.db.transaction(PROGRAMMES_STORE, "readwrite");
   const index = tx.objectStore(PROGRAMMES_STORE).index(BY_SOURCE_GENERATION_INDEX);
-  const cursorRequest = index.openCursor(IDBKeyRange.bound([sourceId, -Infinity], [sourceId, currentGeneration], false, true));
-  cursorRequest.onsuccess = () => {
-    const cursor = cursorRequest.result;
-    if (!cursor) return;
-    cursor.delete();
-    cursor.continue();
-  };
+  deleteByIndexRange(index, IDBKeyRange.bound([sourceId, -Infinity], [sourceId, currentGeneration], false, true));
   return completion(tx, "EPG stale-generation cleanup");
 }
 
 /** Every programme stored for a source (all generations) — used when a source is cleared or removed. */
-export async function deleteSourceProgrammes(epgDb: EpgDb, sourceId: string): Promise<void> {
+export function deleteSourceProgrammes(epgDb: EpgDb, sourceId: string): Promise<void> {
   const tx = epgDb.db.transaction([PROGRAMMES_STORE, META_STORE], "readwrite");
   const index = tx.objectStore(PROGRAMMES_STORE).index(BY_SOURCE_GENERATION_INDEX);
-  const cursorRequest = index.openCursor(IDBKeyRange.bound([sourceId, -Infinity], [sourceId, Infinity]));
-  cursorRequest.onsuccess = () => {
-    const cursor = cursorRequest.result;
-    if (!cursor) return;
-    cursor.delete();
-    cursor.continue();
-  };
+  deleteByIndexRange(index, IDBKeyRange.bound([sourceId, -Infinity], [sourceId, Infinity]));
   tx.objectStore(META_STORE).delete(sourceId);
   return completion(tx, "EPG source purge");
 }

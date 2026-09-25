@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource, Profile } from "@core";
 import { clearAllCachedContent, getCachedContent } from "../content-cache.js";
 import { __clearCatalogDbForTests, __resetCatalogDbForTests, openCatalogDb, putRecordsBatch, putSyncMeta } from "../core/storage/catalog-db.js";
+import { __resetSyncStoreForTests, useSyncStore } from "../sync/sync-store.js";
 import { useFocusStore } from "../ui/focus/focus-store.js";
 import { __resetCategoryMemoryForTests, SeriesScreen } from "./SeriesScreen.js";
 
@@ -10,13 +11,9 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = () => {};
 });
 
-// The screen starts a background catalog sync on mount (see catalog-sync.ts),
-// which would otherwise hit the network through a real XtreamClient. These
-// tests cover the screen's legacy/local read paths, not the sync itself.
-vi.mock("../catalog-sync.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../catalog-sync.js")>()),
-  startCatalogBackgroundSync: vi.fn(() => () => {}),
-}));
+// The screen asks the sync manager to build its table when it's missing;
+// these tests cover what the screen shows and reads, not the sync itself.
+vi.mock("../sync/sync-manager.js", () => ({ syncSource: vi.fn().mockResolvedValue({ stages: {}, errors: {} }) }));
 
 vi.mock("../content-loader.js", () => ({
   loadSeriesList: vi.fn(),
@@ -45,69 +42,72 @@ async function flush(): Promise<void> {
   });
 }
 
-describe("SeriesScreen category-lazy fetching", () => {
-  beforeEach(async () => {
-    clearAllCachedContent();
-    __resetCategoryMemoryForTests();
-    __resetCatalogDbForTests();
-    await __clearCatalogDbForTests();
-    useFocusStore.getState().clearGraph("content");
-    useFocusStore.getState().clearGraph("chrome:series-search");
-    useFocusStore.getState().clearGraph("chrome:category-dropdown-trigger");
-    useFocusStore.getState().clearGraph("chrome:category-dropdown-panel");
-    vi.clearAllMocks();
+/** Writes series into the local table as a completed sync would — the only place the screen reads from. */
+async function seedSeries(list: Array<{ id: string; name: string; groupTitle?: string }>): Promise<void> {
+  const catalogDb = await openCatalogDb();
+  await putRecordsBatch(
+    catalogDb,
+    "series",
+    list.map((item) => ({ id: `${source.id}:${item.id}`, sourceId: source.id, streamId: item.id, name: item.name, nameLower: item.name.toLowerCase(), groupTitle: item.groupTitle, generation: 1 })),
+  );
+  await putSyncMeta(catalogDb, { key: `series:${source.id}`, lastSyncedAt: Date.now(), recordCount: list.length, generation: 1 });
+}
+
+async function resetScreenState(): Promise<void> {
+  clearAllCachedContent();
+  __resetCategoryMemoryForTests();
+  __resetSyncStoreForTests();
+  __resetCatalogDbForTests();
+  await __clearCatalogDbForTests();
+  for (const scope of ["content", "chrome:series-search", "chrome:category-rail", "chrome:category-dropdown-trigger", "chrome:category-dropdown-panel"]) {
+    useFocusStore.getState().clearGraph(scope);
+  }
+  vi.clearAllMocks();
+}
+
+describe("SeriesScreen while the series table is still being built", () => {
+  beforeEach(resetScreenState);
+
+  it("asks the sync manager for the series table and shows its progress — never downloading the catalog itself", async () => {
+    const { loadSeriesList } = await import("../content-loader.js");
+    const { syncSource } = await import("../sync/sync-manager.js");
+
+    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    await vi.waitFor(() => expect(syncSource).toHaveBeenCalledWith(source, { trigger: "first-run", stages: ["series"] }));
+    expect(await screen.findByText("Getting your series ready…")).not.toBeNull();
+
+    act(() => useSyncStore.getState().setStage(source.id, "series", { status: "running", done: 800 }));
+    expect(screen.getByText("800 so far")).not.toBeNull();
+    expect(loadSeriesList).not.toHaveBeenCalled();
   });
 
-  it("fetches the full catalog for the default All Categories view", async () => {
-    const { loadSeriesList, loadSeriesCategories } = await import("../content-loader.js");
-    (loadSeriesList as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
-    render(
-      <SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />,
-    );
-    await vi.waitFor(() => expect(loadSeriesList).toHaveBeenCalled());
-
-    expect(loadSeriesCategories).toHaveBeenCalledTimes(1);
-    expect(loadSeriesList).toHaveBeenCalledWith(source);
-  });
-
-  it("selecting a category fetches only that category, not the full catalog again", async () => {
+  it("picking a category meanwhile fetches just that category from the provider", async () => {
     const { loadSeriesList } = await import("../content-loader.js");
     (loadSeriesList as ReturnType<typeof vi.fn>).mockImplementation((_source: PlaylistSource, categoryId?: string) =>
       Promise.resolve(categoryId === "cat-1" ? [{ id: "s1", name: "Drama Show", groupTitle: "cat-1" }] : []),
     );
 
-    render(
-      <SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />,
-    );
-    await vi.waitFor(() => expect(loadSeriesList).toHaveBeenCalledWith(source));
+    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Drama" })); // the category rail row
 
-    (loadSeriesList as ReturnType<typeof vi.fn>).mockClear();
-
-    fireEvent.click(screen.getByRole("button", { name: "Drama" })); // the category rail row
-    await flush();
-
+    expect(await screen.findByText("Drama Show")).not.toBeNull();
     expect(loadSeriesList).toHaveBeenCalledWith(source, "cat-1");
     expect(loadSeriesList).not.toHaveBeenCalledWith(source);
-    expect(getCachedContent(`series-list:${source.id}:cat:cat-1`)).toEqual([
-      { id: "s1", name: "Drama Show", groupTitle: "cat-1" },
-    ]);
-    expect(await screen.findByText("Drama Show")).not.toBeNull();
+    expect(getCachedContent(`series-list:${source.id}:cat:cat-1`)).toEqual([{ id: "s1", name: "Drama Show", groupTitle: "cat-1" }]);
+  });
+
+  it("an M3U playlist has no series — it says so instead of waiting for a sync", async () => {
+    const { syncSource } = await import("../sync/sync-manager.js");
+    const m3u: PlaylistSource = { kind: "m3u-url", id: "src-m3u", name: "M3U", url: "http://example.com/list.m3u" };
+
+    render(<SeriesScreen source={m3u} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    expect(await screen.findByText("This playlist has no series.")).not.toBeNull();
+    expect(syncSource).not.toHaveBeenCalled();
   });
 });
 
 describe("SeriesScreen with a synced local catalog", () => {
-  beforeEach(async () => {
-    clearAllCachedContent();
-    __resetCategoryMemoryForTests();
-    __resetCatalogDbForTests();
-    await __clearCatalogDbForTests();
-    useFocusStore.getState().clearGraph("content");
-    useFocusStore.getState().clearGraph("chrome:series-search");
-    useFocusStore.getState().clearGraph("chrome:category-dropdown-trigger");
-    useFocusStore.getState().clearGraph("chrome:category-dropdown-panel");
-    vi.clearAllMocks();
-  });
+  beforeEach(resetScreenState);
 
   it("renders shelves from the local table and never calls the live full-catalog fetch", async () => {
     const catalogDb = await openCatalogDb();
@@ -147,34 +147,18 @@ describe("SeriesScreen with a synced local catalog", () => {
   });
 });
 
-describe("SeriesScreen at catalog scale (legacy path)", () => {
-  const manySeries = Array.from({ length: 500 }, (_, i) => ({ id: `s${i}`, name: i % 2 ? `Drama Show ${i}` : `Comedy Hour ${i}`, groupTitle: "cat-1" }));
+describe("SeriesScreen at catalog scale", () => {
+  // Zero-padded ids: the table returns rows in key order, and "s10" would otherwise sort before "s2".
+  const manySeries = Array.from({ length: 500 }, (_, i) => ({ id: `s${String(i).padStart(3, "0")}`, name: i % 2 ? `Drama Show ${i}` : `Comedy Hour ${i}`, groupTitle: "cat-1" }));
 
   beforeEach(async () => {
-    clearAllCachedContent();
-    __resetCategoryMemoryForTests();
-    __resetCatalogDbForTests();
-    await __clearCatalogDbForTests();
-    useFocusStore.getState().clearGraph("content");
-    useFocusStore.getState().clearGraph("chrome:series-search");
-    useFocusStore.getState().clearGraph("chrome:category-dropdown-trigger");
-    useFocusStore.getState().clearGraph("chrome:category-dropdown-panel");
-    vi.clearAllMocks();
-    const { loadSeriesList } = await import("../content-loader.js");
-    (loadSeriesList as ReturnType<typeof vi.fn>).mockImplementation((_source: PlaylistSource, categoryId?: string) =>
-      Promise.resolve(categoryId && categoryId !== "cat-1" ? [] : manySeries),
-    );
+    await resetScreenState();
+    await seedSeries(manySeries);
   });
 
   /** Poster cards only — each shelf also ends with a "See all" card. */
   const cardCount = (container: HTMLElement) =>
     Array.from(container.querySelectorAll('[role="button"]')).filter((el) => !el.textContent?.startsWith("See all")).length;
-
-  it("starts the series catalog sync (and only the series one) while open", async () => {
-    const { startCatalogBackgroundSync } = await import("../catalog-sync.js");
-    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
-    expect(startCatalogBackgroundSync).toHaveBeenCalledWith(expect.any(Function), ["series"]);
-  });
 
   it("caps each All Categories shelf at 20 cards instead of mounting the whole catalog", async () => {
     const { container } = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
@@ -186,20 +170,20 @@ describe("SeriesScreen at catalog scale (legacy path)", () => {
     const { container } = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Comedy Hour 0");
 
-    fireEvent.click(screen.getByRole("button", { name: "Drama" })); // the category rail row
+    fireEvent.click(await screen.findByRole("button", { name: "Drama" })); // the category rail row (categories may land after the list)
     await vi.waitFor(() => expect(cardCount(container)).toBe(60));
   });
 
   it("keeps focus where it is when the next page of a category loads", async () => {
     const { container } = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Comedy Hour 0");
-    fireEvent.click(screen.getByRole("button", { name: "Drama" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Drama" }));
     await vi.waitFor(() => expect(cardCount(container)).toBe(60));
 
     // The last row of the first page is the "load more" trigger zone.
-    act(() => useFocusStore.getState().focus("series-grid:s57"));
+    act(() => useFocusStore.getState().focus("series-grid:s057"));
     await vi.waitFor(() => expect(cardCount(container)).toBe(120));
-    expect(useFocusStore.getState().focusedId).toBe("series-grid:s57");
+    expect(useFocusStore.getState().focusedId).toBe("series-grid:s057");
   });
 
   it("debounces search and ignores single-character queries", async () => {
@@ -215,9 +199,9 @@ describe("SeriesScreen at catalog scale (legacy path)", () => {
     fireEvent.change(input, { target: { value: "dr" } });
     expect(shelfCount()).toBe(1); // not yet — waits for typing to pause
     await vi.waitFor(() => expect(shelfCount()).toBe(0));
-    expect(screen.getByText("Drama Show 1")).toBeTruthy();
+    expect(await screen.findByText("Drama Show 1")).toBeTruthy(); // read from the table's name index
     expect(screen.queryByText("Comedy Hour 0")).toBeNull();
-    expect(cardCount(container)).toBe(60); // 250 matches, first page only
+    await vi.waitFor(() => expect(cardCount(container)).toBe(60)); // 250 matches, first page only
   });
 });
 
@@ -225,16 +209,8 @@ describe("SeriesScreen category rail", () => {
   const manySeries = Array.from({ length: 100 }, (_, i) => ({ id: `s${i}`, name: `Drama Show ${i}`, groupTitle: "cat-1" }));
 
   beforeEach(async () => {
-    clearAllCachedContent();
-    __resetCategoryMemoryForTests();
-    __resetCatalogDbForTests();
-    await __clearCatalogDbForTests();
-    for (const scope of ["content", "chrome:series-search", "chrome:category-rail"]) useFocusStore.getState().clearGraph(scope);
-    vi.clearAllMocks();
-    const { loadSeriesList } = await import("../content-loader.js");
-    (loadSeriesList as ReturnType<typeof vi.fn>).mockImplementation((_source: PlaylistSource, categoryId?: string) =>
-      Promise.resolve(categoryId && categoryId !== "cat-1" ? [] : manySeries),
-    );
+    await resetScreenState();
+    await seedSeries(manySeries);
   });
 
   function press(key: string): void {
@@ -287,7 +263,7 @@ describe("SeriesScreen category rail", () => {
   it("remembers the chosen category when the screen is opened again", async () => {
     const first = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Drama Show 0");
-    fireEvent.click(screen.getByRole("button", { name: "Drama" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Drama" }));
     await vi.waitFor(() => expect(posterCount(first.container)).toBe(60));
     first.unmount();
 
@@ -304,14 +280,9 @@ describe("SeriesScreen detail page", () => {
   );
 
   beforeEach(async () => {
-    clearAllCachedContent();
-    __resetCategoryMemoryForTests();
-    __resetCatalogDbForTests();
-    await __clearCatalogDbForTests();
-    for (const scope of ["content", "chrome:series-search", "chrome:category-rail"]) useFocusStore.getState().clearGraph(scope);
-    vi.clearAllMocks();
+    await resetScreenState();
+    await seedSeries(browseSeries);
     const loader = await import("../content-loader.js");
-    (loader.loadSeriesList as ReturnType<typeof vi.fn>).mockResolvedValue(browseSeries);
     (loader.loadSeriesDetails as ReturnType<typeof vi.fn>).mockResolvedValue({ details: {}, episodes });
   });
 

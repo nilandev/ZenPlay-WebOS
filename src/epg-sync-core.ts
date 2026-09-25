@@ -8,14 +8,15 @@ import {
   type EpgDb,
   type EpgRecord,
 } from "./core/storage/epg-db.js";
+import { SyncStorageUnavailableError, type SyncJobOptions } from "./sync-job.js";
 
 /**
  * The actual EPG sync — download one XMLTV file, stream-parse it, and write
  * the programmes inside the retention window into the EPG table
  * (core/storage/epg-db.ts) in batches. Deliberately DOM-free and
- * React-free: it normally runs inside src/workers/epg-sync-worker.ts, and
- * only falls back to the main thread (with yields between batches, see
- * epg-sync.ts) where a worker can't reach IndexedDB.
+ * React-free: it normally runs inside src/workers/sync-worker.ts, and only
+ * falls back to the main thread (with yields between batches, see
+ * workers/sync-worker-client.ts) where a worker can't reach IndexedDB.
  *
  * Write-then-swap, same as catalog-sync.ts: rows are written under a new
  * generation, sync_meta is flipped, then older-generation rows are deleted.
@@ -38,23 +39,6 @@ export interface EpgSyncResult {
   channelCount: number;
 }
 
-export interface EpgSyncOptions {
-  fetchImpl: typeof fetch;
-  /** Called after each batch lands, with the running total written. */
-  onProgress?: (written: number) => void;
-  batchSize?: number;
-  /** Awaited between batches — the main-thread fallback passes a macrotask yield so remote input gets handled mid-parse. */
-  yieldBetweenBatches?: () => Promise<void>;
-}
-
-/** IndexedDB can't be opened in this context — the caller should retry the sync somewhere that can (see epg-sync.ts's main-thread fallback). */
-export class EpgStorageUnavailableError extends Error {
-  constructor(cause?: unknown) {
-    super(`EPG storage unavailable${cause instanceof Error ? `: ${cause.message}` : ""}`);
-    this.name = "EpgStorageUnavailableError";
-  }
-}
-
 /** The provider returned a guide with nothing in the retention window — kept separate so a previously-good guide isn't wiped by a broken/empty response. */
 export class EpgEmptyError extends Error {
   constructor() {
@@ -65,7 +49,7 @@ export class EpgEmptyError extends Error {
 
 export const DEFAULT_EPG_BATCH_SIZE = 2000;
 
-export async function runEpgSync(request: EpgSyncRequest, options: EpgSyncOptions): Promise<EpgSyncResult> {
+export async function runEpgSync(request: EpgSyncRequest, options: SyncJobOptions): Promise<EpgSyncResult> {
   const { sourceId, url, windowStartMs, windowEndMs } = request;
   const { fetchImpl, onProgress, batchSize = DEFAULT_EPG_BATCH_SIZE, yieldBetweenBatches } = options;
 
@@ -74,7 +58,7 @@ export async function runEpgSync(request: EpgSyncRequest, options: EpgSyncOption
   try {
     epgDb = await openEpgDb();
   } catch (err) {
-    throw new EpgStorageUnavailableError(err);
+    throw new SyncStorageUnavailableError(err);
   }
 
   const previous = await getEpgSyncMeta(epgDb, sourceId);

@@ -9,6 +9,7 @@ import {
   type SeriesDetails,
   type SeriesEpisode,
 } from "@core";
+import { getCatalogCategories } from "./catalog-store.js";
 import { proxyDownloadFetch, proxyFetch } from "./proxy-fetch.js";
 import { createCatalogWorkerClient } from "./workers/catalog-worker-client.js";
 
@@ -89,9 +90,9 @@ export async function loadSeriesCategories(source: PlaylistSource): Promise<Cate
   return client.getSeriesCategories();
 }
 
-/** VOD categories for the movies browse grid's category filter — M3U sources have no separate category API, so this is Xtream-only like loadChannelsByKind. */
+/** VOD categories for the movies browse grid — Xtream's category API, or for M3U (which has none) the playlist's own groups, read from the synced catalog table. */
 export async function loadVodCategories(source: PlaylistSource): Promise<Category[]> {
-  if (source.kind !== "xtream") return [];
+  if (source.kind !== "xtream") return getCatalogCategories(source.id, "vod");
   const client = new XtreamClient(source, proxyFetch);
   await client.authenticate();
   return client.getVodCategories();

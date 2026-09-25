@@ -26,8 +26,11 @@ const { channels, programmesByStreamId } = vi.hoisted(() => {
   return { channels, programmesByStreamId };
 });
 
+vi.mock("../use-live-channels.js", () => ({
+  useLiveChannels: () => ({ channels, isInitialLoading: false, error: null }),
+}));
+
 vi.mock("../content-loader.js", () => ({
-  loadChannelsByKind: vi.fn().mockResolvedValue(channels),
   loadLiveCategories: vi.fn().mockResolvedValue([]),
   loadEpg: vi.fn().mockResolvedValue([]),
   loadStreamEpg: vi.fn((_source: unknown, streamId: string) => Promise.resolve(programmesByStreamId[streamId] ?? [])),

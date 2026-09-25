@@ -14,9 +14,8 @@ import {
   useIsFocused,
 } from "@ui";
 import type { FocusNode } from "@ui";
-import { buildRevalidationTargets, revalidateStaleTargets } from "../cache-revalidator.js";
 import { loadPlaylistInfo } from "../content-loader.js";
-import { syncEpg } from "../epg-sync.js";
+import { syncSource } from "../sync/sync-manager.js";
 import { useCachedContent } from "../use-cached-content.js";
 
 export interface HomeTile {
@@ -149,13 +148,12 @@ export function HomeScreen({ source, platform, profile, onSelectTile, onOpenProf
   // spinning affordance instead of looking like a no-op click.
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // In-place revalidation of this source's caches, forced regardless of
-  // staleness so Refresh always does real work — never a page reload.
+  // A forced sync of every stage (see sync/sync-manager.ts) — real work
+  // regardless of freshness, never a page reload. Joins a sync that's
+  // already running rather than downloading everything twice.
   const handleRefresh = useCallback(() => {
     setIsRefreshing(true);
-    void Promise.allSettled([revalidateStaleTargets(buildRevalidationTargets(source), { force: true }), syncEpg(source)]).finally(() =>
-      setIsRefreshing(false),
-    );
+    void syncSource(source, { trigger: "manual", force: true }).finally(() => setIsRefreshing(false));
   }, [source]);
 
   const mountedAtRef = useRef(Date.now());

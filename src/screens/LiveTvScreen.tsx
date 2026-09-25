@@ -14,9 +14,10 @@ import {
   useIsFocused,
   useRemoteInput,
 } from "@ui";
-import { loadChannelsByKind, loadLiveCategories } from "../content-loader.js";
+import { loadLiveCategories } from "../content-loader.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
+import { useLiveChannels } from "../use-live-channels.js";
 import { useNowNext } from "../use-now-next.js";
 import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
@@ -32,7 +33,6 @@ export interface LiveTvScreenProps {
   isPlaybackOpen?: boolean;
 }
 
-const EMPTY_CHANNELS: Channel[] = [];
 const EMPTY_CATEGORIES: Category[] = [];
 const ALL_CATEGORY_ID = "__all__";
 const FAVOURITES_CATEGORY_ID = "__favourites__";
@@ -65,13 +65,8 @@ function groupByCategory(channels: Channel[]): Category[] {
 }
 
 export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlaybackOpen = false }: LiveTvScreenProps): JSX.Element {
-  const loadChannels = useCallback(() => loadChannelsByKind(source, "live"), [source]);
-  const { data: channels, isInitialLoading: isChannelsLoading, error: loadError } = useCachedContent(
-    `live:${source.id}`,
-    "catalog",
-    loadChannels,
-    EMPTY_CHANNELS,
-  );
+  // Read from the local live table; fetched and parsed in the sync worker (see use-live-channels.ts).
+  const { channels, isInitialLoading: isChannelsLoading, error: loadError } = useLiveChannels(source);
 
   const loadCategories = useCallback(() => loadLiveCategories(source), [source]);
   const { data: fetchedCategories, isInitialLoading: isCategoriesLoading } = useCachedContent(

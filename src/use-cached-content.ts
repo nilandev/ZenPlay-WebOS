@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useCacheInvalidationStore } from "./cache-invalidation-store.js";
-import { getCachedContent, isCacheStale, setCachedContent, type CacheKind } from "./content-cache.js";
+import { getCachedContent, isCacheStale, loadCachedEntry, setCachedContent, type CacheKind } from "./content-cache.js";
 
 export interface CachedContentState<T> {
   data: T;
@@ -20,10 +20,10 @@ export interface CachedContentState<T> {
 
 export interface UseCachedContentOptions {
   /**
-   * When false, this hook neither reads staleness nor triggers a fetch —
-   * it still returns whatever's already cached under cacheKey (so a
-   * temporarily-disabled consumer doesn't flash empty), it just won't cause
-   * a network call. Used by screens that conditionally need one of several
+   * When false, this hook never triggers a fetch — it still returns
+   * whatever's cached under cacheKey (in memory, or read from IndexedDB),
+   * so a temporarily-disabled consumer doesn't flash empty; it just won't
+   * cause a network call. Used by screens that conditionally need one of several
    * cache keys depending on UI state (e.g. VodScreen only needs its
    * per-category key while a category is selected) but still call this hook
    * unconditionally, as React's rules require.
@@ -32,27 +32,20 @@ export interface UseCachedContentOptions {
 }
 
 /**
- * Loads content behind a cache key: if a cached value exists (this session,
- * possibly from before a reload, or restored from IndexedDB at boot — see
- * content-cache.ts), it's returned synchronously on mount so the screen
- * renders real content immediately instead of an empty state.
- * `isInitialLoading` is only ever true when there's truly nothing to show
- * yet, which is what screens use to decide whether to render a loading
- * shimmer instead of content.
+ * Loads content behind a cache key. A value already in memory (this
+ * session) is returned synchronously on mount, so a revisit renders real
+ * content immediately. On a memory miss the stored IndexedDB value is read
+ * first (a cold start after webOS killed the app — see content-cache.ts),
+ * and only then is staleness decided, so a still-fresh stored value is
+ * shown without any network call. `isInitialLoading` is only true while
+ * there's truly nothing to show yet.
  *
- * A fetch only actually runs when the cached entry is missing or stale (see
- * isCacheStale/content-cache.ts's per-kind thresholds) — a fresh cache hit
- * is served as-is with no network call at all, which is what makes
- * revisiting a screen (tab switch, back-navigation) instant instead of
- * re-fetching from the IPTV source every time it remounts.
+ * A fetch only runs when the entry is missing or stale (see content-cache.ts's
+ * per-kind thresholds).
  *
  * Also re-runs whenever cache-invalidation-store bumps this cacheKey's
- * version — that's how a background revalidation (cache-revalidator.ts), a
- * manual Refresh (HomeScreen), an idle prefetch (idle-prefetch.ts), or the
- * IndexedDB boot warm-up (content-cache.ts's initContentCacheFromIdb) can
- * update an already-mounted screen without it needing to remount, which is
- * the one thing ManagePlaylistsScreen's older refreshTick-in-the-cache-key
- * workaround had to fake by forcing a remount-shaped re-fetch instead.
+ * version — that's how the sync manager (refreshing categories/account info
+ * with its stages) updates an already-mounted screen without a remount.
  */
 export function useCachedContent<T>(
   cacheKey: string,
@@ -73,33 +66,34 @@ export function useCachedContent<T>(
 
   useEffect(() => {
     let cancelled = false;
-    const cachedForKey = getCachedContent<T>(cacheKey);
-    setData(cachedForKey ?? emptyValue);
-    setIsInitialLoading(enabled && cachedForKey === undefined);
+    const inMemory = getCachedContent<T>(cacheKey);
+    setData(inMemory ?? emptyValue);
+    setIsInitialLoading(enabled && inMemory === undefined);
     setError(null);
 
-    if (!enabled) return;
-    if (!isCacheStale(cacheKey)) return;
+    void (async () => {
+      if (inMemory === undefined) {
+        const stored = await loadCachedEntry<T>(cacheKey);
+        if (cancelled) return;
+        if (stored) {
+          setData(stored.value);
+          setIsInitialLoading(false);
+        }
+      }
+      if (!enabled || !isCacheStale(cacheKey)) return;
 
-    loadRef
-      .current()
-      .then((loaded) => {
+      try {
+        const loaded = await loadRef.current();
         if (cancelled) return;
         setCachedContent(cacheKey, loaded, kind);
         setData(loaded);
         setIsInitialLoading(false);
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (cancelled) return;
+        // isInitialLoading stays as it was: true only if there was nothing to fall back on.
         setError(err instanceof Error ? err.message : String(err));
-        // Only a load that actually had nothing cached to fall back on
-        // should keep isInitialLoading true (there's truly nothing to show,
-        // which is what screens use to decide whether to render a loading
-        // shimmer vs. their content) — a failed background refresh of an
-        // already-good cache hit was never "initial loading" in the first
-        // place, so it has nothing to revert here.
-        setIsInitialLoading((wasLoading) => wasLoading);
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;

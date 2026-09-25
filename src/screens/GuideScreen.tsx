@@ -15,11 +15,12 @@ import {
   type GuideSelection,
 } from "@ui";
 import { useCacheInvalidationStore } from "../cache-invalidation-store.js";
-import { loadChannelsByKind, loadLiveCategories } from "../content-loader.js";
+import { loadLiveCategories } from "../content-loader.js";
 import { epgVersionKey } from "../epg-store.js";
 import { loadFavorites } from "../profile-store.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useGuideProgrammes } from "../use-guide-programmes.js";
+import { useLiveChannels } from "../use-live-channels.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 
 export interface GuideScreenProps {
@@ -76,17 +77,12 @@ function formatDuration(ms: number): string {
  * where the channel supports it.
  */
 export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlaybackOpen = false }: GuideScreenProps): JSX.Element {
-  const loadChannels = useCallback(() => loadChannelsByKind(source, "live"), [source]);
-  const { data: channels, isInitialLoading: isChannelsLoading, error: loadError } = useCachedContent(
-    `guide-channels:${source.id}`,
-    "catalog",
-    loadChannels,
-    EMPTY_CHANNELS,
-  );
+  // The same local live table Live TV reads (see use-live-channels.ts) — one list, one download.
+  const { channels, isInitialLoading: isChannelsLoading, error: loadError } = useLiveChannels(source);
 
   const loadCategories = useCallback(() => loadLiveCategories(source), [source]);
   const { data: fetchedCategories, isInitialLoading: isCategoriesLoading } = useCachedContent(
-    `guide-categories:${source.id}`,
+    `live-categories:${source.id}`,
     "category",
     loadCategories,
     EMPTY_CATEGORIES,

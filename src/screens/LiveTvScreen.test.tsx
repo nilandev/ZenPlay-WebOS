@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Channel, PlaylistSource, Profile } from "@core";
 import { clearAllCachedContent } from "../content-cache.js";
@@ -11,12 +11,20 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = () => {};
 });
 
-vi.mock("../content-loader.js", () => ({
-  loadChannelsByKind: vi.fn().mockResolvedValue([
+const { liveChannels } = vi.hoisted(() => ({
+  liveChannels: [
     { id: "ch-1", name: "News One", groupTitle: "News", streamUrl: "http://example.com/news1.m3u8", kind: "live" },
     { id: "ch-2", name: "News Two", groupTitle: "News", streamUrl: "http://example.com/news2.m3u8", kind: "live" },
     { id: "ch-3", name: "Sports One", groupTitle: "Sports", streamUrl: "http://example.com/sports1.m3u8", kind: "live" },
-  ] satisfies Channel[]),
+  ] as Channel[],
+}));
+
+// The live list comes from the local table via the sync worker — see use-live-channels.test.ts for that path.
+vi.mock("../use-live-channels.js", () => ({
+  useLiveChannels: () => ({ channels: liveChannels, isInitialLoading: false, error: null }),
+}));
+
+vi.mock("../content-loader.js", () => ({
   loadLiveCategories: vi.fn().mockResolvedValue([]),
   loadStreamEpg: vi.fn((_source: unknown, streamId: string) => {
     if (streamId !== "ch-1") return Promise.resolve([]);
@@ -70,10 +78,15 @@ const source: PlaylistSource = {
 
 const profile: Profile = { id: "profile-1", name: "Alex", avatarUrl: "avatar/toon_1.png" };
 
-function flush(): Promise<void> {
-  return act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+/**
+ * Lets the screen's cached loads settle — including content-cache.ts's lazy
+ * IndexedDB read, a real macrotask in fake-indexeddb (slower on the first
+ * open) — by waiting until the loading skeleton has given way to the rail.
+ */
+async function flush(): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /All Channels/ })).toBeDefined();
+    expect(useFocusStore.getState().focusedId).not.toBeNull(); // the channel list has taken initial focus
   });
 }
 

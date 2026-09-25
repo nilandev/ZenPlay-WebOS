@@ -5,6 +5,7 @@ import { Check, DatabaseZap, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { clearCachedContent, clearCachedContentForSource } from "../content-cache.js";
 import { loadPlaylistInfo } from "../content-loader.js";
 import { clearEpgForSource } from "../epg-sync.js";
+import { clearLiveForSource } from "../live-sync.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { AddSourceScreen } from "./AddSourceScreen.js";
 
@@ -162,6 +163,7 @@ function ManagePlaylistsGrid({
       clearCachedContentForSource(sourceId);
       clearCachedContent(`playlist-info:${sourceId}`);
       void clearEpgForSource(sourceId);
+      void clearLiveForSource(sourceId);
       setRefreshTick((prev) => ({ ...prev, [sourceId]: (prev[sourceId] ?? 0) + 1 }));
       flashStatus(sourceId, "Cache cleared — content reloads next time you open it");
     },

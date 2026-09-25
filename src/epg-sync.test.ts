@@ -4,7 +4,7 @@ import { useCacheInvalidationStore } from "./cache-invalidation-store.js";
 import { __clearEpgDbForTests, __resetEpgDbForTests } from "./core/storage/epg-db.js";
 import { __resetEpgCacheForTests, loadChannelGuide } from "./epg-cache.js";
 import { epgVersionKey } from "./epg-store.js";
-import { __resetEpgSyncForTests, clearEpgForSource, epgUrlFor, isEpgSyncDue, syncEpg, syncEpgIfDue, EPG_STALE_AFTER_MS } from "./epg-sync.js";
+import { __resetEpgSyncForTests, clearEpgForSource, epgUrlFor, isEpgSyncDue, syncEpg, EPG_STALE_AFTER_MS } from "./epg-sync.js";
 
 const { loadStreamEpgMock } = vi.hoisted(() => ({ loadStreamEpgMock: vi.fn() }));
 vi.mock("./content-loader.js", () => ({ loadStreamEpg: loadStreamEpgMock }));
@@ -67,7 +67,7 @@ describe("epg-sync (main-thread path — jsdom has no Worker)", () => {
 
   it("shares one download between concurrent syncs of the same source", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => guideXml("Once") });
-    await Promise.all([syncEpg(xtream), syncEpg(xtream), syncEpgIfDue(xtream)]);
+    await Promise.all([syncEpg(xtream), syncEpg(xtream)]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -84,9 +84,11 @@ describe("epg-sync (main-thread path — jsdom has no Worker)", () => {
     expect(await isEpgSyncDue(xtream)).toBe(true);
   });
 
-  it("syncEpgIfDue swallows provider failures", async () => {
-    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
-    await expect(syncEpgIfDue(xtream)).resolves.toBeUndefined();
+  it("passes progress through while it writes", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => guideXml("Counted") });
+    const onProgress = vi.fn();
+    await syncEpg(xtream, { onProgress });
+    expect(onProgress).toHaveBeenLastCalledWith(1);
   });
 
   it("clearEpgForSource drops the stored guide", async () => {

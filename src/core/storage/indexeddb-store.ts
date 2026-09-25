@@ -1,7 +1,7 @@
 /**
  * Thin promise-wrapped IndexedDB key-value store backing content-cache.ts's
  * persistent tier. Dependency-free (no idb/dexie) — the API surface needed
- * here (get/set/delete/delete-by-suffix/clear over one object store) is
+ * here (get/set/delete/delete-matching/clear over one object store) is
  * small enough that a wrapper library would add a dependency for less code
  * than hand-rolling it, matching XtreamClient's own "fetch only, no deps"
  * philosophy (see xtream-client.ts's doc comment).
@@ -60,15 +60,17 @@ export function deleteKey(store: IdbStore, key: string): Promise<void> {
   return runRequest(tx.objectStore(STORE_NAME).delete(key)).then(() => undefined);
 }
 
-/** Deletes every key ending in `suffix` — mirrors content-cache.ts's clearCachedContentForSource, which matches on a `:${sourceId}` suffix across every kind's cache key. */
-export async function deleteAllBySuffix(store: IdbStore, suffix: string): Promise<void> {
+/**
+ * Deletes every key `matches` accepts, reading keys only (never values) —
+ * so sweeping for a source's entries or for leftover legacy blobs never
+ * deserializes a multi-MB value just to throw it away.
+ */
+export async function deleteKeysMatching(store: IdbStore, matches: (key: string) => boolean): Promise<void> {
   const tx = store.db.transaction(STORE_NAME, "readwrite");
   const objectStore = tx.objectStore(STORE_NAME);
   const keys = await runRequest(objectStore.getAllKeys());
   await Promise.all(
-    keys
-      .filter((key): key is string => typeof key === "string" && key.endsWith(suffix))
-      .map((key) => runRequest(objectStore.delete(key))),
+    keys.filter((key): key is string => typeof key === "string" && matches(key)).map((key) => runRequest(objectStore.delete(key))),
   );
 }
 
@@ -77,12 +79,16 @@ export function clearStore(store: IdbStore): Promise<void> {
   return runRequest(tx.objectStore(STORE_NAME).clear()).then(() => undefined);
 }
 
-/** All [key, value] pairs currently stored — used once at boot to warm content-cache.ts's in-memory tier, see initContentCacheFromIdb. */
-export async function getAllEntries<T>(store: IdbStore): Promise<Array<[string, T]>> {
+/** One entry, or undefined when the key isn't stored — content-cache.ts reads lazily, one key at a time, on a memory miss. */
+export function getEntry<T>(store: IdbStore, key: string): Promise<T | undefined> {
   const tx = store.db.transaction(STORE_NAME, "readonly");
-  const objectStore = tx.objectStore(STORE_NAME);
-  const [keys, values] = await Promise.all([runRequest(objectStore.getAllKeys()), runRequest(objectStore.getAll())]);
-  return keys.map((key, index) => [String(key), values[index] as T]);
+  return runRequest(tx.objectStore(STORE_NAME).get(key) as IDBRequest<T | undefined>);
+}
+
+/** Every stored key (no values) — for tests and key-only sweeps. */
+export function getAllKeys(store: IdbStore): Promise<string[]> {
+  const tx = store.db.transaction(STORE_NAME, "readonly");
+  return runRequest(tx.objectStore(STORE_NAME).getAllKeys()).then((keys) => keys.map(String));
 }
 
 /** Test-only escape hatch: forces the next openIdbStore() call to re-open a fresh connection instead of reusing one from a previous test — matches xtream-client.ts's __resetRequestDedupeCacheForTests pattern for module-level state. */
