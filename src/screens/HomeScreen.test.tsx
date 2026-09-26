@@ -206,7 +206,7 @@ describe("HomeScreen sync status", () => {
       useSyncStore.getState().beginRun(source.id, "interval");
       useSyncStore.getState().setStage(source.id, "vod", { status: "running", done: 4000 });
     });
-    expect(screen.getByText(`Syncing Movies… ${(4000).toLocaleString()}`)).toBeTruthy();
+    expect(screen.getByText("Sync in progress…")).toBeTruthy();
   });
 
   it("after Refresh, reports what's now stored", async () => {

@@ -10,7 +10,7 @@ import {
   MeshBackground,
   FocusCard,
   Shelf,
-  ShelfRowSkeleton,
+  LoadingState,
   buildGridFocusGraph,
   buildShelfFocusGraph,
   useFocusStore,
@@ -216,10 +216,17 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   const gridMovies = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridMovies) : (categoryFetchPage?.visible ?? null);
   const gridHasMore = isLocalCatalogReady ? localGridHasMore : (categoryFetchPage?.hasMore ?? false);
   const loadMoreGrid = isLocalCatalogReady ? loadMoreLocalGrid : categoryFetchPage?.loadMore;
+  // The grid's query hasn't answered yet — a spinner, never a premature "No movies in this category".
+  const isGridLoading = isLocalCatalogReady ? isLocalGridLoading : useCategoryFetch && isCategoryFetchLoading;
+  const isShelvesLoading = isLocalCatalogReady && isLocalShelvesLoading && shelves.length === 0;
 
   // Nothing to browse yet: the table is still being built and this isn't the category-fetch exception.
   const showSyncNotice = isAwaitingSync && !useCategoryFetch;
 
+  // Nothing to render until the local-catalog check answers. The screen's
+  // shell (category rail, search, Back) is always up meanwhile — a
+  // full-screen loader with nothing focusable left the user stuck while a
+  // sync kept the table busy.
   const isInitialLoading = isCheckingLocalCatalog
     ? true
     : isLocalCatalogReady
@@ -227,21 +234,6 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
         ? isLocalShelvesLoading
         : isLocalGridLoading
       : useCategoryFetch && isCategoryFetchLoading;
-
-  // isInitialLoading briefly flips true again on the local-table path every
-  // time the query changes (each keystroke while searching, or picking a
-  // new category) — useVodCatalogPage's own isInitialLoading resets for
-  // each new filter.
-  // Gating the *entire* screen (including the search input the user is
-  // mid-keystroke in, and the category dropdown) on that would unmount and
-  // reset them on every character typed — hasEverShownContent latches once
-  // the shell has rendered at least once, so only the true first paint
-  // (nothing to show at all yet) blocks on the full-screen skeleton; a
-  // requery after that renders the existing shell with an in-place grid
-  // loading state instead (see the grid's own isInitialLoading check below).
-  const hasEverShownContentRef = useRef(false);
-  if (!isInitialLoading) hasEverShownContentRef.current = true;
-  const showFullScreenSkeleton = isInitialLoading && !hasEverShownContentRef.current;
 
   // Header for the content area: the category (or search) being shown and,
   // for a single category, how many titles it holds.
@@ -257,6 +249,8 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // focus follows into the new content once its focus graph registers —
   // see the browse graph effect below.
   const focusContentOnNextGraphRef = useRef(false);
+  // Set when focus was parked on the search box because there was nothing else to hold it (still loading).
+  const focusParkedRef = useRef(false);
 
   const selectCategory = useCallback((id: string) => {
     if (id === activeCategoryIdRef.current) {
@@ -298,15 +292,32 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   useEffect(() => {
     const railEntryId = categoryRailItemId(activeCategoryId);
     const claimFocus = (id: string) => {
-      if (!focusContentOnNextGraphRef.current) return;
+      const parked = focusParkedRef.current && useFocusStore.getState().focusedId === SEARCH_INPUT_ID;
+      focusParkedRef.current = false;
+      if (!focusContentOnNextGraphRef.current && !parked) return;
       focusContentOnNextGraphRef.current = false;
       useFocusStore.getState().focus(id);
+    };
+    // Nothing to focus in the content yet: hold focus in the top bar so Left
+    // (category rail) and Back still work, and hand it to the content once it loads.
+    const parkFocus = () => {
+      const { focusedId } = useFocusStore.getState();
+      // Only take focus nobody holds — or move focus this screen parked itself.
+      if (focusedId !== null && !(focusParkedRef.current && focusedId === SEARCH_INPUT_ID)) return;
+      if (showSyncNotice) {
+        focusParkedRef.current = false;
+        useFocusStore.getState().focus(railEntryId);
+        return;
+      }
+      useFocusStore.getState().focus(SEARCH_INPUT_ID);
+      focusParkedRef.current = true;
     };
 
     if (gridMovies) {
       const ids = gridMovies.map((item) => gridItemId(item.id));
       if (ids.length === 0) {
         setGraph(CONTENT_ENTRY_SCOPE, []);
+        parkFocus();
         return;
       }
       const nodes = buildGridFocusGraph(ids, gridColumns).map((node, index) => ({
@@ -325,8 +336,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     const rows = shelves.map((shelf) => [...shelf.items.map((item) => item.id), seeAllId(shelf.id)]);
     if (rows.length === 0) {
       setGraph(CONTENT_ENTRY_SCOPE, []);
-      // Nothing to browse yet (the table is still being built): the rail is the only thing to hold focus.
-      if (showSyncNotice && useFocusStore.getState().focusedId === null) useFocusStore.getState().focus(railEntryId);
+      parkFocus();
       return;
     }
     const categoryBySeeAllId = new Map(shelves.map((shelf) => [seeAllId(shelf.id), shelf.id]));
@@ -418,6 +428,8 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
       <>
           {showSyncNotice ? (
             <SyncNotice what="movies" state={syncState} isSearching={trimmedQuery.length > 0} canPickCategory={source.kind === "xtream"} />
+          ) : isCheckingLocalCatalog || (gridMovies && isGridLoading) || (!gridMovies && isShelvesLoading) ? (
+            <LoadingState centered showSlowHint={useCategoryFetch} />
           ) : gridMovies ? (
             gridMovies.length === 0 ? (
               <p style={{ color: "var(--text-dim)", padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`, fontSize: TV_TEXT }}>
@@ -472,7 +484,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
           )}
       </>
     ),
-    [gridMovies, shelves, trimmedQuery, favoriteMovieIds, onPlay, selectCategory, showSyncNotice, syncState, source.kind],
+    [gridMovies, shelves, trimmedQuery, favoriteMovieIds, onPlay, selectCategory, showSyncNotice, syncState, source.kind, isGridLoading, isShelvesLoading, isCheckingLocalCatalog, useCategoryFetch],
   );
 
   // Only a category fetch that failed with nothing to show is a hard error.
@@ -482,13 +494,6 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
         <div role="alert" style={{ padding: "3rem 3.5rem", fontSize: TV_TEXT, color: "var(--text)" }}>
           Failed to load movies: {error}
         </div>
-      </MeshBackground>
-    );
-  }
-  if (showFullScreenSkeleton) {
-    return (
-      <MeshBackground>
-        <ShelfRowSkeleton />
       </MeshBackground>
     );
   }

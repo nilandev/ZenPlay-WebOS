@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 export interface SlowLoadHintProps {
   /** Milliseconds to wait before showing the hint — long enough that it never flashes on a normal, fast load. */
   delayMs?: number;
   message?: string;
+  /** Overrides the default placement (inset at the top-left of a skeleton). */
+  style?: CSSProperties;
 }
 
 const DEFAULT_DELAY_MS = 4000;
@@ -19,7 +21,7 @@ const DEFAULT_MESSAGE = "Still loading — this can take a moment on a slower co
  * stuck rather than genuinely still working. Never appears on a normal,
  * fast load since it mounts and unmounts within delayMs.
  */
-export function SlowLoadHint({ delayMs = DEFAULT_DELAY_MS, message = DEFAULT_MESSAGE }: SlowLoadHintProps): JSX.Element | null {
+export function SlowLoadHint({ delayMs = DEFAULT_DELAY_MS, message = DEFAULT_MESSAGE, style }: SlowLoadHintProps): JSX.Element | null {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
@@ -37,6 +39,7 @@ export function SlowLoadHint({ delayMs = DEFAULT_DELAY_MS, message = DEFAULT_MES
         color: "var(--text-dim, #9a9aa4)",
         opacity: 0,
         animation: "iptv-slow-load-hint-fade-in 400ms ease-out forwards",
+        ...style,
       }}
     >
       {message}

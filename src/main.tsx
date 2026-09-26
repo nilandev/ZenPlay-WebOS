@@ -1,7 +1,8 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { ShimmerStyles, SplashScreen } from "@ui";
+import { ShimmerStyles } from "@ui";
 import { App } from "./App.js";
+import { dismissBootSplash } from "./boot-splash.js";
 import { purgeLegacyCacheEntries } from "./content-cache.js";
 
 // Background housekeeping only — deletes pre-table cache blobs by key (see
@@ -10,22 +11,17 @@ import { purgeLegacyCacheEntries } from "./content-cache.js";
 void purgeLegacyCacheEntries();
 
 /**
- * Root component: renders the real App immediately (never blocked on the
- * splash — see SplashScreen's doc comment for why it's not tied to any
- * data fetch) with the animated splash drawn on top as a plain overlay,
- * unmounting itself once its hold+fade finishes. webOS's own static
- * splashBackground (see webos-meta/appinfo.json) covers the OS-level gap
- * before this script even runs; this bridges the moment after that, once
- * React has taken over.
+ * Root component: renders the real App straight away, then fades out the
+ * launch splash index.html has been showing since the page's first paint
+ * (see boot-splash.ts).
  */
 function Root(): JSX.Element {
-  const [isSplashing, setIsSplashing] = useState(true);
+  useEffect(dismissBootSplash, []);
 
   return (
     <>
       <ShimmerStyles />
       <App />
-      {isSplashing && <SplashScreen onExited={() => setIsSplashing(false)} />}
     </>
   );
 }

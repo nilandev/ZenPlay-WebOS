@@ -206,7 +206,7 @@ export function HomeScreen({ source, sources = [], onSelectSource, platform, pro
   // Footer status: what's syncing right now, why the last sync failed, or how fresh the data is.
   const syncState = useSourceSyncState(source.id);
   const syncSummary = useSyncSummary(source);
-  const runningLabel = describeRunningSync(syncState, source);
+  const runningLabel = describeRunningSync(syncState);
   const failure = describeSyncFailure(syncState, source);
   const syncStatus = runningLabel
     ? runningLabel

@@ -68,7 +68,7 @@ async function resetScreenState(): Promise<void> {
 describe("SeriesScreen while the series table is still being built", () => {
   beforeEach(resetScreenState);
 
-  it("asks the sync manager for the series table and shows its progress — never downloading the catalog itself", async () => {
+  it("asks the sync manager for the series table and says it's on its way, without a row count — never downloading the catalog itself", async () => {
     const { loadSeriesList } = await import("../content-loader.js");
     const { syncSource } = await import("../sync/sync-manager.js");
 
@@ -77,7 +77,8 @@ describe("SeriesScreen while the series table is still being built", () => {
     expect(await screen.findByText("Getting your series ready…")).not.toBeNull();
 
     act(() => useSyncStore.getState().setStage(source.id, "series", { status: "running", done: 800 }));
-    expect(screen.getByText("800 so far")).not.toBeNull();
+    expect(screen.queryByText(/800/)).toBeNull();
+    expect(screen.getByText("Getting your series ready…")).not.toBeNull();
     expect(loadSeriesList).not.toHaveBeenCalled();
   });
 
@@ -246,6 +247,50 @@ describe("SeriesScreen category rail", () => {
     expect(onBack).not.toHaveBeenCalled();
     press("Escape");
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Keeps a readwrite transaction open on the series table, as a sync writing
+   * batches does — reads queue behind it until release() is called.
+   */
+  async function holdSeriesTableBusy(): Promise<() => void> {
+    const catalogDb = await openCatalogDb();
+    let released = false;
+    const tx = catalogDb.db.transaction("series", "readwrite");
+    const store = tx.objectStore("series");
+    const spin = () => {
+      if (!released) store.count().onsuccess = spin;
+    };
+    spin();
+    return () => {
+      released = true;
+    };
+  }
+
+  it("while a sync keeps the table busy, the rail and Back still work instead of a dead full-screen loader", async () => {
+    const release = await holdSeriesTableBusy();
+    const onBack = vi.fn();
+    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={onBack} />);
+
+    await vi.waitFor(() => expect(focusedId()).toBe("series-search-input"));
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    expect(screen.queryByText("Drama Show 0")).toBeNull();
+
+    press("ArrowLeft");
+    expect(focusedId()).toBe("rail:__all__");
+    press("Escape");
+    expect(onBack).toHaveBeenCalledTimes(1);
+    release();
+  });
+
+  it("hands focus to the content once it loads, if the user hasn't moved meanwhile", async () => {
+    const release = await holdSeriesTableBusy();
+    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    await vi.waitFor(() => expect(focusedId()).toBe("series-search-input"));
+
+    release();
+    await screen.findByText("Drama Show 0");
+    await vi.waitFor(() => expect(focusedId()).toBe("s999"));
   });
 
   it("ends each shelf with a See all card that opens the category and moves focus into it", async () => {

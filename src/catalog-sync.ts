@@ -103,7 +103,7 @@ async function runSync(source: PlaylistSource, kind: CatalogKind, onProgress?: (
   const generation = (previousMeta?.generation ?? 0) + 1;
 
   let recordCount = 0;
-  const writeQueue: Promise<void>[] = [];
+  let writes = Promise.resolve();
 
   const { total } = await catalogWorker.syncCatalog({ credentials: source, action: actionForKind(kind) }, (batch) => {
     const records =
@@ -112,13 +112,15 @@ async function runSync(source: PlaylistSource, kind: CatalogKind, onProgress?: (
         : (batch as Array<Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre">>).map((item) => seriesToRecord(source.id, generation, item));
     recordCount += records.length;
     onProgress?.(recordCount);
-    // Batches are written as they arrive rather than awaited serially here —
-    // queued and drained together below — so a slow IndexedDB write never
-    // backs up the worker's postMessage stream.
-    writeQueue.push(putRecordsBatch(catalogDb, kind, records));
+    // Chained, not started all at once: IndexedDB runs transactions on the
+    // same table in creation order, so opening one per batch as it arrives
+    // would put a screen's read (Series opened mid-sync) behind the whole
+    // backlog. Chained, a read waits for at most the one batch in flight.
+    // The worker's stream is never held up — pending batches wait here.
+    writes = writes.then(() => putRecordsBatch(catalogDb, kind, records));
   });
 
-  await Promise.all(writeQueue);
+  await writes;
   await putSyncMeta(catalogDb, { key, lastSyncedAt: Date.now(), recordCount: total || recordCount, generation, rulesVersion: KIDS_RULES_VERSION });
   if (previousMeta) await deleteStaleGeneration(catalogDb, kind, source.id, generation);
   // Lets an already-mounted VodScreen/SeriesScreen (via use-catalog-page.ts)

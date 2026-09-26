@@ -183,6 +183,9 @@ export function putRecordsBatch(catalogDb: CatalogDb, kind: CatalogKind, records
   });
 }
 
+/** How many records one stale-generation sweep transaction walks before handing the table back to readers. */
+const SWEEP_CHUNK = 1000;
+
 /**
  * Deletes every record for `sourceId` whose generation is older than
  * `currentGeneration` — the cleanup half of the shadow-write-then-swap sync
@@ -191,29 +194,48 @@ export function putRecordsBatch(catalogDb: CatalogDb, kind: CatalogKind, records
  * generation get deleted. A refresh is therefore a full replace: titles the
  * provider dropped disappear, the rest are upserted. While a sync runs a
  * reader can briefly see a mix of old and new rows — never a title missing.
+ *
+ * Walks the source's primary-key range (catalogRecordId's `${sourceId}:`
+ * prefix) SWEEP_CHUNK records per transaction, resuming after the last key,
+ * so a screen reading the table mid-sweep waits for one short chunk rather
+ * than a single transaction over a 100k-title catalog.
  */
 export async function deleteStaleGeneration(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, currentGeneration: number): Promise<void> {
-  const tx = catalogDb.db.transaction(storeName(kind), "readwrite");
-  const index = tx.objectStore(storeName(kind)).index(BY_SOURCE_INDEX);
-  const range = IDBKeyRange.only(sourceId);
-  await new Promise<void>((resolve, reject) => {
-    const cursorRequest = index.openCursor(range);
-    cursorRequest.onsuccess = () => {
-      const cursor = cursorRequest.result;
-      if (!cursor) {
-        resolve();
-        return;
-      }
-      const record = cursor.value as CatalogRecord;
-      if (record.generation < currentGeneration) cursor.delete();
-      cursor.continue();
-    };
-    cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Stale-generation cleanup failed"));
-  });
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error("Stale-generation cleanup transaction failed"));
-  });
+  const prefix = `${sourceId}:`;
+  let lower: IDBValidKey = prefix;
+  let lowerOpen = false;
+  for (;;) {
+    const tx = catalogDb.db.transaction(storeName(kind), "readwrite");
+    const range = IDBKeyRange.bound(lower, prefix + MAX_UTF16_SUFFIX, lowerOpen, false);
+    const lastKey = await new Promise<IDBValidKey | null>((resolve, reject) => {
+      let walked = 0;
+      let last: IDBValidKey | null = null;
+      const cursorRequest = tx.objectStore(storeName(kind)).openCursor(range);
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+          resolve(null);
+          return;
+        }
+        const record = cursor.value as CatalogRecord;
+        if (record.sourceId === sourceId && record.generation < currentGeneration) cursor.delete();
+        last = cursor.primaryKey;
+        if (++walked >= SWEEP_CHUNK) {
+          resolve(last);
+          return;
+        }
+        cursor.continue();
+      };
+      cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Stale-generation cleanup failed"));
+    });
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("Stale-generation cleanup transaction failed"));
+    });
+    if (lastKey === null) return;
+    lower = lastKey;
+    lowerOpen = true;
+  }
 }
 
 /** Every record and the sync_meta entry for one source+kind — used when a source's data is reset or the source is removed. */

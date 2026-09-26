@@ -15,11 +15,10 @@ export interface SyncNoticeProps {
  * Stands in for the shelves while a source's movie/series table is still
  * being built by the sync manager — the screen never downloads the whole
  * catalog itself any more, so this is what a first visit shows instead:
- * live progress, or why the sync failed (the scheduler retries it).
+ * that it's on its way, or why the sync failed (the scheduler retries it).
  */
 export function SyncNotice({ what, state, isSearching = false, canPickCategory = false }: SyncNoticeProps): JSX.Element {
   const failed = state?.status === "failed" || state?.status === "skipped";
-  const done = state?.status === "running" ? (state.done ?? 0) : 0;
 
   const headline = failed
     ? `Couldn't load your ${what}`
@@ -28,9 +27,7 @@ export function SyncNotice({ what, state, isSearching = false, canPickCategory =
       : `Getting your ${what} ready…`;
   const detail = failed
     ? `${state?.error ?? "The provider didn't respond."} We'll try again automatically.`
-    : done > 0
-      ? `${done.toLocaleString()} so far`
-      : canPickCategory
+    : canPickCategory
         ? "You can already open a category from the list on the left."
         : "This only takes a moment the first time.";
 

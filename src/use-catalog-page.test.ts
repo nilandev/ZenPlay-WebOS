@@ -32,6 +32,35 @@ describe("useVodCatalogPage", () => {
     expect(result.current.hasMore).toBe(false);
   });
 
+  it("reports loading — never an empty result — from the very render a query is enabled or changed", async () => {
+    const catalogDb = await openCatalogDb();
+    await putRecordsBatch(catalogDb, "vod", [vodRecord("1", "Alpha", "Action"), vodRecord("2", "Beta", "Drama")]);
+
+    const { result, rerender } = renderHook(({ enabled, categoryId }) => useVodCatalogPage("source-1", { enabled, categoryId }), {
+      initialProps: { enabled: false, categoryId: "Action" },
+    });
+    expect(result.current.isInitialLoading).toBe(false);
+
+    rerender({ enabled: true, categoryId: "Action" });
+    expect(result.current).toMatchObject({ isInitialLoading: true, items: [] });
+    await waitFor(() => expect(result.current.items.map((m) => m.name)).toEqual(["Alpha"]));
+
+    rerender({ enabled: true, categoryId: "Drama" });
+    // Not Action's titles under the new category, and not "nothing here" either.
+    expect(result.current).toMatchObject({ isInitialLoading: true, items: [] });
+    await waitFor(() => expect(result.current.items.map((m) => m.name)).toEqual(["Beta"]));
+  });
+
+  it("keeps showing the current items while a background sync's refresh reloads them", async () => {
+    const catalogDb = await openCatalogDb();
+    await putRecordsBatch(catalogDb, "vod", [vodRecord("1", "Alpha")]);
+    const { result } = renderHook(() => useVodCatalogPage("source-1"));
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+
+    act(() => bumpCacheVersion(catalogVersionKey("source-1", "vod")));
+    expect(result.current).toMatchObject({ isInitialLoading: false, items: [expect.objectContaining({ name: "Alpha" })] });
+  });
+
   it("hasMore is true when more records exist beyond the first page", async () => {
     const catalogDb = await openCatalogDb();
     await putRecordsBatch(

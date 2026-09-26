@@ -26,6 +26,8 @@ export interface CatalogPageState<T> {
   total: number | null;
 }
 
+const EMPTY: never[] = [];
+
 type SeriesSummary = Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle">;
 
 /**
@@ -60,7 +62,15 @@ function useCatalogPageImpl<T>(
 ): CatalogPageState<T> {
   const { categoryId, namePrefix, filter: kidsFilter, enabled = true } = options;
   const [items, setItems] = useState<T[]>([]);
-  const [isInitialLoading, setIsInitialLoading] = useState(enabled);
+  const [isFetching, setIsFetching] = useState(enabled);
+  // Which query `items` answers. Until the current one has loaded, the hook
+  // reports loading with no items — otherwise the render between a filter
+  // change (or `enabled` turning on) and the effect below would show the
+  // previous result, or an empty one ("No series in this category"), for a
+  // moment. A background sync's version bump isn't part of the key: the
+  // existing items stay up while the refreshed ones load.
+  const queryKey = enabled ? JSON.stringify([sourceId, kind, categoryId ?? null, namePrefix ?? null, kidsFilter?.key ?? null]) : null;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -89,12 +99,13 @@ function useCatalogPageImpl<T>(
 
     if (!enabled) {
       setItems([]);
-      setIsInitialLoading(false);
+      setIsFetching(false);
       setHasMore(false);
+      setLoadedKey(null);
       return;
     }
 
-    setIsInitialLoading(true);
+    setIsFetching(true);
     Promise.all([fetchPageRef.current({ ...filter, offset: 0, limit: PAGE_SIZE }), getCatalogCount(sourceId, kind, filter)])
       .then(([page, total]) => {
         if (cancelled) return;
@@ -102,17 +113,21 @@ function useCatalogPageImpl<T>(
         setItems(page);
         setTotal(total);
         setHasMore(page.length < total);
-        setIsInitialLoading(false);
+        setLoadedKey(queryKey);
+        setIsFetching(false);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
-        setIsInitialLoading(false);
+        setLoadedKey(queryKey);
+        setIsFetching(false);
       });
 
     return () => {
       cancelled = true;
     };
+    // queryKey is derived from these same inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId, kind, filter, enabled, version]);
 
   const loadMore = useCallback(() => {
@@ -135,5 +150,7 @@ function useCatalogPageImpl<T>(
       });
   }, [filter, hasMore, enabled]);
 
-  return { items, isInitialLoading, hasMore, loadMore, error, total };
+  const isCurrent = enabled && loadedKey === queryKey;
+  const isInitialLoading = enabled && (!isCurrent || (isFetching && items.length === 0));
+  return { items: isCurrent ? items : (EMPTY as T[]), isInitialLoading, hasMore: isCurrent && hasMore, loadMore, error, total: isCurrent ? total : null };
 }

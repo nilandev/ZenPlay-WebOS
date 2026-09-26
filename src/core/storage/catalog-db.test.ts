@@ -134,6 +134,19 @@ describe("catalog-db", () => {
     expect(page.map((r) => r.name)).toEqual(["New"]);
   });
 
+  it("deleteStaleGeneration sweeps a catalog larger than one chunk, leaving other playlists alone", async () => {
+    const catalogDb = await openCatalogDb();
+    const old = Array.from({ length: 1200 }, (_, i) => record({ streamId: String(i), name: `Old ${i}`, generation: 1 })) // more than one SWEEP_CHUNK (1000);
+    const current = Array.from({ length: 30 }, (_, i) => record({ streamId: String(5000 + i), name: `New ${i}`, generation: 2 }));
+    const otherSource = record({ id: "source-10:1", sourceId: "source-10", streamId: "1", name: "Other", generation: 1 });
+    await putRecordsBatch(catalogDb, "vod", [...old, ...current, otherSource]);
+
+    await deleteStaleGeneration(catalogDb, "vod", "source-1", 2);
+
+    await expect(countRecords(catalogDb, "vod", { sourceId: "source-1" })).resolves.toBe(30);
+    await expect(countRecords(catalogDb, "vod", { sourceId: "source-10" })).resolves.toBe(1);
+  }, 20_000);
+
   it("round-trips sync_meta", async () => {
     const catalogDb = await openCatalogDb();
     await putSyncMeta(catalogDb, { key: "vod:source-1", lastSyncedAt: 123, recordCount: 2, generation: 1 });

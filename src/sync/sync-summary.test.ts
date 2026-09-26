@@ -7,7 +7,6 @@ import type { SourceSyncState } from "./sync-store.js";
 import { describeRunningSync, describeSyncFailure, formatCounts, formatSyncedAgo, readSyncSummary } from "./sync-summary.js";
 
 const xtream: PlaylistSource = { kind: "xtream", id: "src-1", name: "P", baseUrl: "http://tv.example", username: "u", password: "p" };
-const m3u: PlaylistSource = { kind: "m3u-url", id: "src-2", name: "M", url: "http://tv.example/list.m3u" };
 const state = (partial: Partial<SourceSyncState>): SourceSyncState => ({ isRunning: false, stages: {}, ...partial });
 
 describe("sync wording", () => {
@@ -20,11 +19,10 @@ describe("sync wording", () => {
     expect(formatSyncedAgo(now - 80 * 3_600_000, now)).toBe("3 days ago");
   });
 
-  it("names the running stage and its progress", () => {
+  it("says a sync is in progress, without naming the stage or counting rows", () => {
     expect(describeRunningSync(state({}))).toBeNull();
-    expect(describeRunningSync(state({ isRunning: true, stages: { auth: { status: "running" } } }))).toBe("Signing in…");
-    expect(describeRunningSync(state({ isRunning: true, stages: { epg: { status: "running", done: 0 } } }))).toBe("Syncing TV guide…");
-    expect(describeRunningSync(state({ isRunning: true, stages: { live: { status: "running", done: 300 } } }), m3u)).toBe("Syncing Channels & movies… 300");
+    expect(describeRunningSync(state({ isRunning: true, stages: { auth: { status: "running" } } }))).toBe("Sync in progress…");
+    expect(describeRunningSync(state({ isRunning: true, stages: { live: { status: "running", done: 300 } } }))).toBe("Sync in progress…");
   });
 
   it("explains a failed run — sign-in errors on their own, otherwise naming what failed", () => {

@@ -219,9 +219,9 @@ export function App(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSourceId_]);
 
-  // Browse screens show a small corner badge while the active source syncs in the background.
+  // Home shows a small corner badge while the active source syncs in the background; the browse screens keep showing what's stored meanwhile.
   const activeSyncState = useSourceSyncState(activeSource?.id ?? "");
-  const syncPillLabel = activeSource ? describeRunningSync(activeSyncState, activeSource) : null;
+  const syncPillLabel = activeSource ? describeRunningSync(activeSyncState) : null;
 
   function handleSourceAdded(source: PlaylistSource): void {
     const updated = addPlaylistSource(source);
@@ -638,7 +638,7 @@ export function App(): JSX.Element {
         />
       )}
 
-      {!playbackUrl && syncPillLabel && <SyncPill label={syncPillLabel} />}
+      {!playbackUrl && activeTab === "home" && syncPillLabel && <SyncPill label={syncPillLabel} />}
       {!playbackUrl && kidsNotice && <Toast message={kidsNotice} tone="error" onDismiss={dismissKidsNotice} />}
 
       {playbackUrl && (

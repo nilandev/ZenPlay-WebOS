@@ -139,7 +139,7 @@ function PlaylistOption({ source, isActive, onSelect }: { source: PlaylistSource
   const loadInfo = () => loadPlaylistInfo(source);
   const { data: info } = useCachedContent(`playlist-info:${source.id}`, "playlist-info", loadInfo, EMPTY_PLAYLIST_INFO, { enabled: false });
 
-  const running = describeRunningSync(syncState, source);
+  const running = describeRunningSync(syncState);
   const expired = info.expiresAt !== null && info.expiresAt.getTime() < Date.now();
   const counts = formatCounts(summary);
   const status = expired

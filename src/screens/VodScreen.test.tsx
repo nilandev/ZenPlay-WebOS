@@ -57,7 +57,7 @@ async function resetScreenState(): Promise<void> {
 describe("VodScreen while the movie table is still being built", () => {
   beforeEach(resetScreenState);
 
-  it("asks the sync manager for the movie table and shows its progress — never downloading the catalog itself", async () => {
+  it("asks the sync manager for the movie table and says it's on its way, without a row count — never downloading the catalog itself", async () => {
     const { loadChannelsByKind } = await import("../content-loader.js");
     const { syncSource } = await import("../sync/sync-manager.js");
 
@@ -66,7 +66,8 @@ describe("VodScreen while the movie table is still being built", () => {
     expect(await screen.findByText("Getting your movies ready…")).not.toBeNull();
 
     act(() => useSyncStore.getState().setStage(source.id, "vod", { status: "running", done: 12400 }));
-    expect(screen.getByText(`${(12400).toLocaleString()} so far`)).not.toBeNull();
+    expect(screen.queryByText(/12,?400/)).toBeNull();
+    expect(screen.getByText("Getting your movies ready…")).not.toBeNull();
     expect(loadChannelsByKind).not.toHaveBeenCalled();
   });
 

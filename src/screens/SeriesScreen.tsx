@@ -12,8 +12,7 @@ import {
   Focusable,
   LiftSurface,
   Shelf,
-  ShelfRowSkeleton,
-  Shimmer,
+  LoadingState,
   URLImage,
   buildGridFocusGraph,
   buildShelfFocusGraph,
@@ -29,7 +28,6 @@ import {
   POSTER_WIDTH,
   TV_TEXT,
   TV_HEADING,
-  EPISODE_COLUMNS,
   EPISODE_WIDTH,
   SECTION_ICONS,
 } from "@ui";
@@ -279,27 +277,14 @@ export function SeriesScreen({
   const gridSeries = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridSeries) : (categoryFetchPage?.visible ?? null);
   const gridHasMore = isLocalCatalogReady ? localGridHasMore : (categoryFetchPage?.hasMore ?? false);
   const loadMoreGrid = isLocalCatalogReady ? loadMoreLocalGrid : categoryFetchPage?.loadMore;
+  // The grid's query hasn't answered yet — a spinner, never a premature "No series in this category".
+  const isGridLoading = isLocalCatalogReady ? isLocalGridLoading : useCategoryFetch && isCategoryFetchLoading;
+  const isShelvesLoading = isLocalCatalogReady && isLocalShelvesLoading && shelves.length === 0;
 
   // Nothing to browse yet: the table is still being built (Xtream), or the playlist simply has no series (M3U).
   const showSyncNotice = isAwaitingSync && !useCategoryFetch;
   const showNoSeries = localCatalogStatus === "not-synced" && !hasSeriesApi;
 
-  const isBrowseLoading = isCheckingLocalCatalog
-    ? true
-    : isLocalCatalogReady
-      ? isAllCategories && !trimmedQuery
-        ? isLocalShelvesLoading
-        : isLocalGridLoading
-      : useCategoryFetch && isCategoryFetchLoading;
-
-  // isBrowseLoading briefly flips true again on the local-table path on
-  // every query change (each keystroke while searching, or a new category)
-  // — see VodScreen's identical hasEverShownContentRef comment for why
-  // gating the whole screen (search input included) on that would reset
-  // mid-keystroke instead of showing an in-place update.
-  const hasEverShownBrowseRef = useRef(false);
-  if (!isBrowseLoading) hasEverShownBrowseRef.current = true;
-  const showFullScreenBrowseSkeleton = isBrowseLoading && !hasEverShownBrowseRef.current;
 
   const seasons = useMemo(() => Array.from(new Set(episodes.map((ep) => ep.season))).sort((a, b) => a - b), [episodes]);
   const currentSeason = activeSeason ?? seasons[0] ?? null;
@@ -352,6 +337,8 @@ export function SeriesScreen({
   // focus follows into the new content once its focus graph registers —
   // see the browse graph effect below.
   const focusContentOnNextGraphRef = useRef(false);
+  // Set when focus was parked on the search box because there was nothing else to hold it (still loading).
+  const focusParkedRef = useRef(false);
 
   const selectCategory = useCallback((id: string) => {
     if (id === activeCategoryIdRef.current) {
@@ -405,15 +392,32 @@ export function SeriesScreen({
         useFocusStore.getState().focus(returnTo);
         return;
       }
-      if (!focusContentOnNextGraphRef.current) return;
+      const parked = focusParkedRef.current && useFocusStore.getState().focusedId === SEARCH_INPUT_ID;
+      focusParkedRef.current = false;
+      if (!focusContentOnNextGraphRef.current && !parked) return;
       focusContentOnNextGraphRef.current = false;
       useFocusStore.getState().focus(id);
+    };
+    // Nothing to focus in the content yet: hold focus in the top bar so Left
+    // (category rail) and Back still work, and hand it to the content once it loads.
+    const parkFocus = () => {
+      const { focusedId } = useFocusStore.getState();
+      // Only take focus nobody holds — or move focus this screen parked itself.
+      if (focusedId !== null && !(focusParkedRef.current && focusedId === SEARCH_INPUT_ID)) return;
+      if (showSyncNotice || showNoSeries) {
+        focusParkedRef.current = false;
+        useFocusStore.getState().focus(railEntryId);
+        return;
+      }
+      useFocusStore.getState().focus(SEARCH_INPUT_ID);
+      focusParkedRef.current = true;
     };
 
     if (gridSeries) {
       const ids = gridSeries.map((item) => gridItemId(item.id));
       if (ids.length === 0) {
         setGraph(CONTENT_ENTRY_SCOPE, []);
+        parkFocus();
         return;
       }
       const nodes = buildGridFocusGraph(ids, gridColumns).map((node, index) => ({
@@ -432,8 +436,7 @@ export function SeriesScreen({
     const rows = shelves.map((shelf) => [...shelf.items.map((item) => item.id), seeAllId(shelf.id)]);
     if (rows.length === 0) {
       setGraph(CONTENT_ENTRY_SCOPE, []);
-      // Nothing to browse (table still being built, or no series at all): the rail is the only thing to hold focus.
-      if ((showSyncNotice || showNoSeries) && useFocusStore.getState().focusedId === null) useFocusStore.getState().focus(railEntryId);
+      parkFocus();
       return;
     }
     const categoryBySeeAllId = new Map(shelves.map((shelf) => [seeAllId(shelf.id), shelf.id]));
@@ -566,6 +569,8 @@ export function SeriesScreen({
             <SyncNotice what="series" state={syncState} isSearching={trimmedQuery.length > 0} canPickCategory />
           ) : showNoSeries ? (
             <p style={{ color: "var(--text-dim)", padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`, fontSize: TV_TEXT }}>This playlist has no series.</p>
+          ) : isCheckingLocalCatalog || (gridSeries && isGridLoading) || (!gridSeries && isShelvesLoading) ? (
+            <LoadingState centered showSlowHint={useCategoryFetch} />
           ) : gridSeries ? (
             gridSeries.length === 0 ? (
               <p style={{ color: "var(--text-dim)", padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`, fontSize: TV_TEXT }}>
@@ -620,7 +625,7 @@ export function SeriesScreen({
           )}
       </>
     ),
-    [gridSeries, shelves, trimmedQuery, favoriteSeriesIds, setSelected, selectCategory, showSyncNotice, showNoSeries, syncState],
+    [gridSeries, shelves, trimmedQuery, favoriteSeriesIds, setSelected, selectCategory, showSyncNotice, showNoSeries, syncState, isGridLoading, isShelvesLoading, isCheckingLocalCatalog, useCategoryFetch],
   );
 
   if (selected) {
@@ -647,11 +652,7 @@ export function SeriesScreen({
 
         <div style={{ padding: `2.5rem ${BROWSE_SIDE_PADDING} 0` }}>
           {isEpisodesLoading ? (
-            <div style={{ display: "flex", gap: BROWSE_GAP, overflow: "hidden", paddingTop: "2.25rem" }}>
-              {Array.from({ length: EPISODE_COLUMNS }, (_, i) => (
-                <Shimmer key={i} height="auto" borderRadius={16} style={{ width: EPISODE_WIDTH, aspectRatio: "16 / 11", flexShrink: 0 }} />
-              ))}
-            </div>
+            <LoadingState showSlowHint />
           ) : seasons.length === 0 ? (
             <p style={{ color: "var(--text-dim)", fontSize: TV_TEXT, margin: 0 }}>No episodes available for this series yet.</p>
           ) : (
@@ -676,13 +677,6 @@ export function SeriesScreen({
     );
   }
 
-  if (showFullScreenBrowseSkeleton) {
-    return (
-      <MeshBackground>
-        <ShelfRowSkeleton />
-      </MeshBackground>
-    );
-  }
 
 
   return (
@@ -824,13 +818,7 @@ function SeriesHero({
             {name}
           </h1>
 
-          {isLoading ? (
-            <>
-              <Shimmer width="24rem" height="1.5rem" style={{ marginBottom: "1.25rem" }} />
-              <Shimmer width="46rem" height="1.25rem" style={{ marginBottom: "0.75rem" }} />
-              <Shimmer width="38rem" height="1.25rem" />
-            </>
-          ) : (
+          {isLoading ? null : (
             <>
               {hasMetaRow && (
                 <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "1.25rem", marginBottom: "1.25rem", fontSize: TV_TEXT, color: "rgba(235,236,242,0.8)" }}>

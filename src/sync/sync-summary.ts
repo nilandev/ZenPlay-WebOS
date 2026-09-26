@@ -87,15 +87,9 @@ export function formatSyncedAgo(timestamp: number, now = Date.now()): string {
   return `${days} ${days === 1 ? "day" : "days"} ago`;
 }
 
-/** "Syncing Movies… 12,400" for the stage that's running, or null when nothing is. */
-export function describeRunningSync(state: SourceSyncState, source?: PlaylistSource): string | null {
-  if (!state.isRunning) return null;
-  const running = (Object.entries(state.stages) as Array<[SyncStage, SourceSyncState["stages"][SyncStage]]>).find(([, stage]) => stage?.status === "running");
-  if (!running) return "Syncing…";
-  const [stage, stageState] = running;
-  if (stage === "auth") return "Signing in…";
-  const done = stageState?.done ?? 0;
-  return `Syncing ${stageLabel(stage, source)}…${done > 0 ? ` ${done.toLocaleString()}` : ""}`;
+/** A generic "Sync in progress…" while the source syncs, or null when it isn't — no per-stage names or counts. */
+export function describeRunningSync(state: SourceSyncState): string | null {
+  return state.isRunning ? "Sync in progress…" : null;
 }
 
 /** The stages the last run failed or skipped, with the first error — null when it went fine. */
