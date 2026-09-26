@@ -446,8 +446,8 @@ export function App(): JSX.Element {
     setPlaybackSubtitle(undefined);
     setNextEpisode(null);
     setIsPlaybackLive(true);
-    // In the Live Stream Format from App Settings (Xtream only — see live-stream-url.ts).
-    setPlaybackUrl(liveStreamUrl(channel));
+    // In the Live Stream Format from App Settings, or on Auto the one that last worked for this playlist (Xtream only — see live-stream-url.ts).
+    setPlaybackUrl(liveStreamUrl(channel, activeSource.id));
   };
   // Recently Watched → a series: play its saved episode with the full episode
   // list (for Next Episode and the Episodes panel). If the episode is gone
@@ -657,7 +657,7 @@ export function App(): JSX.Element {
             channelLineup={playerLineup}
             watchTarget={watchTarget}
             onTuneChannel={(channel) => playLive(channel)}
-            onPlayAlternateStream={(url) => setPlaybackUrl(url)}
+            liveSourceId={isPlaybackLive ? activeSource.id : undefined}
             resumeFrom={playbackResume}
             autoResume={playbackAutoResume}
             info={playbackInfo}

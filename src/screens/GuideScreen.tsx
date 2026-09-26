@@ -150,7 +150,7 @@ export function GuideScreen({ source, platform, profile, onPlay, onBack, isPlayb
         return;
       }
       if (!programme || (programme.start.getTime() <= now && now < programme.stop.getTime())) {
-        onPlay(liveStreamUrl(channel));
+        onPlay(liveStreamUrl(channel, source.id));
         return;
       }
       if (programme.start.getTime() > now) {

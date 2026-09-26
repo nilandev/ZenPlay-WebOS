@@ -8,7 +8,7 @@ import {
   type AppSettings,
   type GuideDaysToKeep,
   type GuideRefreshHours,
-  type LiveStreamFormat,
+  type LiveStreamFormatSetting,
   type PlaybackSpeed,
   type UpdateOnLaunch,
 } from "../settings-store.js";
@@ -23,7 +23,7 @@ const SCOPE = "settings";
 const updateOnLaunchId = (value: UpdateOnLaunch) => `settings-update-on-launch:${value}`;
 const guideRefreshId = (value: GuideRefreshHours) => `settings-guide-refresh:${value}`;
 const guideDaysId = (value: GuideDaysToKeep) => `settings-guide-days:${value}`;
-const liveFormatId = (value: LiveStreamFormat) => `settings-live-format:${value}`;
+const liveFormatId = (value: LiveStreamFormatSetting) => `settings-live-format:${value}`;
 const playbackSpeedId = (value: PlaybackSpeed) => `settings-playback-speed:${value}`;
 
 interface Option<T> {
@@ -49,7 +49,8 @@ const GUIDE_DAYS_OPTIONS: Option<GuideDaysToKeep>[] = [
   { value: 7, label: "7 days" },
 ];
 
-const LIVE_FORMAT_OPTIONS: Option<LiveStreamFormat>[] = [
+const LIVE_FORMAT_OPTIONS: Option<LiveStreamFormatSetting>[] = [
+  { value: "auto", label: "Auto (recommended)" },
   { value: "m3u8", label: "HLS (.m3u8)" },
   { value: "ts", label: "MPEG-TS (.ts)" },
 ];
@@ -268,7 +269,7 @@ function SettingsView({
         <SettingsSection title="Playback">
           <PickerRow
             label="Live Stream Format"
-            description="Xtream live channels · if a channel won't play, the player offers the other format"
+            description="Xtream live channels · Auto uses what works for your provider and switches by itself if a channel won't play"
             options={LIVE_FORMAT_OPTIONS}
             value={settings.liveStreamFormat}
             getId={liveFormatId}

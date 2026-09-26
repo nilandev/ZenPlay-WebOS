@@ -237,7 +237,7 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
   // underneath, and without this its preview would keep streaming and
   // decoding the same channel in parallel with the fullscreen player —
   // two MSE pipelines competing for the TV's few hardware decoders.
-  const previewStreamUrl = isPlaybackOpen || !previewChannel ? null : liveStreamUrl(previewChannel);
+  const previewStreamUrl = isPlaybackOpen || !previewChannel ? null : liveStreamUrl(previewChannel, source.id);
 
   const isInitialLoading = isChannelsLoading || isCategoriesLoading;
 

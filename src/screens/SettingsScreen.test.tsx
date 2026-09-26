@@ -129,12 +129,12 @@ describe("SettingsScreen (App Settings)", () => {
     press("ArrowDown");
     expect(focusedId()).toBe("settings-guide-days:7");
     press("ArrowDown");
-    expect(focusedId()).toBe("settings-live-format:ts"); // two options: the column clamps to the last
+    expect(focusedId()).toBe("settings-live-format:ts");
     press("ArrowDown");
-    expect(focusedId()).toBe("settings-playback-speed:1"); // …and stays clamped going down
+    expect(focusedId()).toBe("settings-playback-speed:1.25");
     press("ArrowUp");
     press("ArrowUp");
-    expect(focusedId()).toBe("settings-guide-days:3");
+    expect(focusedId()).toBe("settings-guide-days:7");
     press("ArrowUp");
     press("ArrowUp");
     press("ArrowUp");
@@ -143,10 +143,10 @@ describe("SettingsScreen (App Settings)", () => {
     expect(focusedId()).toBe("settings-playlists-refresh:a"); // back into the playlist cards
   });
 
-  it("has no Video Quality setting, and plays live channels as HLS by default", () => {
+  it("has no Video Quality setting, and picks the live stream format automatically by default", () => {
     renderSettings();
     expect(screen.queryByText("Video Quality")).toBeNull();
-    expect(screen.getByRole("button", { name: "HLS (.m3u8)", pressed: true })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Auto (recommended)", pressed: true })).toBeDefined();
     act(() => useFocusStore.getState().focus("settings-live-format:ts"));
     press("Enter");
     expect(loadSettings().liveStreamFormat).toBe("ts");

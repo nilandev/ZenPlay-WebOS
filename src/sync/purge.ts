@@ -2,6 +2,7 @@ import type { PlaylistSource } from "@core";
 import { clearCatalogForSource } from "../catalog-sync.js";
 import { clearCachedContentForSource } from "../content-cache.js";
 import { clearEpgForSource } from "../epg-sync.js";
+import { forgetWorkingLiveStreamFormat } from "../live-stream-url.js";
 import { clearLiveForSource } from "../live-sync.js";
 import { removeSourceUserData } from "../profile-store.js";
 import { removeSourceKidsRules } from "../parental-store.js";
@@ -47,5 +48,6 @@ export async function purgeSourceData(sourceId: string): Promise<void> {
   await clearDownloadedData(sourceId);
   removeSourceUserData(sourceId);
   removeSourceKidsRules(sourceId);
+  forgetWorkingLiveStreamFormat(sourceId);
   useSyncStore.getState().forget(sourceId);
 }
