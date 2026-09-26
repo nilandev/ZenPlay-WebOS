@@ -25,6 +25,14 @@ export interface CategoryRailProps {
   rightEntryId?: string;
   /** Rows before this index are "fixed" entries (e.g. Browse); a "Categories" label separates them from the rest. */
   sectionBreakAt?: number;
+  /** Labelled breaks before the given row indexes, e.g. "Frequently used" then "Categories". Takes precedence over sectionBreakAt. */
+  sections?: RailSection[];
+}
+
+export interface RailSection {
+  /** Index of the first row in this section. */
+  at: number;
+  label: string;
 }
 
 const SCOPE = "chrome:category-rail";
@@ -51,7 +59,8 @@ export function categoryRailItemId(categoryId: string): string {
  * its own focus state, so moving through a long category list re-renders
  * two rows per press.
  */
-export function CategoryRail({ title, items, activeId, onSelect, rightEntryId, sectionBreakAt }: CategoryRailProps): JSX.Element {
+export function CategoryRail({ title, items, activeId, onSelect, rightEntryId, sectionBreakAt, sections }: CategoryRailProps): JSX.Element {
+  const sectionLabels = new Map((sections ?? (sectionBreakAt !== undefined ? [{ at: sectionBreakAt, label: "Categories" }] : [])).map((s) => [s.at, s.label]));
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const isExpanded = useFocusStore((state) => state.focusedId?.startsWith(RAIL_PREFIX) ?? false);
@@ -152,7 +161,7 @@ export function CategoryRail({ title, items, activeId, onSelect, rightEntryId, s
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingRight: "0.5rem" }}>
           {items.map((item, index) => (
             <div key={item.id}>
-              {sectionBreakAt !== undefined && index === sectionBreakAt && (
+              {sectionLabels.has(index) && (
                 <div
                   style={{
                     fontSize: "1rem",
@@ -163,7 +172,7 @@ export function CategoryRail({ title, items, activeId, onSelect, rightEntryId, s
                     padding: "1.25rem 1.25rem 0.5rem",
                   }}
                 >
-                  Categories
+                  {sectionLabels.get(index)}
                 </div>
               )}
               <CategoryRailRow item={item} isActive={item.id === activeId} onSelect={handleSelect} />

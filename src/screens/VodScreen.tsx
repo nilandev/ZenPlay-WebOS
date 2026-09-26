@@ -34,6 +34,7 @@ import { useCachedContent } from "../use-cached-content.js";
 import { useVodCatalogPage } from "../use-catalog-page.js";
 import { syncSource } from "../sync/sync-manager.js";
 import { useSourceSyncState } from "../sync/sync-store.js";
+import { frequentCategoryIds, recordCategoryUse, splitByFrequency } from "../category-usage-store.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { useCatalogShelves } from "../use-catalog-shelves.js";
 import { getCatalogPage } from "../catalog-store.js";
@@ -184,13 +185,18 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     isLocalCatalogReady && isAllCategories && !trimmedQuery,
   );
 
-  const categoryItems = useMemo(
-    () => [
-      { id: ALL_CATEGORIES_ID, label: "Browse", count: undefined as number | undefined },
-      ...visibleCategories.map((c) => ({ id: c.id, label: c.name, count: undefined as number | undefined })),
-    ],
-    [visibleCategories],
-  );
+  // Most-opened categories first, under "Frequently used". Read once per
+  // visit (the screen remounts on every tab switch) so the rail doesn't
+  // reshuffle under the user while they browse.
+  const frequentIds = useMemo(() => frequentCategoryIds(profile.id, source.id, "vod"), [profile.id, source.id]);
+  const { categoryItems, railSections } = useMemo(() => {
+    const { frequent, rest } = splitByFrequency(visibleCategories, frequentIds);
+    const toItem = (c: { id: string; name: string }) => ({ id: c.id, label: c.name, count: undefined as number | undefined });
+    return {
+      categoryItems: [{ id: ALL_CATEGORIES_ID, label: "Browse", count: undefined as number | undefined }, ...frequent.map(toItem), ...rest.map(toItem)],
+      railSections: frequent.length > 0 ? [{ at: 1, label: "Frequently used" }, { at: 1 + frequent.length, label: "Categories" }] : [{ at: 1, label: "Categories" }],
+    };
+  }, [visibleCategories, frequentIds]);
   const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "Browse";
 
   // A remembered category a parent has since hidden falls back to Browse.
@@ -259,9 +265,10 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
       if (first) useFocusStore.getState().focus(first);
       return;
     }
+    if (id !== ALL_CATEGORIES_ID) recordCategoryUse(profile.id, source.id, "vod", id);
     focusContentOnNextGraphRef.current = true;
     setActiveCategoryId(id);
-  }, []);
+  }, [profile.id, source.id]);
 
   /** Moves focus into the category rail (which expands it), leaving the search box's native focus if it had it. */
   const openCategoryRail = useCallback(() => {
@@ -499,7 +506,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
         activeId={activeCategoryId}
         onSelect={selectCategory}
         rightEntryId={firstContentId}
-        sectionBreakAt={1}
+        sections={railSections}
       />
 
       {/* Sticky so the title and search stay visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
