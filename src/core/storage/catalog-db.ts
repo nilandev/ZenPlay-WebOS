@@ -21,7 +21,7 @@ export type CatalogKind = "vod" | "series";
 
 /** One VOD or series record as stored — a flattened, IndexedDB-friendly shape rather than the richer Channel/SeriesInfo types screens render, which catalog-store.ts maps to/from. */
 export interface CatalogRecord {
-  /** `${sourceId}:${streamId}` — unique across every source sharing this store. */
+  /** catalogRecordId(sourceId, streamId) — unique across every source sharing this store, and the order browse pages read in (descending). */
   id: string;
   sourceId: string;
   streamId: string;
@@ -64,13 +64,37 @@ export interface CatalogDb {
 const DB_NAME = "iptv-catalog-v1";
 // v2: the multiEntry by_tag_key index (Kids tags). Rows written before it
 // simply aren't in the index until the next sync re-tags them.
-const DB_VERSION = 2;
+// v3: two addedAt indexes, from a short-lived build — dropped again by v4.
+// v4: zero-padded numeric ids (see catalogRecordId), existing rows re-keyed in place.
+const DB_VERSION = 4;
+/** Indexes an older build created that this one no longer uses. */
+const RETIRED_INDEXES = ["by_source_added", "by_source_category_added"];
 const SYNC_META_STORE = "sync_meta";
 
 const BY_SOURCE_INDEX = "by_source";
 const BY_SOURCE_CATEGORY_INDEX = "by_source_category";
 const BY_SOURCE_NAME_INDEX = "by_source_name";
 const BY_TAG_KEY_INDEX = "by_tag_key";
+
+/** Wide enough for any Xtream stream id, so every numeric id pads to the same length. */
+const STREAM_ID_WIDTH = 15;
+
+/**
+ * A stream id as it sorts in the primary key: numeric ids zero-padded so
+ * text order is numeric order ("000…100000" after "000…99999", where the
+ * bare strings sort the other way round). Providers hand out ids as titles
+ * are added, so descending id order is roughly newest first — the order
+ * browse pages read in (see queryPage). Non-numeric ids (M3U tvg-ids) pass
+ * through unchanged.
+ */
+export function streamIdSortKey(streamId: string): string {
+  return /^\d+$/.test(streamId) ? streamId.padStart(STREAM_ID_WIDTH, "0") : streamId;
+}
+
+/** The primary key for one source's stream — the only way records should be keyed or looked up. */
+export function catalogRecordId(sourceId: string, streamId: string): string {
+  return `${sourceId}:${streamIdSortKey(streamId)}`;
+}
 
 /** Upper bound for a same-prefix IDBKeyRange scan — the highest code point IndexedDB's default key comparator will ever sort a real string below. */
 const MAX_UTF16_SUFFIX = "￿";
@@ -90,7 +114,7 @@ export function openCatalogDb(): Promise<CatalogDb> {
         return;
       }
       const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = (event) => {
         const db = request.result;
         for (const kind of ["vod", "series"] as CatalogKind[]) {
           const name = storeName(kind);
@@ -104,6 +128,8 @@ export function openCatalogDb(): Promise<CatalogDb> {
             store.createIndex(BY_SOURCE_NAME_INDEX, ["sourceId", "nameLower"]);
           }
           if (!store.indexNames.contains(BY_TAG_KEY_INDEX)) store.createIndex(BY_TAG_KEY_INDEX, "tagKeys", { multiEntry: true });
+          for (const retired of RETIRED_INDEXES) if (store.indexNames.contains(retired)) store.deleteIndex(retired);
+          if (event.oldVersion > 0 && event.oldVersion < 4) rekeyRecords(store);
         }
         if (!db.objectStoreNames.contains(SYNC_META_STORE)) {
           db.createObjectStore(SYNC_META_STORE, { keyPath: "key" });
@@ -114,6 +140,28 @@ export function openCatalogDb(): Promise<CatalogDb> {
     });
   }
   return dbPromise;
+}
+
+/**
+ * Moves every pre-v4 row to its padded catalogRecordId, inside the upgrade
+ * transaction — so a synced catalog reads newest first (and Favorites'
+ * lookups by padded id still find it) straight away, without a re-sync.
+ * A re-keyed row sorts before the cursor's position ("0" < "1"–"9"), so
+ * the walk never visits it twice.
+ */
+function rekeyRecords(store: IDBObjectStore): void {
+  const cursorRequest = store.openCursor();
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (!cursor) return;
+    const record = cursor.value as CatalogRecord;
+    const id = catalogRecordId(record.sourceId, record.streamId);
+    if (id !== record.id) {
+      cursor.delete();
+      store.put({ ...record, id });
+    }
+    cursor.continue();
+  };
 }
 
 function runRequest<T>(request: IDBRequest<T>): Promise<T> {
@@ -208,11 +256,16 @@ export function queryPage(catalogDb: CatalogDb, kind: CatalogKind, options: Quer
   const tx = catalogDb.db.transaction(storeName(kind), "readonly");
   const store = tx.objectStore(storeName(kind));
 
+  // Search results read alphabetically. Category and full listings share one
+  // index key per row, so they come out in primary-key order — walked
+  // backwards, that's newest first (see streamIdSortKey).
   let source: IDBIndex;
   let range: IDBKeyRange;
+  let direction: IDBCursorDirection = "prev";
   if (namePrefixLower !== undefined) {
     source = store.index(BY_SOURCE_NAME_INDEX);
     range = IDBKeyRange.bound([sourceId, namePrefixLower], [sourceId, namePrefixLower + MAX_UTF16_SUFFIX]);
+    direction = "next";
   } else if (categoryId !== undefined) {
     source = store.index(BY_SOURCE_CATEGORY_INDEX);
     range = IDBKeyRange.only([sourceId, categoryId]);
@@ -224,7 +277,7 @@ export function queryPage(catalogDb: CatalogDb, kind: CatalogKind, options: Quer
   const results: CatalogRecord[] = [];
   let skipped = 0;
   return new Promise((resolve, reject) => {
-    const cursorRequest = source.openCursor(range);
+    const cursorRequest = source.openCursor(range, direction);
     cursorRequest.onsuccess = () => {
       const cursor = cursorRequest.result;
       if (!cursor || results.length >= limit) {
@@ -248,7 +301,7 @@ export function queryPage(catalogDb: CatalogDb, kind: CatalogKind, options: Quer
 }
 
 /**
- * Looks up records by primary key (`${sourceId}:${streamId}`), preserving
+ * Looks up records by primary key (catalogRecordId), preserving
  * `ids`' order and silently dropping any id with no matching record (the
  * stream was removed from the provider since it was favourited/watched) —
  * callers (catalog-store.ts's getRecordsByIds) never see a hole in the

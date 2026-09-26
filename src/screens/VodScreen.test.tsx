@@ -157,10 +157,11 @@ describe("VodScreen at catalog scale", () => {
     await putRecordsBatch(
       catalogDb,
       "vod",
+      // Ids descend so movie 000 is the newest, which pages list first.
       Array.from({ length: 300 }, (_, i) => ({
-        id: `${source.id}:m${i}`,
+        id: `${source.id}:m${999 - i}`,
         sourceId: source.id,
-        streamId: `m${i}`,
+        streamId: `m${999 - i}`,
         name: `Movie ${String(i).padStart(3, "0")}`,
         nameLower: `movie ${String(i).padStart(3, "0")}`,
         groupTitle: "cat-1",

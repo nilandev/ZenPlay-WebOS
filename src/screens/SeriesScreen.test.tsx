@@ -148,8 +148,8 @@ describe("SeriesScreen with a synced local catalog", () => {
 });
 
 describe("SeriesScreen at catalog scale", () => {
-  // Zero-padded ids: the table returns rows in key order, and "s10" would otherwise sort before "s2".
-  const manySeries = Array.from({ length: 500 }, (_, i) => ({ id: `s${String(i).padStart(3, "0")}`, name: i % 2 ? `Drama Show ${i}` : `Comedy Hour ${i}`, groupTitle: "cat-1" }));
+  // Ids descend so series 0 is the newest, which pages list first.
+  const manySeries = Array.from({ length: 500 }, (_, i) => ({ id: `s${999 - i}`, name: i % 2 ? `Drama Show ${i}` : `Comedy Hour ${i}`, groupTitle: "cat-1" }));
 
   beforeEach(async () => {
     await resetScreenState();
@@ -181,9 +181,9 @@ describe("SeriesScreen at catalog scale", () => {
     await vi.waitFor(() => expect(cardCount(container)).toBe(60));
 
     // The last row of the first page is the "load more" trigger zone.
-    act(() => useFocusStore.getState().focus("series-grid:s057"));
+    act(() => useFocusStore.getState().focus("series-grid:s942"));
     await vi.waitFor(() => expect(cardCount(container)).toBe(120));
-    expect(useFocusStore.getState().focusedId).toBe("series-grid:s057");
+    expect(useFocusStore.getState().focusedId).toBe("series-grid:s942");
   });
 
   it("debounces search and ignores single-character queries", async () => {
@@ -206,7 +206,8 @@ describe("SeriesScreen at catalog scale", () => {
 });
 
 describe("SeriesScreen category rail", () => {
-  const manySeries = Array.from({ length: 100 }, (_, i) => ({ id: `s${i}`, name: `Drama Show ${i}`, groupTitle: "cat-1" }));
+  // Ids descend so show 0 is the newest, which pages list first.
+  const manySeries = Array.from({ length: 100 }, (_, i) => ({ id: `s${999 - i}`, name: `Drama Show ${i}`, groupTitle: "cat-1" }));
 
   beforeEach(async () => {
     await resetScreenState();
@@ -226,19 +227,19 @@ describe("SeriesScreen category rail", () => {
   it("opens with focus on the content, not the rail", async () => {
     render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Drama Show 0");
-    await vi.waitFor(() => expect(focusedId()).toBe("s0"));
+    await vi.waitFor(() => expect(focusedId()).toBe("s999"));
   });
 
   it("Left from the first column opens the rail; Back goes content → rail → leaves the screen", async () => {
     const onBack = vi.fn();
     render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={onBack} />);
     await screen.findByText("Drama Show 0");
-    await vi.waitFor(() => expect(focusedId()).toBe("s0"));
+    await vi.waitFor(() => expect(focusedId()).toBe("s999"));
 
     press("ArrowLeft");
     expect(focusedId()).toBe("rail:__all__");
     press("ArrowRight");
-    expect(focusedId()).toBe("s0");
+    expect(focusedId()).toBe("s999");
 
     press("Escape");
     expect(focusedId()).toBe("rail:__all__");
@@ -256,7 +257,7 @@ describe("SeriesScreen category rail", () => {
     press("Enter");
 
     await vi.waitFor(() => expect(posterCount(container)).toBe(60));
-    await vi.waitFor(() => expect(focusedId()).toBe("series-grid:s0"));
+    await vi.waitFor(() => expect(focusedId()).toBe("series-grid:s999"));
     expect(screen.getByText("100 titles")).toBeTruthy();
   });
 

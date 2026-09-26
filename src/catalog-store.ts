@@ -1,5 +1,6 @@
 import { KIDS_TAGS, type Category, type Channel, type SeriesInfo } from "@core";
 import {
+  catalogRecordId,
   countRecords,
   getCategoryIds,
   getRecordsByIds as getCatalogDbRecordsByIds,
@@ -68,7 +69,7 @@ function recordToSeriesSummary(record: CatalogRecord): Pick<SeriesInfo, "id" | "
 async function readRecords(catalogDb: CatalogDb, sourceId: string, kind: CatalogKind, query: CatalogPageQuery): Promise<CatalogRecord[]> {
   const { filter } = query;
   if (filter && query.categoryId === PARENT_PICKS_CATEGORY_ID) {
-    const records = await getCatalogDbRecordsByIds(catalogDb, kind, filter.pickedIds.map((id) => `${sourceId}:${id}`));
+    const records = await getCatalogDbRecordsByIds(catalogDb, kind, filter.pickedIds.map((id) => catalogRecordId(sourceId, id)));
     return records.slice(query.offset, query.offset + query.limit);
   }
   if (filter && query.categoryId === MORE_FOR_KIDS_CATEGORY_ID) {
@@ -109,7 +110,7 @@ export async function getCatalogCount(sourceId: string, kind: CatalogKind, query
   const catalogDb = await openCatalogDb();
   const { filter } = query;
   if (filter && query.categoryId === PARENT_PICKS_CATEGORY_ID) {
-    return (await getCatalogDbRecordsByIds(catalogDb, kind, filter.pickedIds.map((id) => `${sourceId}:${id}`))).length;
+    return (await getCatalogDbRecordsByIds(catalogDb, kind, filter.pickedIds.map((id) => catalogRecordId(sourceId, id)))).length;
   }
   if (filter && query.categoryId === MORE_FOR_KIDS_CATEGORY_ID) {
     if (!filter.moreForKids) return 0;
@@ -139,7 +140,7 @@ export async function getRecordsByIds(
  */
 export async function getRecordsByIds(sourceId: string, kind: CatalogKind, streamIds: string[]): Promise<unknown[]> {
   const catalogDb = await openCatalogDb();
-  const ids = streamIds.map((streamId) => `${sourceId}:${streamId}`);
+  const ids = streamIds.map((streamId) => catalogRecordId(sourceId, streamId));
   const records = await getCatalogDbRecordsByIds(catalogDb, kind, ids);
   return kind === "vod" ? records.map((r) => recordToChannel(r, "movie")) : records.map(recordToSeriesSummary);
 }

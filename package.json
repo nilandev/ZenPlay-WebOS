@@ -38,9 +38,9 @@
     "test": "vitest run",
     "package": "pnpm build && ares-package dist -o webos-dist",
     "install-device": "node scripts/install-device.mjs",
-    "launch-device": "ares-launch com.stacktips.zenplay --device",
+    "launch-device": "ares-launch com.spannable.zenplay --device",
     "launch-hosted": "ares-launch --hosted dist --device",
-    "inspect-device": "ares-inspect --app com.stacktips.zenplay --open --device"
+    "inspect-device": "ares-inspect --app com.spannable.zenplay --open --device"
   },
   "dependencies": {
     "hls.js": "^1.5.17",

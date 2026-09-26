@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   __clearCatalogDbForTests,
   __resetCatalogDbForTests,
+  catalogRecordId,
   countRecords,
   deleteStaleGeneration,
   getRecordsByIds,
@@ -148,5 +149,45 @@ describe("catalog-db", () => {
   it("getSyncMeta returns undefined for a key that was never written", async () => {
     const catalogDb = await openCatalogDb();
     await expect(getSyncMeta(catalogDb, "vod:never-synced")).resolves.toBeUndefined();
+  });
+});
+
+describe("newest-first order", () => {
+  beforeEach(async () => {
+    __resetCatalogDbForTests();
+    await __clearCatalogDbForTests();
+  });
+
+  function keyed(streamId: string, name: string, groupTitle?: string): CatalogRecord {
+    return { ...record({ streamId, name, groupTitle }), id: catalogRecordId("source-1", streamId) };
+  }
+
+  it("lists by descending numeric stream id, across ids of different lengths", async () => {
+    const catalogDb = await openCatalogDb();
+    await putRecordsBatch(catalogDb, "vod", [
+      keyed("9", "Nine", "action"),
+      keyed("100000", "Hundred Thousand", "action"),
+      keyed("99999", "Ninety-Nine Thousand", "comedy"),
+      keyed("10", "Ten", "action"),
+    ]);
+
+    const all = await queryPage(catalogDb, "vod", { sourceId: "source-1", offset: 0, limit: 10 });
+    expect(all.map((r) => r.streamId)).toEqual(["100000", "99999", "10", "9"]);
+
+    const action = await queryPage(catalogDb, "vod", { sourceId: "source-1", categoryId: "action", offset: 1, limit: 10 });
+    expect(action.map((r) => r.streamId)).toEqual(["10", "9"]);
+  });
+
+  it("keeps search alphabetical", async () => {
+    const catalogDb = await openCatalogDb();
+    await putRecordsBatch(catalogDb, "vod", [keyed("1", "Matrix"), keyed("2", "Mad Max")]);
+
+    const page = await queryPage(catalogDb, "vod", { sourceId: "source-1", namePrefixLower: "ma", offset: 0, limit: 10 });
+    expect(page.map((r) => r.name)).toEqual(["Mad Max", "Matrix"]);
+  });
+
+  it("pads numeric ids only, leaving M3U-style ids as they are", () => {
+    expect(catalogRecordId("s", "42")).toBe("s:000000000000042");
+    expect(catalogRecordId("s", "m3u-7")).toBe("s:m3u-7");
   });
 });

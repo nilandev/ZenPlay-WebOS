@@ -1,11 +1,11 @@
 {
-  "id": "com.stacktips.zenplay",
+  "id": "com.spannable.zenplay",
   "title": "ZenPlay",
   "appDescription": "Live TV, movies and series from your own playlists",
   "type": "web",
   "main": "index.html",
   "version": "0.1.0",
-  "vendor": "stacktips",
+  "vendor": "Spannable Labs",
   "icon": "icon.png",
   "largeIcon": "largeIcon.png",
   "iconColor": "#0F1226",

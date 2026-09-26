@@ -63,14 +63,14 @@ describe("catalog reads through a Kids filter", () => {
     const policy = createKidsPolicy({ profileId: "k", sourceId: SOURCE, parent: undefined, allowOtherCategories: false });
     const filter = policy.catalogFilter("vod", vodCategories);
     const kids = await getCatalogPage(SOURCE, "vod", { categoryId: "1", offset: 0, limit: 10, filter });
-    expect(kids.map((m) => m.name)).toEqual(["Frozen", "Moana"]);
+    expect(kids.map((m) => m.name)).toEqual(["Moana", "Frozen"]); // newest (highest id) first
     expect(await getCatalogCount(SOURCE, "vod", { categoryId: "1", filter })).toBe(2);
     expect(await getCatalogPage(SOURCE, "vod", { categoryId: "3", offset: 0, limit: 10, filter })).toEqual([]);
     // Search walks the whole playlist but still only yields allowed titles.
     const search = await getCatalogPage(SOURCE, "vod", { namePrefix: "c", offset: 0, limit: 10, filter });
     expect(search.map((m) => m.name)).toEqual([]);
     // Offsets count allowed rows only.
-    expect((await getCatalogPage(SOURCE, "vod", { categoryId: "1", offset: 1, limit: 10, filter })).map((m) => m.name)).toEqual(["Moana"]);
+    expect((await getCatalogPage(SOURCE, "vod", { categoryId: "1", offset: 1, limit: 10, filter })).map((m) => m.name)).toEqual(["Frozen"]);
   });
 
   it("serves Picked by Parent from force-included ids, and More for Kids from the tag index", async () => {

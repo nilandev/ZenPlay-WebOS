@@ -112,7 +112,7 @@ commands as above.
 **Debugging on device:** `pnpm inspect-device myTV` opens remote DevTools.
 
 > **Forking?** Change the `id` in `webos-meta/appinfo.json` (currently
-> `com.stacktips.zenplay`) and the matching ID in the `launch-device` and
+> `com.spannable.zenplay`) and the matching ID in the `launch-device` and
 > `inspect-device` scripts in `package.json`, so your build installs as a
 > separate app.
 
