@@ -116,12 +116,19 @@ describe("purge", () => {
     expect(m.order.slice(0, 2)).toEqual(["cancel", "idle"]); // stopped before anything was deleted
   });
 
-  it("reset clears the downloaded data but keeps favourites and history, then re-syncs everything", async () => {
+  it("reset re-syncs everything without deleting the current data first, keeping favourites and history", async () => {
     const source: PlaylistSource = { kind: "xtream", id: GONE, name: "P", baseUrl: "http://tv.example", username: "u", password: "p" };
+    const before = await storedFor(GONE);
+    m.syncSource.mockImplementation(async () => {
+      m.order.push("sync");
+      // Still there while the sync runs — the write-then-swap replaces it in place.
+      expect(await storedFor(GONE)).toMatchObject({ channels: before.channels, movies: before.movies, series: before.series, programmes: before.programmes });
+      return { stages: {}, errors: {} };
+    });
+
     await resetSourceData(source);
 
-    const after = await storedFor(GONE);
-    expect(after).toMatchObject({ channels: 0, movies: 0, series: 0, programmes: 0, liveMeta: undefined, epgMeta: undefined, favourites: 2, history: 1 });
+    expect(await storedFor(GONE)).toMatchObject({ favourites: 2, history: 1 });
     expect(m.syncSource).toHaveBeenCalledWith(source, { trigger: "manual", force: true });
     expect(m.order).toEqual(["cancel", "idle", "sync"]);
   });

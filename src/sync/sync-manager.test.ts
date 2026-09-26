@@ -81,16 +81,17 @@ describe("sync manager", () => {
     m.syncEpg.mockImplementation(tracked("epg", async () => ({ programmeCount: 500, channelCount: 5 })));
   });
 
-  it("signs in first, runs live/VOD/series two at a time, and the guide last", async () => {
+  it("signs in first, then runs Live TV, Series, Movies and the guide one at a time", async () => {
     const outcome = await syncSource(xtream, { trigger: "launch" });
 
     expect(outcome.stages).toEqual({ auth: "synced", live: "synced", vod: "synced", series: "synced", epg: "synced" });
-    expect(m.events[0]).toBe("auth:start");
-    expect(m.events[1]).toBe("auth:end");
-    // live and vod start together; series waits for one of them to finish.
-    expect(m.events.slice(2, 4)).toEqual(["live:start", "vod:start"]);
-    expect(m.events.indexOf("series:start")).toBeGreaterThan(m.events.indexOf("live:end"));
-    expect(m.events.slice(-2)).toEqual(["epg:start", "epg:end"]);
+    expect(m.events).toEqual([
+      "auth:start", "auth:end",
+      "live:start", "live:end",
+      "series:start", "series:end",
+      "vod:start", "vod:end",
+      "epg:start", "epg:end",
+    ]);
     expect(getCachedContent(`playlist-info:${xtream.id}`)).toEqual({ name: "Provider", expiresAt: null });
     expect(getCachedContent(`live-categories:${xtream.id}`)).toEqual([{ id: "1", name: "News", kind: "live" }]);
   });

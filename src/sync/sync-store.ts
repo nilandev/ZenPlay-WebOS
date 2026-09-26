@@ -1,9 +1,10 @@
 import { create } from "zustand";
 
-/** The stages of one source's sync, in the order they run (auth first; live/vod/series in parallel; the guide last). */
+/** The stages of one source's sync. Auth runs first, then the content stages one at a time in CONTENT_STAGES order. */
 export type SyncStage = "auth" | "live" | "vod" | "series" | "epg";
 export type ContentStage = Exclude<SyncStage, "auth">;
-export const CONTENT_STAGES: ContentStage[] = ["live", "vod", "series", "epg"];
+/** Run order: Live TV, Series, Movies, then the guide (the biggest download and the least urgent). */
+export const CONTENT_STAGES: ContentStage[] = ["live", "series", "vod", "epg"];
 
 /** What asked for a sync — shown nowhere yet, but recorded so the UI (Phase 3) can word progress differently for a first run vs. a manual refresh. */
 export type SyncTrigger = "first-run" | "launch" | "resume" | "interval" | "online" | "manual";

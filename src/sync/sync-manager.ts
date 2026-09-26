@@ -8,7 +8,7 @@ import { epgUrlFor, isEpgSyncDue, syncEpg } from "../epg-sync.js";
 import { LiveEmptyError } from "../live-sync-core.js";
 import { isLiveSyncDue, syncLiveChannels } from "../live-sync.js";
 import { proxyFetch } from "../proxy-fetch.js";
-import { runWithConcurrency, withRetry } from "./retry.js";
+import { withRetry } from "./retry.js";
 import { CONTENT_STAGES, useSyncStore, type ContentStage, type StageState, type StageStatus, type SyncStage, type SyncTrigger } from "./sync-store.js";
 
 /**
@@ -18,9 +18,9 @@ import { CONTENT_STAGES, useSyncStore, type ContentStage, type StageState, type 
  * checks — now asks this module (via sync-scheduler.ts, Home's Refresh, or
  * a screen that finds its table empty).
  *
- * A job runs a source's stages in order: sign-in (Xtream), then live, VOD
- * and series two at a time, then the guide last (the biggest download and
- * the least urgent). Each stage is skipped while its data is fresh unless
+ * A job runs a source's stages one at a time: sign-in (Xtream), then Live
+ * TV, Series, Movies and the guide last (CONTENT_STAGES order, whatever
+ * order the request listed them in). Each stage is skipped while its data is fresh unless
  * the request forces it, retried with backoff on failure, and reported to
  * sync-store.ts as it goes. One failing stage doesn't stop the others; a
  * failed sign-in stops the job, since every later stage would fail the same
@@ -36,9 +36,6 @@ import { CONTENT_STAGES, useSyncStore, type ContentStage, type StageState, type 
 
 /** Freshness of the account info (name/expiry) the sign-in stage refreshes. */
 const ACCOUNT_INFO_KEY = (sourceId: string) => `playlist-info:${sourceId}`;
-/** How many of live/VOD/series run at once. */
-const CONTENT_CONCURRENCY = 2;
-
 export interface SyncRequest {
   trigger: SyncTrigger;
   /** Content stages to consider; all of them when omitted. */
@@ -186,7 +183,7 @@ async function runJob(source: PlaylistSource, request: Required<SyncRequest>, jo
   useSyncStore.getState().beginRun(source.id, request.trigger);
   try {
     const toRun: ContentStage[] = [];
-    for (const stage of request.stages) {
+    for (const stage of CONTENT_STAGES.filter((s) => request.stages.includes(s))) {
       if (!appliesTo(source, stage)) report(stage, { status: "not-applicable" });
       else if (request.force || (await isStageDue(source, stage))) {
         toRun.push(stage);
@@ -202,12 +199,7 @@ async function runJob(source: PlaylistSource, request: Required<SyncRequest>, jo
       }
     }
 
-    await runWithConcurrency(
-      toRun.filter((stage) => stage !== "epg"),
-      CONTENT_CONCURRENCY,
-      async (stage) => void (await runStage(stage)),
-    );
-    if (toRun.includes("epg")) await runStage("epg");
+    for (const stage of toRun) await runStage(stage);
     return outcome;
   } finally {
     useSyncStore.getState().endRun(source.id);
