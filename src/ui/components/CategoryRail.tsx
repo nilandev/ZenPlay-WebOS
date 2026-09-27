@@ -3,7 +3,7 @@ import { ChevronRight, LayoutList, type LucideIcon } from "lucide-react";
 import { Focusable } from "../focus/Focusable.js";
 import { buildListFocusGraph } from "../focus/build-grid-graph.js";
 import { useFocusStore, useIsFocused } from "../focus/focus-store.js";
-import { CATEGORY_RAIL_COLLAPSED_WIDTH, CATEGORY_RAIL_EXPANDED_WIDTH, TV_HEADING, TV_TEXT } from "../tv-metrics.js";
+import { CATEGORY_RAIL_COLLAPSED_WIDTH, CATEGORY_RAIL_EXPANDED_WIDTH } from "../tv-metrics.js";
 
 export interface CategoryRailItem {
   id: string;
@@ -38,6 +38,11 @@ export interface RailSection {
 const SCOPE = "chrome:category-rail";
 const RAIL_PREFIX = "rail:";
 const RAIL_TRANSITION = "280ms cubic-bezier(0.2, 0.9, 0.3, 1)";
+/** The rail's own type scale — larger than body text, since category names are read from across the room while scrolling a long list. */
+const RAIL_TITLE_SIZE = "2.25rem";
+const RAIL_ROW_SIZE = "1.75rem";
+const RAIL_COUNT_SIZE = "1.375rem";
+const RAIL_SECTION_SIZE = "1.125rem";
 
 /** Focus id of a rail row — prefixed so a category id can never collide with a content item's id. */
 export function categoryRailItemId(categoryId: string): string {
@@ -157,30 +162,43 @@ export function CategoryRail({ title, items, activeId, onSelect, rightEntryId, s
           transition: `transform ${RAIL_TRANSITION}`,
         }}
       >
-        <div style={{ fontSize: TV_HEADING, fontWeight: 800, color: "#fff", padding: "0 1.25rem 1.25rem" }}>{title}</div>
+        <div style={{ fontSize: RAIL_TITLE_SIZE, fontWeight: 800, color: "#fff", padding: "0 1.25rem 1.25rem" }}>{title}</div>
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingRight: "0.5rem" }}>
           {items.map((item, index) => (
             <div key={item.id}>
-              {sectionLabels.has(index) && (
-                <div
-                  style={{
-                    fontSize: "1rem",
-                    fontWeight: 700,
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    color: "rgba(235,236,242,0.45)",
-                    padding: "1.25rem 1.25rem 0.5rem",
-                  }}
-                >
-                  {sectionLabels.get(index)}
-                </div>
-              )}
+              {sectionLabels.has(index) && <RailSectionHeader label={sectionLabels.get(index)!} />}
               <CategoryRailRow item={item} isActive={item.id === activeId} onSelect={handleSelect} />
             </div>
           ))}
         </div>
       </nav>
     </>
+  );
+}
+
+/**
+ * A labelled break in the list ("Frequently used", "Categories"): accent
+ * coloured, with a rule running to the edge, so the groups stand apart
+ * from the rows rather than reading as one more dim row.
+ */
+function RailSectionHeader({ label }: { label: string }): JSX.Element {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.875rem",
+        padding: "1.75rem 1.25rem 0.75rem",
+        fontSize: RAIL_SECTION_SIZE,
+        fontWeight: 800,
+        letterSpacing: "0.1em",
+        textTransform: "uppercase",
+        color: "var(--accent, #38bdf8)",
+      }}
+    >
+      <span style={{ whiteSpace: "nowrap" }}>{label}</span>
+      <span aria-hidden style={{ flex: 1, height: 2, borderRadius: 999, background: "linear-gradient(90deg, var(--accent, #38bdf8) 0%, rgba(255,255,255,0) 100%)", opacity: 0.5 }} />
+    </div>
   );
 }
 
@@ -213,12 +231,12 @@ const CategoryRailRow = memo(function CategoryRailRow({
           justifyContent: "space-between",
           gap: "1rem",
           width: "100%",
-          padding: "0.875rem 1.25rem",
+          padding: "1rem 1.25rem",
           marginBottom: "0.25rem",
           border: "none",
           borderRadius: "0.875rem",
           textAlign: "left",
-          fontSize: TV_TEXT,
+          fontSize: RAIL_ROW_SIZE,
           fontWeight: isActive || isFocused ? 700 : 500,
           background: isFocused ? "rgba(255,255,255,0.94)" : "transparent",
           color: isFocused ? "#0b0c10" : isActive ? "#ffffff" : "rgba(235,236,242,0.7)",
@@ -232,10 +250,10 @@ const CategoryRailRow = memo(function CategoryRailRow({
           />
         )}
         <span style={{ display: "flex", alignItems: "center", gap: "0.75rem", minWidth: 0 }}>
-          {item.icon && <item.icon size="1.5rem" strokeWidth={2} style={{ flexShrink: 0 }} />}
+          {item.icon && <item.icon size="1.75rem" strokeWidth={2} style={{ flexShrink: 0 }} />}
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
         </span>
-        {item.count !== undefined && <span style={{ fontSize: "1.125rem", fontWeight: 600, opacity: 0.6, flexShrink: 0 }}>{item.count}</span>}
+        {item.count !== undefined && <span style={{ fontSize: RAIL_COUNT_SIZE, fontWeight: 600, opacity: 0.6, flexShrink: 0 }}>{item.count}</span>}
       </button>
     </Focusable>
   );
