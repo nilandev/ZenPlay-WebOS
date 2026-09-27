@@ -47,7 +47,8 @@
         min-height: 100%;
         background: var(--bg);
         color: var(--text);
-        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        /* "Inter Variable" is bundled with the app (see src/main.tsx), so every device — TVs included — renders the same font. */
+        font-family: "Inter Variable", "Inter", system-ui, -apple-system, sans-serif;
       }
 
       body {

@@ -1,4 +1,9 @@
 import { StrictMode } from "react";
+// Inter ships with the app: TVs don't have it installed, and their own
+// system font is narrower with shorter lowercase letters, so the UI read
+// smaller there than in a browser that happens to have Inter. Weight axis
+// only; every subset is bundled, but a device only loads the ranges it uses.
+import "@fontsource-variable/inter/wght.css";
 import { createRoot } from "react-dom/client";
 import { ShimmerStyles } from "@ui";
 import { App } from "./App.js";
