@@ -28,6 +28,7 @@ import { getLocalLiveMeta } from "./live-store.js";
 import { liveStreamUrl } from "./live-stream-url.js";
 import { purgeSourceData } from "./sync/purge.js";
 import { startSyncScheduler } from "./sync/sync-scheduler.js";
+import { dismissBootSplash } from "./boot-splash.js";
 import { setSearchIndexPlaybackActive, startSearchIndexScheduler } from "./search/search-index-scheduler.js";
 import { useSourceSyncState } from "./sync/sync-store.js";
 import { describeRunningSync } from "./sync/sync-summary.js";
@@ -185,10 +186,18 @@ export function App(): JSX.Element {
     setActiveProfile(profile);
   }
 
+  // True until the mount effect below has restored the profile saved from
+  // last time — the render before it has no active profile, and mustn't be
+  // mistaken for "nobody's chosen yet" (see isShowingRealScreen).
+  const [isRestoringProfile, setIsRestoringProfile] = useState(() => {
+    const savedId = getActiveProfileId();
+    return savedId !== null && profiles.some((p) => p.id === savedId);
+  });
   useEffect(() => {
     const savedId = getActiveProfileId();
     const saved = savedId ? profiles.find((p) => p.id === savedId) : undefined;
     if (saved) activateProfile(saved);
+    setIsRestoringProfile(false);
     // Only re-check localStorage-persisted active profile once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -302,6 +311,16 @@ export function App(): JSX.Element {
     forgetProfileSource(profileId);
     if (getActiveProfileId() === profileId) clearActiveProfile();
   }
+
+  // The launch splash stays up until one of the screens below is actually
+  // showing — not the passing states before it (restoring the saved profile,
+  // checking whether the playlist needs its first download), which would
+  // otherwise flash between the splash and Home. See boot-splash.ts.
+  const firstSyncState = activeSource ? firstSyncBySource[activeSource.id] : undefined;
+  const isShowingRealScreen = !activeSource || (!activeProfile && !isRestoringProfile) || (activeProfile !== null && firstSyncState !== undefined && firstSyncState !== "checking");
+  useEffect(() => {
+    if (isShowingRealScreen) dismissBootSplash();
+  }, [isShowingRealScreen]);
 
   if (!activeSource) {
     return <AddSourceScreen onSourceAdded={handleSourceAdded} platform={platform} />;

@@ -2,7 +2,9 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource, Profile } from "@core";
 import { addPlaylistSource, setActivePlaylistSourceId } from "./playlist-store.js";
-import { addProfile } from "./profile-store.js";
+import { addProfile, setActiveProfileId } from "./profile-store.js";
+import { __resetBootSplashForTests } from "./boot-splash.js";
+import { getLocalLiveMeta } from "./live-store.js";
 import { App } from "./App.js";
 
 /**
@@ -192,5 +194,41 @@ describe("App: Search", () => {
 
     click("leave search");
     expect(await screen.findByText(/^home on /)).toBeTruthy();
+  });
+});
+
+describe("App: launch splash", () => {
+  let splash: HTMLElement;
+  beforeEach(() => {
+    localStorage.clear();
+    addPlaylistSource(providerA);
+    setActivePlaylistSourceId("a");
+    addProfile(mum);
+    __resetBootSplashForTests();
+    document.getElementById("boot-splash")?.remove();
+    splash = document.createElement("div");
+    splash.id = "boot-splash";
+    document.body.appendChild(splash);
+  });
+
+  it("on a relaunch, stays up through restoring the profile and the first-download check, and fades once Home is showing", async () => {
+    setActiveProfileId(mum.id);
+    let answer!: (meta: Awaited<ReturnType<typeof getLocalLiveMeta>>) => void;
+    vi.mocked(getLocalLiveMeta).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+
+    render(<App />);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(screen.queryByText(/^home on /)).toBeNull(); // still checking
+    expect(splash.classList.contains("is-hidden")).toBe(false);
+
+    await act(async () => answer({ sourceId: "a", lastSyncedAt: Date.now(), generation: 1, channelCount: 1 }));
+    expect(await screen.findByText(/^home on /)).toBeTruthy();
+    await vi.waitFor(() => expect(splash.classList.contains("is-hidden")).toBe(true));
+  });
+
+  it("with no saved profile, fades once the profile picker is showing", async () => {
+    render(<App />);
+    expect(screen.getByRole("button", { name: "pick Mum" })).toBeTruthy();
+    await vi.waitFor(() => expect(splash.classList.contains("is-hidden")).toBe(true));
   });
 });
