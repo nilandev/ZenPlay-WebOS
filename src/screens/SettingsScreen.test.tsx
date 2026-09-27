@@ -125,6 +125,8 @@ describe("SettingsScreen (App Settings)", () => {
     press("ArrowRight");
     expect(focusedId()).toBe("settings-update-on-launch:always");
     press("ArrowDown");
+    expect(focusedId()).toBe("settings-catalog-refresh:72");
+    press("ArrowDown");
     expect(focusedId()).toBe("settings-guide-refresh:24");
     press("ArrowDown");
     expect(focusedId()).toBe("settings-guide-days:7");
@@ -135,6 +137,7 @@ describe("SettingsScreen (App Settings)", () => {
     press("ArrowUp");
     press("ArrowUp");
     expect(focusedId()).toBe("settings-guide-days:7");
+    press("ArrowUp");
     press("ArrowUp");
     press("ArrowUp");
     press("ArrowUp");

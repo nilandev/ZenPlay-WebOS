@@ -1,4 +1,5 @@
 import type { Channel } from "../models/channel.js";
+import { cleanTitle } from "../text/clean-title.js";
 
 const ATTR_RE = /([a-zA-Z0-9_-]+)="([^"]*)"/g;
 
@@ -55,7 +56,7 @@ export function parseM3u(content: string): Channel[] {
     // Any non-comment, non-empty line following an #EXTINF is the stream URL.
     if (pendingExtinf) {
       const attrs = parseAttributes(pendingExtinf);
-      const name = attrs["tvg-name"] || parseDisplayName(pendingExtinf);
+      const name = cleanTitle(attrs["tvg-name"] || parseDisplayName(pendingExtinf));
       const groupTitle = attrs["group-title"];
       const parsedNumber = Number.parseInt(attrs["tvg-chno"] ?? "", 10);
       const channelNumber = Number.isInteger(parsedNumber) && parsedNumber > 0 ? parsedNumber : undefined;

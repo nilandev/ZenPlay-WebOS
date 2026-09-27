@@ -1,4 +1,4 @@
-import { KIDS_TAGS, type Category, type Channel, type SeriesInfo } from "@core";
+import { cleanTitle, KIDS_TAGS, type Category, type Channel, type SeriesInfo } from "@core";
 import {
   catalogRecordId,
   countRecords,
@@ -41,7 +41,7 @@ const MORE_FOR_KIDS_COUNT_LIMIT = 5000;
 export function recordToChannel(record: CatalogRecord, kind: "movie"): Channel {
   return {
     id: record.streamId,
-    name: record.name,
+    name: cleanTitle(record.name), // rows stored before titles were cleaned at sync time
     logoUrl: record.logoUrl,
     groupTitle: record.groupTitle,
     streamUrl: record.streamUrl ?? "",
@@ -52,7 +52,7 @@ export function recordToChannel(record: CatalogRecord, kind: "movie"): Channel {
 export function recordToSeriesSummary(record: CatalogRecord): Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre"> {
   return {
     id: record.streamId,
-    name: record.name,
+    name: cleanTitle(record.name),
     posterUrl: record.posterUrl,
     groupTitle: record.groupTitle,
     ...(record.genre ? { genre: record.genre } : {}),

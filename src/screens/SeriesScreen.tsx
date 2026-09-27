@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PlatformId, PlaylistSource, Profile, SeriesDetails, SeriesEpisode } from "@core";
 import type { FocusNode } from "@ui";
-import { Check, Play, Plus, RotateCcw, Star } from "lucide-react";
+import { Check, Play, Plus, RefreshCw, RotateCcw, Star } from "lucide-react";
 import {
   CategoryRail,
   categoryRailItemId,
@@ -19,6 +19,8 @@ import {
   useFocusStore,
   useRemoteInput,
   SearchButton,
+  HeaderButton,
+  Toast,
   useIsFocused,
   BROWSE_CONTENT_LEFT,
   BROWSE_GAP,
@@ -41,6 +43,7 @@ import { useSourceSyncState } from "../sync/sync-store.js";
 import { SyncNotice } from "./SyncNotice.js";
 import { frequentCategoryIds, recordCategoryUse, splitByFrequency } from "../category-usage-store.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
+import { useCatalogFreshness } from "../use-catalog-freshness.js";
 import { useCatalogShelves } from "../use-catalog-shelves.js";
 import { getCatalogPage } from "../catalog-store.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
@@ -107,6 +110,7 @@ export function __resetCategoryMemoryForTests(): void {
 /** Focus id of a shelf's trailing "See all" card. */
 const seeAllId = (categoryId: string) => `seeall:${categoryId}`;
 const SEARCH_BUTTON_ID = "series-search-button";
+const REFRESH_BUTTON_ID = "series-refresh-button";
 
 export function SeriesScreen({
   source,
@@ -326,6 +330,10 @@ export function SeriesScreen({
   // for a single category, how many titles it holds.
   const headerTitle = isAllCategories ? "Series" : activeCategoryLabel;
   const headerCount = gridSeries ? (isLocalCatalogReady ? localGridTotal : categoryFetchSeries.length) : null;
+  // "Updated 3h ago", and a Refresh for the one category on screen.
+  const freshness = useCatalogFreshness(source, "series", isAllCategories ? undefined : activeCategoryId, isLocalCatalogReady);
+  const { canRefresh, refresh: refreshCategory } = freshness;
+  const headerDetail = [headerCount != null ? `${headerCount} ${headerCount === 1 ? "title" : "titles"}` : null, freshness.updatedLabel].filter(Boolean).join(" · ");
 
   const firstContentId = gridSeries ? (gridSeries[0] ? gridItemId(gridSeries[0].id) : undefined) : shelves[0]?.items[0]?.id;
   const firstContentIdRef = useRef(firstContentId);
@@ -356,15 +364,19 @@ export function SeriesScreen({
     useFocusStore.getState().focus(categoryRailItemId(activeCategoryIdRef.current));
   }, []);
 
-  // The header's Search button, beside the title: Left to the category rail, Down into the content.
+  // The header's buttons, beside the title — Refresh (one category shown) then Search: Left toward the category rail, Down into the content.
   useEffect(() => {
     if (selected) {
       clearGraph("chrome:series-search"); // no Search button on the detail page
       return;
     }
-    const node = { id: SEARCH_BUTTON_ID, neighbors: { left: categoryRailItemId(activeCategoryId), down: firstContentId }, onSelect: onOpenSearch };
-    setGraph("chrome:series-search", [node], undefined, { passive: true });
-  }, [selected, activeCategoryId, firstContentId, onOpenSearch, setGraph, clearGraph]);
+    const railEntryId = categoryRailItemId(activeCategoryId);
+    const search = { id: SEARCH_BUTTON_ID, neighbors: { left: canRefresh ? REFRESH_BUTTON_ID : railEntryId, down: firstContentId }, onSelect: onOpenSearch };
+    const nodes = canRefresh
+      ? [{ id: REFRESH_BUTTON_ID, neighbors: { left: railEntryId, right: SEARCH_BUTTON_ID, down: firstContentId }, onSelect: refreshCategory }, search]
+      : [search];
+    setGraph("chrome:series-search", nodes, undefined, { passive: true });
+  }, [selected, activeCategoryId, firstContentId, onOpenSearch, canRefresh, refreshCategory, setGraph, clearGraph]);
   // Rebuilds above replace the scope in place (setGraph is atomic); clearing
   // it on every rebuild would drop focus for an instant and snap it back to
   // the first node. Clear only when this component goes away.
@@ -710,19 +722,27 @@ export function SeriesScreen({
       >
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: "2.25rem", fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{headerTitle}</div>
-          {headerCount != null && (
-            <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "var(--text-dim)", marginTop: "0.25rem" }}>
-              {headerCount} {headerCount === 1 ? "title" : "titles"}
-            </div>
+          {headerDetail && (
+            <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "var(--text-dim)", marginTop: "0.25rem" }}>{headerDetail}</div>
           )}
         </div>
-        <div style={{ marginLeft: "auto" }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: BROWSE_GAP }}>
+          {canRefresh && (
+            <HeaderButton
+              id={REFRESH_BUTTON_ID}
+              label={freshness.isRefreshing ? "Refreshing…" : "Refresh"}
+              icon={RefreshCw}
+              busy={freshness.isRefreshing}
+              onSelect={refreshCategory}
+            />
+          )}
           <SearchButton id={SEARCH_BUTTON_ID} onSelect={onOpenSearch} />
         </div>
       </div>
 
       {browseContent}
     </div>
+    {freshness.result && <Toast message={freshness.result.message} tone={freshness.result.tone} onDismiss={freshness.dismissResult} />}
     </MeshBackground>
   );
 }

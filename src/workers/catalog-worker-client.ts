@@ -2,21 +2,6 @@ import type { CatalogWorkerAction, CatalogWorkerCredentials, CatalogWorkerReques
 
 export interface CatalogWorkerClient {
   fetchCatalog(request: { credentials: CatalogWorkerCredentials; action: CatalogWorkerAction; categoryId?: string }): Promise<unknown[]>;
-  /**
-   * Streaming counterpart to fetchCatalog for a full-catalog background sync
-   * (see catalog-sync.ts): `onBatch` fires once per ~2000-record chunk as
-   * the worker posts `progress` messages, and the returned promise resolves
-   * with the total record count once the worker posts `done` — see
-   * catalog-fetch-worker.ts's doc comment for why this exists instead of
-   * always resolving one big array. Deliberately not deduped like
-   * fetchCatalog — a sync is already guarded against overlap by
-   * catalog-sync.ts's own in-flight tracking, keyed by source+kind rather
-   * than the exact request shape.
-   */
-  syncCatalog(
-    request: { credentials: CatalogWorkerCredentials; action: CatalogWorkerAction; categoryId?: string },
-    onBatch: (batch: unknown[]) => void,
-  ): Promise<{ total: number }>;
   terminate(): void;
 }
 
@@ -36,9 +21,6 @@ let requestCounter = 0;
  * enough that a real revisit later still gets a fresh fetch.
  */
 const REQUEST_DEDUPE_MS = 3000;
-
-/** Matches catalog-fetch-worker.ts's own DEFAULT_STREAM_BATCH_SIZE — passed explicitly rather than relying on the worker's default so this client's chunking behavior doesn't silently drift from what it thinks it asked for. */
-const DEFAULT_SYNC_BATCH_SIZE = 2000;
 
 function catalogRequestKey(request: { credentials: CatalogWorkerCredentials; action: CatalogWorkerAction; categoryId?: string }): string {
   return `${request.credentials.baseUrl}:${request.credentials.username}:${request.action}:${request.categoryId ?? ""}`;
@@ -60,14 +42,11 @@ function catalogRequestKey(request: { credentials: CatalogWorkerCredentials; act
 export function createCatalogWorkerClient(): CatalogWorkerClient {
   let worker: Worker | undefined;
   const pending = new Map<string, { resolve: (data: unknown[]) => void; reject: (err: Error) => void }>();
-  const streaming = new Map<string, { onBatch: (batch: unknown[]) => void; resolve: (result: { total: number }) => void; reject: (err: Error) => void }>();
   const requestCache = new Map<string, { promise: Promise<unknown[]>; cachedAt: number }>();
 
   function rejectAllPending(error: Error): void {
     for (const entry of pending.values()) entry.reject(error);
     pending.clear();
-    for (const entry of streaming.values()) entry.reject(error);
-    streaming.clear();
   }
 
   function ensureWorker(): Worker {
@@ -75,25 +54,6 @@ export function createCatalogWorkerClient(): CatalogWorkerClient {
     worker = new Worker(new URL("./catalog-fetch-worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = (event: MessageEvent<CatalogWorkerResponse>) => {
       const response = event.data;
-
-      const streamEntry = streaming.get(response.id);
-      if (streamEntry) {
-        if ("type" in response && response.type === "progress") {
-          streamEntry.onBatch(response.batch);
-          return;
-        }
-        if ("type" in response && response.type === "done") {
-          streaming.delete(response.id);
-          streamEntry.resolve({ total: response.total });
-          return;
-        }
-        if ("ok" in response && !response.ok) {
-          streaming.delete(response.id);
-          streamEntry.reject(new Error(response.error));
-          return;
-        }
-        return;
-      }
 
       const entry = pending.get(response.id);
       if (!entry) return; // Stale/unknown response (e.g. after terminate()) — nothing to resolve.
@@ -134,19 +94,10 @@ export function createCatalogWorkerClient(): CatalogWorkerClient {
       promise.catch(() => requestCache.delete(key));
       return promise;
     },
-    syncCatalog(request, onBatch) {
-      return new Promise<{ total: number }>((resolve, reject) => {
-        const id = `catalog-sync-${++requestCounter}`;
-        streaming.set(id, { onBatch, resolve, reject });
-        const message: CatalogWorkerRequest = { id, ...request, streamBatchSize: DEFAULT_SYNC_BATCH_SIZE };
-        ensureWorker().postMessage(message);
-      });
-    },
     terminate() {
       worker?.terminate();
       worker = undefined;
       pending.clear();
-      streaming.clear();
       requestCache.clear();
     },
   };

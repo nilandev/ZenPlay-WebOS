@@ -33,8 +33,9 @@ async function clearDownloadedData(sourceId: string): Promise<void> {
  * again from scratch. The user's favourites and history are kept — they're
  * still the same playlist.
  *
- * Nothing is deleted up front: every stage writes under a new generation
- * and sweeps the old one only once it has landed (see catalog-sync.ts), so
+ * Nothing is deleted up front: live channels and the guide write under a
+ * new generation and sweep the old one only once it has landed, and the
+ * movie/series catalogs write only what changed (see catalog-sync-core.ts), so
  * the current lists stay on screen until their replacements are ready, and
  * a stage that fails leaves its previous data in place rather than an empty
  * tab. Afterwards the small-item cache is cleared except for the category

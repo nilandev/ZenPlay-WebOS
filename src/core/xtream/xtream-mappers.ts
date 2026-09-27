@@ -1,6 +1,7 @@
 import type { Channel, SeriesInfo } from "../models/channel.js";
 import type { EpgProgramme } from "../models/epg.js";
 import type { XtreamCredentials } from "../models/playlist-source.js";
+import { cleanTitle } from "../text/clean-title.js";
 
 /**
  * Pure reshape functions for player_api.php's raw JSON shapes into this
@@ -101,7 +102,7 @@ export function parseChannelNumber(raw: number | string | undefined): number | u
 export function mapLiveStream(credentials: Pick<XtreamCredentials, "baseUrl" | "username" | "password">, s: XtreamLiveStreamRaw): Channel {
   return {
     id: String(s.stream_id),
-    name: s.name,
+    name: cleanTitle(s.name),
     logoUrl: s.stream_icon,
     groupTitle: s.category_id,
     epgChannelId: s.epg_channel_id,
@@ -125,7 +126,7 @@ export function mapLiveStream(credentials: Pick<XtreamCredentials, "baseUrl" | "
 export function mapVodStream(credentials: Pick<XtreamCredentials, "baseUrl" | "username" | "password">, s: XtreamVodStreamRaw): Channel {
   return {
     id: String(s.stream_id),
-    name: s.name,
+    name: cleanTitle(s.name),
     logoUrl: s.stream_icon,
     groupTitle: s.category_id,
     streamUrl: buildXtreamStreamUrl(credentials, "movie", s.stream_id, s.container_extension || "mp4"),
@@ -137,7 +138,7 @@ export function mapSeriesEntry(s: XtreamSeriesRaw): Pick<SeriesInfo, "id" | "nam
   const genre = typeof s.genre === "string" ? s.genre.trim() : "";
   return {
     id: String(s.series_id),
-    name: s.name,
+    name: cleanTitle(s.name),
     posterUrl: s.cover,
     groupTitle: s.category_id,
     ...(genre ? { genre } : {}),

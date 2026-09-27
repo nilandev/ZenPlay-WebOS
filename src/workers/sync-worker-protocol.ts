@@ -1,13 +1,17 @@
+import type { CatalogSyncRequest, CatalogSyncResult } from "../catalog-sync-core.js";
 import type { EpgSyncRequest, EpgSyncResult } from "../epg-sync-core.js";
 import type { LiveSyncRequest, LiveSyncResult } from "../live-sync-core.js";
 
 /** Whole-download deadline for an XMLTV guide — they can reach 100MB, well past proxy-fetch.ts's general DOWNLOAD_TIMEOUT_MS on a slow connection. */
 export const EPG_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+/** Whole-download deadline for a full movie/series list — a slow panel can take minutes to build a 100k-title answer. */
+export const CATALOG_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Every job the sync worker runs, with its request and result shapes. */
 export interface SyncJobs {
   epg: { request: EpgSyncRequest; result: EpgSyncResult };
   live: { request: LiveSyncRequest; result: LiveSyncResult };
+  catalog: { request: CatalogSyncRequest; result: CatalogSyncResult };
 }
 export type SyncJobName = keyof SyncJobs;
 

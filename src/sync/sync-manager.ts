@@ -1,5 +1,6 @@
 import { XtreamAuthError, XtreamClient, type PlaylistSource } from "@core";
 import { bumpCacheVersion } from "../cache-invalidation-store.js";
+import { CatalogEmptyError } from "../catalog-sync-core.js";
 import { catalogVersionKey, isCatalogSyncDue, syncCatalog } from "../catalog-sync.js";
 import { clearCachedContentMatching, isCacheStale, loadCachedEntry, setCachedContent, type CacheKind } from "../content-cache.js";
 import { loadLiveCategories, loadSeriesCategories, loadVodCategories } from "../content-loader.js";
@@ -121,16 +122,14 @@ const STAGE_RUNNERS: Record<SyncStage, (source: PlaylistSource, onProgress: Prog
     return result.channelCount;
   },
   async vod(source, onProgress) {
-    let written = 0;
-    await syncCatalog(source, "vod", { onProgress: (n) => onProgress((written = n)) });
+    const result = await syncCatalog(source, "vod", { onProgress });
     await refreshCached(`vod-categories:${source.id}`, "category", () => loadVodCategories(source));
-    return written;
+    return result?.recordCount;
   },
   async series(source, onProgress) {
-    let written = 0;
-    await syncCatalog(source, "series", { onProgress: (n) => onProgress((written = n)) });
+    const result = await syncCatalog(source, "series", { onProgress });
     await refreshCached(`series-categories:${source.id}`, "category", () => loadSeriesCategories(source));
-    return written;
+    return result?.recordCount;
   },
   async epg(source, onProgress) {
     const result = await syncEpg(source, { onProgress });
@@ -138,9 +137,22 @@ const STAGE_RUNNERS: Record<SyncStage, (source: PlaylistSource, onProgress: Prog
   },
 };
 
-/** Errors a retry can't fix: a rejected login, or a provider that answered with nothing. */
-function isRetryable(err: unknown): boolean {
-  return !(err instanceof XtreamAuthError || err instanceof LiveEmptyError || err instanceof EpgEmptyError);
+/**
+ * Errors a retry can't fix: a rejected login, or a provider that answered
+ * with nothing. Matched by name as well as class, since an error from the
+ * sync worker arrives as a plain Error carrying the original name (literal
+ * names: a minified build renames the classes themselves).
+ */
+const PERMANENT_ERRORS = new Set(["XtreamAuthError", "LiveEmptyError", "EpgEmptyError", "CatalogEmptyError"]);
+
+function isRetryable(stage: SyncStage, err: unknown): boolean {
+  if (!(err instanceof Error)) return true;
+  if (err instanceof XtreamAuthError || err instanceof LiveEmptyError || err instanceof EpgEmptyError || err instanceof CatalogEmptyError) return false;
+  if (PERMANENT_ERRORS.has(err.name)) return false;
+  // A big download that ran out of time (minutes) won't finish on an immediate
+  // retry either — the next launch, resume or interval check tries again.
+  if (stage !== "auth" && err.name === "RequestTimeoutError") return false;
+  return true;
 }
 
 function messageOf(err: unknown): string {
@@ -168,7 +180,7 @@ async function runJob(source: PlaylistSource, request: Required<SyncRequest>, jo
     try {
       const count = await withRetry(() => STAGE_RUNNERS[stage](source, (done) => report(stage, { status: "running", done })), {
         ...retryConfig,
-        shouldRetry: isRetryable,
+        shouldRetry: (err) => isRetryable(stage, err),
       });
       const finishedAt = Date.now();
       job.syncedAt[stage] = finishedAt;

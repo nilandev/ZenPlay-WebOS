@@ -1,3 +1,4 @@
+import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Channel, PlatformId, PlaylistSource, Profile } from "@core";
 import {
@@ -14,6 +15,8 @@ import {
   useFocusStore,
   useRemoteInput,
   SearchButton,
+  HeaderButton,
+  Toast,
   BROWSE_CONTENT_LEFT,
   BROWSE_GAP,
   BROWSE_ROW_GAP,
@@ -32,6 +35,7 @@ import { syncSource } from "../sync/sync-manager.js";
 import { useSourceSyncState } from "../sync/sync-store.js";
 import { frequentCategoryIds, recordCategoryUse, splitByFrequency } from "../category-usage-store.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
+import { useCatalogFreshness } from "../use-catalog-freshness.js";
 import { useCatalogShelves } from "../use-catalog-shelves.js";
 import { getCatalogPage } from "../catalog-store.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
@@ -71,6 +75,7 @@ export function __resetCategoryMemoryForTests(): void {
 /** Focus id of a shelf's trailing "See all" card. */
 const seeAllId = (categoryId: string) => `seeall:${categoryId}`;
 const SEARCH_BUTTON_ID = "vod-search-button";
+const REFRESH_BUTTON_ID = "vod-refresh-button";
 
 export function VodScreen({ source, platform, profile, onPlay, onBack, onOpenSearch, isPlaybackOpen = false }: VodScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
@@ -228,6 +233,10 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, onOpenSea
   // for a single category, how many titles it holds.
   const headerTitle = isAllCategories ? "Movies" : activeCategoryLabel;
   const headerCount = gridMovies ? (isLocalCatalogReady ? localGridTotal : categoryFetchMovies.length) : null;
+  // "Updated 3h ago", and a Refresh for the one category on screen.
+  const freshness = useCatalogFreshness(source, "vod", isAllCategories ? undefined : activeCategoryId, isLocalCatalogReady);
+  const { canRefresh, refresh: refreshCategory } = freshness;
+  const headerDetail = [headerCount != null ? `${headerCount} ${headerCount === 1 ? "title" : "titles"}` : null, freshness.updatedLabel].filter(Boolean).join(" · ");
 
   const firstContentId = gridMovies ? (gridMovies[0] ? gridItemId(gridMovies[0].id) : undefined) : shelves[0]?.items[0]?.id;
   const firstContentIdRef = useRef(firstContentId);
@@ -258,11 +267,15 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, onOpenSea
     useFocusStore.getState().focus(categoryRailItemId(activeCategoryIdRef.current));
   }, []);
 
-  // The header's Search button, beside the title: Left to the category rail, Down into the content.
+  // The header's buttons, beside the title — Refresh (one category shown) then Search: Left toward the category rail, Down into the content.
   useEffect(() => {
-    const node = { id: SEARCH_BUTTON_ID, neighbors: { left: categoryRailItemId(activeCategoryId), down: firstContentId }, onSelect: onOpenSearch };
-    setGraph("chrome:vod-search", [node], undefined, { passive: true });
-  }, [activeCategoryId, firstContentId, onOpenSearch, setGraph, clearGraph]);
+    const railEntryId = categoryRailItemId(activeCategoryId);
+    const search = { id: SEARCH_BUTTON_ID, neighbors: { left: canRefresh ? REFRESH_BUTTON_ID : railEntryId, down: firstContentId }, onSelect: onOpenSearch };
+    const nodes = canRefresh
+      ? [{ id: REFRESH_BUTTON_ID, neighbors: { left: railEntryId, right: SEARCH_BUTTON_ID, down: firstContentId }, onSelect: refreshCategory }, search]
+      : [search];
+    setGraph("chrome:vod-search", nodes, undefined, { passive: true });
+  }, [activeCategoryId, firstContentId, onOpenSearch, canRefresh, refreshCategory, setGraph, clearGraph]);
   // Rebuilds above replace the scope in place (setGraph is atomic); clearing
   // it on every rebuild would drop focus for an instant and snap it back to
   // the first node. Clear only when this component goes away.
@@ -517,19 +530,27 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, onOpenSea
       >
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: "2.25rem", fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{headerTitle}</div>
-          {headerCount != null && (
-            <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "var(--text-dim)", marginTop: "0.25rem" }}>
-              {headerCount} {headerCount === 1 ? "title" : "titles"}
-            </div>
+          {headerDetail && (
+            <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "var(--text-dim)", marginTop: "0.25rem" }}>{headerDetail}</div>
           )}
         </div>
-        <div style={{ marginLeft: "auto" }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: BROWSE_GAP }}>
+          {canRefresh && (
+            <HeaderButton
+              id={REFRESH_BUTTON_ID}
+              label={freshness.isRefreshing ? "Refreshing…" : "Refresh"}
+              icon={RefreshCw}
+              busy={freshness.isRefreshing}
+              onSelect={refreshCategory}
+            />
+          )}
           <SearchButton id={SEARCH_BUTTON_ID} onSelect={onOpenSearch} />
         </div>
       </div>
 
       {browseContent}
     </div>
+    {freshness.result && <Toast message={freshness.result.message} tone={freshness.result.tone} onDismiss={freshness.dismissResult} />}
     </MeshBackground>
   );
 }

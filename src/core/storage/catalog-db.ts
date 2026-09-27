@@ -41,7 +41,7 @@ export interface CatalogRecord {
   mature?: 0 | 1;
   /** `${sourceId}|${tag}` per tag — multiEntry-indexed, so "every animation title in this playlist" is one index range. */
   tagKeys?: string[];
-  /** Bumped once per completed sync (see catalog-sync.ts) — lets a sync that dies partway through be told apart from the previous complete generation, so its leftovers are swept by the next one. */
+  /** The catalog generation the row was written under (see SyncMeta.generation). */
   generation: number;
 }
 
@@ -49,6 +49,11 @@ export interface SyncMeta {
   key: string;
   lastSyncedAt: number;
   recordCount: number;
+  /**
+   * Set when the table is first built and kept across refreshes, which only
+   * write what changed (see catalog-sync-core.ts) — so the search index,
+   * which starts over when this changes, keeps what it has built.
+   */
   generation: number;
   /** The Kids rules version the records were tagged with (see KIDS_RULES_VERSION) — an older one makes the sync due. */
   rulesVersion?: number;
@@ -189,7 +194,7 @@ function runRequest<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-/** Writes a batch of records in one readwrite transaction — the "batched DB transactions" piece: a sync's ~2000-record chunks each cost one transaction, not one per record. */
+/** Writes a batch of records in one readwrite transaction — one transaction per batch, not one per record. */
 export function putRecordsBatch(catalogDb: CatalogDb, kind: CatalogKind, records: CatalogRecord[]): Promise<void> {
   if (records.length === 0) return Promise.resolve();
   const tx = catalogDb.db.transaction(storeName(kind), "readwrite");
@@ -201,59 +206,53 @@ export function putRecordsBatch(catalogDb: CatalogDb, kind: CatalogKind, records
   });
 }
 
-/** How many records one stale-generation sweep transaction walks before handing the table back to readers. */
-const SWEEP_CHUNK = 1000;
+export interface CatalogChanges {
+  put: CatalogRecord[];
+  /** Primary keys (catalogRecordId) to remove. */
+  delete: string[];
+  /** Search rows (search-index-db.ts's SearchTokenRow) for titles that are new or renamed — only while the search index is being kept up to date. */
+  searchPut?: object[];
+  /** Search row ids for titles that are gone or renamed. */
+  searchDelete?: string[];
+}
 
 /**
- * Deletes every record for `sourceId` whose generation is older than
- * `currentGeneration` — the cleanup half of the shadow-write-then-swap sync
- * strategy (see catalog-sync.ts): the new generation's records are written
- * first, sync_meta is flipped to point at it, and only then does the old
- * generation get deleted. A refresh is therefore a full replace: titles the
- * provider dropped disappear, the rest are upserted. While a sync runs a
- * reader can briefly see a mix of old and new rows — never a title missing.
- *
- * Walks the source's primary-key range (catalogRecordId's `${sourceId}:`
- * prefix) SWEEP_CHUNK records per transaction, resuming after the last key,
- * so a screen reading the table mid-sweep waits for one short chunk rather
- * than a single transaction over a 100k-title catalog.
+ * Applies one batch of a sync's changes (see catalog-sync-core.ts) in a
+ * single readwrite transaction: the catalog rows and, when given, their
+ * search rows together — so search never points at a title that's gone,
+ * and a sync that dies partway leaves whole batches, never half of one.
  */
-export async function deleteStaleGeneration(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, currentGeneration: number): Promise<void> {
-  const prefix = `${sourceId}:`;
-  let lower: IDBValidKey = prefix;
-  let lowerOpen = false;
-  for (;;) {
-    const tx = catalogDb.db.transaction(storeName(kind), "readwrite");
-    const range = IDBKeyRange.bound(lower, prefix + MAX_UTF16_SUFFIX, lowerOpen, false);
-    const lastKey = await new Promise<IDBValidKey | null>((resolve, reject) => {
-      let walked = 0;
-      let last: IDBValidKey | null = null;
-      const cursorRequest = tx.objectStore(storeName(kind)).openCursor(range);
-      cursorRequest.onsuccess = () => {
-        const cursor = cursorRequest.result;
-        if (!cursor) {
-          resolve(null);
-          return;
-        }
-        const record = cursor.value as CatalogRecord;
-        if (record.sourceId === sourceId && record.generation < currentGeneration) cursor.delete();
-        last = cursor.primaryKey;
-        if (++walked >= SWEEP_CHUNK) {
-          resolve(last);
-          return;
-        }
-        cursor.continue();
-      };
-      cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Stale-generation cleanup failed"));
-    });
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error ?? new Error("Stale-generation cleanup transaction failed"));
-    });
-    if (lastKey === null) return;
-    lower = lastKey;
-    lowerOpen = true;
+export function writeCatalogChanges(catalogDb: CatalogDb, kind: CatalogKind, changes: CatalogChanges): Promise<void> {
+  const withSearch = Boolean(changes.searchPut?.length || changes.searchDelete?.length);
+  if (changes.put.length === 0 && changes.delete.length === 0 && !withSearch) return Promise.resolve();
+  const tx = catalogDb.db.transaction(withSearch ? [storeName(kind), SEARCH_TOKENS_STORE] : storeName(kind), "readwrite");
+  const store = tx.objectStore(storeName(kind));
+  for (const record of changes.put) store.put(record);
+  for (const id of changes.delete) store.delete(id);
+  if (withSearch) {
+    const search = tx.objectStore(SEARCH_TOKENS_STORE);
+    for (const id of changes.searchDelete ?? []) search.delete(id);
+    for (const row of changes.searchPut ?? []) search.put(row);
   }
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("Catalog write failed"));
+  });
+}
+
+/** Up to `limit` of a source's records after primary key `lastKey` (null: from the start), in key order — one short readonly read. */
+export async function readRecordsAfter(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, lastKey: string | null, limit: number): Promise<CatalogRecord[]> {
+  const prefix = `${sourceId}:`;
+  const range = lastKey === null ? IDBKeyRange.bound(prefix, prefix + MAX_UTF16_SUFFIX) : IDBKeyRange.bound(lastKey, prefix + MAX_UTF16_SUFFIX, true, false);
+  const tx = catalogDb.db.transaction(storeName(kind), "readonly");
+  const records = await runRequest(tx.objectStore(storeName(kind)).getAll(range, limit) as IDBRequest<CatalogRecord[]>);
+  return records.filter((record) => record.sourceId === sourceId);
+}
+
+/** Every record in one of a source's categories. */
+export function readCategoryRecords(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, categoryId: string): Promise<CatalogRecord[]> {
+  const tx = catalogDb.db.transaction(storeName(kind), "readonly");
+  return runRequest(tx.objectStore(storeName(kind)).index(BY_SOURCE_CATEGORY_INDEX).getAll(IDBKeyRange.only([sourceId, categoryId])) as IDBRequest<CatalogRecord[]>);
 }
 
 /** Every record and the sync_meta entry for one source+kind — used when a source's data is reset or the source is removed. */

@@ -1,5 +1,6 @@
 import {
   MAX_UTF16_SUFFIX,
+  readRecordsAfter,
   SEARCH_BY_KEY_INDEX,
   SEARCH_BY_SOURCE_KIND_GENERATION_INDEX,
   SEARCH_INDEX_META_STORE,
@@ -82,12 +83,8 @@ export async function putSearchIndexMeta(catalogDb: CatalogDb, meta: SearchIndex
 }
 
 /** Up to `limit` of a source's catalog records after `lastKey`, in key order — one short readonly read of the catalog store. */
-export async function readCatalogRecordsAfter(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, lastKey: string | null, limit: number): Promise<CatalogRecord[]> {
-  const prefix = `${sourceId}:`;
-  const range = lastKey === null ? IDBKeyRange.bound(prefix, prefix + MAX_UTF16_SUFFIX) : IDBKeyRange.bound(lastKey, prefix + MAX_UTF16_SUFFIX, true, false);
-  const tx = catalogDb.db.transaction(kind, "readonly");
-  const records = (await request(tx.objectStore(kind).getAll(range, limit))) as CatalogRecord[];
-  return records.filter((record) => record.sourceId === sourceId);
+export function readCatalogRecordsAfter(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, lastKey: string | null, limit: number): Promise<CatalogRecord[]> {
+  return readRecordsAfter(catalogDb, kind, sourceId, lastKey, limit);
 }
 
 /** Writes a batch of rows and the indexer's new position together, so progress never runs ahead of what's stored. */

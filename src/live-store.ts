@@ -1,4 +1,4 @@
-import type { Channel } from "@core";
+import { cleanTitle, type Channel } from "@core";
 import { getLiveSyncMeta, getSourceChannels, openLiveDb, type LiveChannelRecord, type LiveSyncMeta } from "./core/storage/live-db.js";
 
 /**
@@ -18,7 +18,8 @@ const snapshots = new Map<string, Channel[]>();
 const pendingReads = new Map<string, Promise<Channel[] | undefined>>();
 
 function toChannel({ sourceId: _sourceId, position: _position, generation: _generation, ...channel }: LiveChannelRecord): Channel {
-  return channel;
+  // Rows stored before titles were cleaned at sync time.
+  return { ...channel, name: cleanTitle(channel.name) };
 }
 
 /** The source's channel list if it's already been read this session — synchronous, for a first render with no loading flash. */

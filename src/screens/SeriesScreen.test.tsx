@@ -277,7 +277,8 @@ describe("SeriesScreen category rail", () => {
 
     await vi.waitFor(() => expect(posterCount(container)).toBe(60));
     await vi.waitFor(() => expect(focusedId()).toBe("series-grid:s999"));
-    expect(screen.getByText("100 titles")).toBeTruthy();
+    expect(screen.getByText(/^100 titles · Updated just now$/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy(); // one category shown: it can be refreshed on its own
   });
 
   it("remembers the chosen category when the screen is opened again", async () => {

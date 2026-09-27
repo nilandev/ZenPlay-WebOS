@@ -1,7 +1,8 @@
-import { KIDS_RULES_VERSION, mapLiveStream, parseM3u, type Channel, type PlaylistSource, type XtreamLiveStreamRaw } from "@core";
-import { catalogSyncMetaKey, deleteStaleGeneration, getSyncMeta, openCatalogDb, putRecordsBatch, putSyncMeta } from "./core/storage/catalog-db.js";
+import { mapLiveStream, parseM3u, type Channel, type PlaylistSource, type XtreamLiveStreamRaw } from "@core";
+import { openCatalogDb } from "./core/storage/catalog-db.js";
 import { deleteStaleChannels, getLiveSyncMeta, openLiveDb, putChannels, putLiveSyncMeta, type LiveChannelRecord, type LiveDb } from "./core/storage/live-db.js";
-import { channelToRecord, UNGROUPED_CATEGORY } from "./catalog-records.js";
+import { UNGROUPED_CATEGORY } from "./catalog-records.js";
+import { writeCatalog } from "./catalog-sync-core.js";
 import { SyncStorageUnavailableError, type SyncJobOptions } from "./sync-job.js";
 
 /**
@@ -81,18 +82,10 @@ async function fetchPlaylist(source: PlaylistSource, fetchImpl: typeof fetch): P
   return { live: (raw as XtreamLiveStreamRaw[]).map((s) => mapLiveStream(source, s)) };
 }
 
-/** Writes an M3U playlist's movies into the VOD catalog table, with catalog-sync.ts's own write-then-swap (integer generations there). */
+/** Writes an M3U playlist's movies into the VOD catalog table the way catalog-sync-core.ts writes an Xtream catalog — only what changed. */
 async function writeMovies(sourceId: string, movies: Channel[], batchSize: number, yieldBetweenBatches?: () => Promise<void>): Promise<void> {
-  const catalogDb = await openCatalogDb();
-  const key = catalogSyncMetaKey(sourceId, "vod");
-  const previous = await getSyncMeta(catalogDb, key);
-  const generation = (previous?.generation ?? 0) + 1;
-  for (let offset = 0; offset < movies.length; offset += batchSize) {
-    await putRecordsBatch(catalogDb, "vod", movies.slice(offset, offset + batchSize).map((movie) => channelToRecord(sourceId, generation, movie)));
-    if (yieldBetweenBatches) await yieldBetweenBatches();
-  }
-  await putSyncMeta(catalogDb, { key, lastSyncedAt: Date.now(), recordCount: movies.length, generation, rulesVersion: KIDS_RULES_VERSION });
-  if (previous) await deleteStaleGeneration(catalogDb, "vod", sourceId, generation);
+  // The file itself came back fine (live channels were checked above), so no movies in it means none — not a broken response.
+  await writeCatalog(await openCatalogDb(), "vod", sourceId, movies, { batchSize, yieldBetweenBatches, allowEmpty: true });
 }
 
 export async function runLiveSync(request: LiveSyncRequest, options: SyncJobOptions): Promise<LiveSyncResult> {

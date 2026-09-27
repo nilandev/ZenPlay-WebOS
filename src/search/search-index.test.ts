@@ -3,7 +3,6 @@ import {
   __clearCatalogDbForTests,
   __resetCatalogDbForTests,
   catalogSyncMetaKey,
-  deleteStaleGeneration,
   openCatalogDb,
   putRecordsBatch,
   putSyncMeta,
@@ -11,6 +10,7 @@ import {
   SEARCH_TOKENS_STORE,
   type CatalogDb,
   type CatalogRecord,
+  writeCatalogChanges,
 } from "../core/storage/catalog-db.js";
 import { __clearLiveDbForTests, __resetLiveDbForTests, deleteStaleChannels, openLiveDb, putChannels, putLiveSyncMeta } from "../core/storage/live-db.js";
 import { deleteSearchIndexForSource, getSearchIndexMeta, searchIndexMetaKey } from "../core/storage/search-index-db.js";
@@ -129,9 +129,9 @@ describe("search index", () => {
     await seed(catalogDb, [movie("1", "Old Film"), movie("2", "Kept Film")]);
     await indexAll(catalogDb);
 
-    // A sync writes generation 2 without "Old Film", then sweeps the old catalog rows.
+    // The table is rebuilt as generation 2 without "Old Film".
     await seed(catalogDb, [movie("2", "Kept Film", 2), movie("3", "New Film", 2)], 2);
-    await deleteStaleGeneration(catalogDb, "vod", SOURCE, 2);
+    await writeCatalogChanges(catalogDb, "vod", { put: [], delete: [movie("1", "Old Film").id] });
     // Until re-indexed: Kept Film is still found through its old row, Old Film's row points at nothing and is dropped,
     // and New Film isn't indexed yet (nor does it start with "film").
     expect(await names("film")).toEqual(["Kept Film"]);
