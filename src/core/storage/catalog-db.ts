@@ -66,10 +66,20 @@ const DB_NAME = "iptv-catalog-v1";
 // simply aren't in the index until the next sync re-tags them.
 // v3: two addedAt indexes, from a short-lived build — dropped again by v4.
 // v4: zero-padded numeric ids (see catalogRecordId), existing rows re-keyed in place.
-const DB_VERSION = 4;
+// v5: the search index's two stores (see search-index-db.ts), created empty —
+// nothing existing is rewritten; the background indexer fills them later.
+const DB_VERSION = 5;
 /** Indexes an older build created that this one no longer uses. */
 const RETIRED_INDEXES = ["by_source_added", "by_source_category_added"];
 const SYNC_META_STORE = "sync_meta";
+/** One row per indexed title: its search words (see src/search/). Kept apart from vod/series so indexing never blocks their reads. */
+export const SEARCH_TOKENS_STORE = "search_tokens";
+/** Where the background indexer got to, per source and kind. */
+export const SEARCH_INDEX_META_STORE = "search_index_meta";
+/** multiEntry over each row's `keys` (`${sourceId}\0${kind}\0${word}`). */
+export const SEARCH_BY_KEY_INDEX = "by_key";
+/** [sourceId, kind, generation] — for sweeping rows an older catalog generation left behind, and for purging a source. */
+export const SEARCH_BY_SOURCE_KIND_GENERATION_INDEX = "by_source_kind_generation";
 
 const BY_SOURCE_INDEX = "by_source";
 const BY_SOURCE_CATEGORY_INDEX = "by_source_category";
@@ -97,7 +107,7 @@ export function catalogRecordId(sourceId: string, streamId: string): string {
 }
 
 /** Upper bound for a same-prefix IDBKeyRange scan — the highest code point IndexedDB's default key comparator will ever sort a real string below. */
-const MAX_UTF16_SUFFIX = "￿";
+export const MAX_UTF16_SUFFIX = "￿";
 
 function storeName(kind: CatalogKind): string {
   return kind;
@@ -133,6 +143,14 @@ export function openCatalogDb(): Promise<CatalogDb> {
         }
         if (!db.objectStoreNames.contains(SYNC_META_STORE)) {
           db.createObjectStore(SYNC_META_STORE, { keyPath: "key" });
+        }
+        if (!db.objectStoreNames.contains(SEARCH_TOKENS_STORE)) {
+          const search = db.createObjectStore(SEARCH_TOKENS_STORE, { keyPath: "id" });
+          search.createIndex(SEARCH_BY_KEY_INDEX, "keys", { multiEntry: true });
+          search.createIndex(SEARCH_BY_SOURCE_KIND_GENERATION_INDEX, ["sourceId", "kind", "generation"]);
+        }
+        if (!db.objectStoreNames.contains(SEARCH_INDEX_META_STORE)) {
+          db.createObjectStore(SEARCH_INDEX_META_STORE, { keyPath: "key" });
         }
       };
       request.onsuccess = () => resolve({ db: request.result });
@@ -475,7 +493,7 @@ export function __resetCatalogDbForTests(): void {
 /** Test-only escape hatch: wipes every store (vod/series/sync_meta) so one test file's writes never leak into the next — fake-indexeddb persists the "database" across openCatalogDb() calls within a test file, only __resetCatalogDbForTests's connection-cache reset doesn't clear its contents. */
 export async function __clearCatalogDbForTests(): Promise<void> {
   const catalogDb = await openCatalogDb();
-  const storeNames = ["vod", "series", SYNC_META_STORE];
+  const storeNames = ["vod", "series", SYNC_META_STORE, SEARCH_TOKENS_STORE, SEARCH_INDEX_META_STORE];
   await Promise.all(
     storeNames.map(
       (name) =>

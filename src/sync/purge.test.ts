@@ -11,6 +11,8 @@ import {
   putSyncMeta,
   queryPage,
 } from "../core/storage/catalog-db.js";
+import { findSearchCandidates, getSearchIndexMeta, searchIndexMetaKey } from "../core/storage/search-index-db.js";
+import { runIndexJobs } from "../search/search-indexer.js";
 import { __clearEpgDbForTests, __resetEpgDbForTests, getChannelProgrammes, getEpgSyncMeta, openEpgDb, putEpgSyncMeta, putProgrammes } from "../core/storage/epg-db.js";
 import { getAllKeys, openIdbStore, clearStore } from "../core/storage/indexeddb-store.js";
 import { __clearLiveDbForTests, __resetLiveDbForTests, getLiveSyncMeta, getSourceChannels, openLiveDb, putChannels, putLiveSyncMeta } from "../core/storage/live-db.js";
@@ -35,6 +37,7 @@ async function seed(sourceId: string): Promise<void> {
     await putRecordsBatch(catalogDb, kind, [{ id: `${sourceId}:9`, sourceId, streamId: "9", name: "Title", nameLower: "title", groupTitle: "7", generation: 1 }]);
     await putSyncMeta(catalogDb, { key: catalogSyncMetaKey(sourceId, kind), lastSyncedAt: 1, recordCount: 1, generation: 1 });
   }
+  await runIndexJobs(catalogDb, [{ sourceId, kind: "vod" }, { sourceId, kind: "series" }], { paceMs: 0, shouldStop: () => false, sleep: () => Promise.resolve() });
 
   const epgDb = await openEpgDb();
   await putProgrammes(epgDb, [{ sourceId, channelId: "bbc", start: 1, stop: 2, title: "Show", generation: 1 }]);
@@ -57,6 +60,8 @@ async function storedFor(sourceId: string) {
     movies: (await queryPage(catalogDb, "vod", { sourceId, offset: 0, limit: 10 })).length,
     series: (await queryPage(catalogDb, "series", { sourceId, offset: 0, limit: 10 })).length,
     catalogMeta: [await getSyncMeta(catalogDb, catalogSyncMetaKey(sourceId, "vod")), await getSyncMeta(catalogDb, catalogSyncMetaKey(sourceId, "series"))].filter(Boolean).length,
+    searchRows: (await findSearchCandidates(catalogDb, sourceId, "vod", "title", 10)).length + (await findSearchCandidates(catalogDb, sourceId, "series", "title", 10)).length,
+    searchMeta: [await getSearchIndexMeta(catalogDb, searchIndexMetaKey(sourceId, "vod")), await getSearchIndexMeta(catalogDb, searchIndexMetaKey(sourceId, "series"))].filter(Boolean).length,
     programmes: (await getChannelProgrammes(epgDb, sourceId, "bbc")).length,
     epgMeta: await getEpgSyncMeta(epgDb, sourceId),
     cacheKeys: (await getAllKeys(await openIdbStore())).filter((key) => key.includes(sourceId)),
@@ -103,6 +108,8 @@ describe("purge", () => {
         movies: 0,
         series: 0,
         catalogMeta: 0,
+        searchRows: 0,
+        searchMeta: 0,
         programmes: 0,
         epgMeta: undefined,
         cacheKeys: [],
@@ -111,7 +118,7 @@ describe("purge", () => {
         syncStatus: 0,
       }),
     );
-    expect(await storedFor(KEPT)).toMatchObject({ channels: 1, movies: 1, series: 1, catalogMeta: 2, programmes: 1, favourites: 2, history: 1, syncStatus: 1 });
+    expect(await storedFor(KEPT)).toMatchObject({ channels: 1, movies: 1, series: 1, catalogMeta: 2, searchRows: 2, searchMeta: 2, programmes: 1, favourites: 2, history: 1, syncStatus: 1 });
     expect((await storedFor(KEPT)).cacheKeys).toHaveLength(3);
     expect(m.order.slice(0, 2)).toEqual(["cancel", "idle"]); // stopped before anything was deleted
   });

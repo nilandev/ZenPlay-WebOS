@@ -23,6 +23,8 @@ export interface ChannelSidebarProps {
   leftEntryId?: string;
   /** Focus id to jump to when the user presses right from any row, if anything sits to the right. */
   rightEntryId?: string;
+  /** Focus id Up goes to from the first row — e.g. a button in the header above the list. */
+  topEntryId?: string;
 }
 
 const SCOPE = "content:channel-sidebar";
@@ -60,6 +62,7 @@ export function ChannelSidebar({
   numberById,
   leftEntryId,
   rightEntryId,
+  topEntryId,
 }: ChannelSidebarProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
@@ -95,14 +98,14 @@ export function ChannelSidebar({
     previousIdsRef.current = ids;
     const nodes = buildListFocusGraph(ids).map((node, index) => ({
       ...node,
-      neighbors: { ...node.neighbors, left: leftEntryId, right: rightEntryId },
+      neighbors: { ...node.neighbors, left: leftEntryId, right: rightEntryId, up: index === 0 ? topEntryId : node.neighbors.up },
       onSelect: () => onSelectRef.current(channels[index]),
     }));
     setGraph(SCOPE, nodes);
     keepFocusRef.current = previousIndex >= 0 && ids.length > 0;
     // The focused row went away: its neighbour (whatever now sits at its place) takes focus, not the top of the list.
     if (keepFocusRef.current && focusedBefore && !ids.includes(focusedBefore)) focus(ids[Math.min(previousIndex, ids.length - 1)]);
-  }, [channels, leftEntryId, rightEntryId, setGraph, focus]);
+  }, [channels, leftEntryId, rightEntryId, topEntryId, setGraph, focus]);
 
   // Rebuilds above replace the scope in place (setGraph is atomic); clearing
   // it on every rebuild would drop focus for an instant and snap it back to

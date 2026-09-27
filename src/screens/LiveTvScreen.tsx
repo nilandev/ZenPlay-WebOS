@@ -13,6 +13,7 @@ import {
   useFocusStore,
   useIsFocused,
   useRemoteInput,
+  SearchButton,
 } from "@ui";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
 import { useContentPolicy } from "../content-policy.js";
@@ -29,6 +30,8 @@ export interface LiveTvScreenProps {
   onBack: () => void;
   /** Enters full-screen playback for the given channel — see App.tsx's playLive. The lineup lets the player change channel (CH+/CH−, number keys). */
   onPlay: (channel: Channel, lineup: ChannelLineup) => void;
+  /** Opens the global Search screen (the Search button above the channel list). */
+  onOpenSearch: () => void;
   /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away (see use-remote-input.ts's `enabled` doc comment). */
   isPlaybackOpen?: boolean;
 }
@@ -38,6 +41,8 @@ const FAVOURITES_CATEGORY_ID = "__favourites__";
 /** Focus id of the favourite button in the preview's channel line. */
 const FAVORITE_BUTTON_ID = "live-preview-favorite";
 const FAVORITE_BUTTON_SCOPE = "content:live-favorite";
+const SEARCH_BUTTON_ID = "live-search-button";
+const SEARCH_BUTTON_SCOPE = "chrome:live-search";
 /**
  * How long the channel list must rest on a channel before the preview
  * switches to it. Each switch tears down and restarts the TV's video
@@ -63,7 +68,7 @@ function groupByCategory(channels: Channel[]): Category[] {
   return Array.from(seen.values());
 }
 
-export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlaybackOpen = false }: LiveTvScreenProps): JSX.Element {
+export function LiveTvScreen({ source, platform, profile, onBack, onPlay, onOpenSearch, isPlaybackOpen = false }: LiveTvScreenProps): JSX.Element {
   // Read from the local live table; fetched and parsed in the sync worker (see use-live-channels.ts).
   // A Kids profile sees only allowed channels, minus any airing something mature right now (docs/kids-profile.md §3.6).
   const policy = useContentPolicy(profile, source.id);
@@ -181,6 +186,18 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
   }, [previewChannel, handleToggleFavorite, setGraph]);
   useEffect(() => () => clearGraph(FAVORITE_BUTTON_SCOPE), [clearGraph]);
 
+  // The Search button above the channel list: Left to the category rail, Down to the first channel. Passive, like the favourite button.
+  const firstVisibleChannelId = visibleChannels[0]?.id;
+  useEffect(() => {
+    setGraph(
+      SEARCH_BUTTON_SCOPE,
+      [{ id: SEARCH_BUTTON_ID, neighbors: { left: categoryRailItemId(activeCategoryId), down: firstVisibleChannelId }, onSelect: onOpenSearch }],
+      undefined,
+      { passive: true },
+    );
+  }, [activeCategoryId, firstVisibleChannelId, onOpenSearch, setGraph]);
+  useEffect(() => () => clearGraph(SEARCH_BUTTON_SCOPE), [clearGraph]);
+
   // OK on a channel plays it full screen straight away — the preview is
   // already showing it, so a second "focus the preview, press OK" step
   // would just be friction.
@@ -272,13 +289,16 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
       />
       <div style={{ height: "100vh", display: "flex", overflow: "hidden", paddingLeft: CATEGORY_RAIL_COLLAPSED_WIDTH, boxSizing: "border-box" }}>
         <div style={{ width: "36rem", flexShrink: 0, display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
-          <div style={{ padding: "2rem 1.75rem 1rem" }}>
-            <div style={{ fontSize: "2.25rem", fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {activeCategoryLabel}
+          <div style={{ padding: "2rem 1.75rem 1rem", display: "flex", alignItems: "center", gap: "1rem" }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: "2.25rem", fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {activeCategoryLabel}
+              </div>
+              <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "var(--text-dim)", marginTop: "0.25rem" }}>
+                {visibleChannels.length} {visibleChannels.length === 1 ? "channel" : "channels"}
+              </div>
             </div>
-            <div style={{ fontSize: "1.125rem", fontWeight: 500, color: "var(--text-dim)", marginTop: "0.25rem" }}>
-              {visibleChannels.length} {visibleChannels.length === 1 ? "channel" : "channels"}
-            </div>
+            <SearchButton id={SEARCH_BUTTON_ID} onSelect={onOpenSearch} />
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
             {visibleChannels.length === 0 ? (
@@ -294,6 +314,7 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, isPlay
                 onHighlight={handleHighlight}
                 onSelect={handleSelectChannel}
                 leftEntryId={categoryRailItemId(activeCategoryId)}
+                topEntryId={SEARCH_BUTTON_ID}
                 rightEntryId={previewChannel ? FAVORITE_BUTTON_ID : undefined}
               />
             )}

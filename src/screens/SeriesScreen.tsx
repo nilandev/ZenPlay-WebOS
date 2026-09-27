@@ -1,7 +1,7 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PlatformId, PlaylistSource, Profile, SeriesDetails, SeriesEpisode } from "@core";
 import type { FocusNode } from "@ui";
-import { Check, Play, Plus, RotateCcw, Search, Star, X } from "lucide-react";
+import { Check, Play, Plus, RotateCcw, Star } from "lucide-react";
 import {
   CategoryRail,
   categoryRailItemId,
@@ -18,7 +18,7 @@ import {
   buildShelfFocusGraph,
   useFocusStore,
   useRemoteInput,
-  glassBlur,
+  SearchButton,
   useIsFocused,
   BROWSE_CONTENT_LEFT,
   BROWSE_GAP,
@@ -33,7 +33,6 @@ import {
 } from "@ui";
 import { loadSeriesCategories, loadSeriesDetails, loadSeriesList } from "../content-loader.js";
 import { toggleFavorite, loadContinueWatching, loadFavorites } from "../profile-store.js";
-import { useSearchQuery } from "../use-debounced-value.js";
 import { useIncrementalList } from "../use-incremental-list.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useSeriesCatalogPage } from "../use-catalog-page.js";
@@ -69,6 +68,14 @@ export interface SeriesScreenProps {
   initialSelectedId?: string;
   /** Fired whenever the open series changes (selecting one, or backing out to the shelf browser passes null) — lets App.tsx remember the last-viewed series across this screen's unmount/remount on tab switches. */
   onSelectionChange?: (seriesId: string | null) => void;
+  /**
+   * Called instead of returning to the browse page when Back leaves a
+   * series' detail page — set when the series was opened from somewhere
+   * else (Search), so Back goes back there.
+   */
+  onCloseDetail?: () => void;
+  /** Opens the global Search screen (the header's Search button). */
+  onOpenSearch: () => void;
   /** Bumped by App.tsx every time the player overlay closes after resumable playback — triggers re-reading Continue Watching, which upsertContinueWatching wrote to localStorage during playback without this screen (which stayed mounted underneath the overlay) otherwise finding out. */
   continueWatchingVersion?: number;
   /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away. */
@@ -99,7 +106,7 @@ export function __resetCategoryMemoryForTests(): void {
 }
 /** Focus id of a shelf's trailing "See all" card. */
 const seeAllId = (categoryId: string) => `seeall:${categoryId}`;
-const SEARCH_INPUT_ID = "series-search-input";
+const SEARCH_BUTTON_ID = "series-search-button";
 
 export function SeriesScreen({
   source,
@@ -109,6 +116,8 @@ export function SeriesScreen({
   onBack,
   initialSelectedId,
   onSelectionChange,
+  onCloseDetail,
+  onOpenSearch,
   continueWatchingVersion,
   isPlaybackOpen = false,
 }: SeriesScreenProps): JSX.Element {
@@ -124,13 +133,6 @@ export function SeriesScreen({
   }, [memoryKey, activeCategoryId]);
   // Kids profiles only see what the content policy allows (docs/kids-profile.md §6); a standard profile's policy passes everything.
   const policy = useContentPolicy(profile, source.id);
-  const [searchQuery, setSearchQuery] = useState("");
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // The query that actually runs: debounced and ignored below 2 characters
-  // (see useSearchQuery), so typing doesn't refilter/re-render the catalog
-  // on every keystroke. searchQuery itself only drives the input's text.
-  const trimmedQuery = useSearchQuery(searchQuery);
   const isAllCategories = activeCategoryId === ALL_CATEGORIES_ID;
 
   // Every read below comes from the local series table, which the sync
@@ -149,7 +151,7 @@ export function SeriesScreen({
   // While the table is still being built, a single category is fetched with
   // the provider's own category filter — see VodScreen's useCategoryFetch.
   // Never for a Kids profile: unfiltered provider data must not render while the table is built.
-  const useCategoryFetch = isAwaitingSync && !isAllCategories && !trimmedQuery && !policy.isKids;
+  const useCategoryFetch = isAwaitingSync && !isAllCategories && !policy.isKids;
   const loadCategorySeries = useCallback(
     () => loadSeriesList(source, isAllCategories ? undefined : activeCategoryId),
     [source, isAllCategories, activeCategoryId],
@@ -167,7 +169,7 @@ export function SeriesScreen({
   const visibleCategories = useMemo(() => policy.visibleCatalogCategories("series", categories), [policy, categories]);
   const catalogFilter = useMemo(() => policy.catalogFilter("series", categories), [policy, categories]);
 
-  // Local-table path: paginated grid/search reads, grown on demand (see
+  // Local-table path: paginated category grid reads, grown on demand (see
   // use-catalog-page.ts) — this is what lets the grid render a very large
   // catalog without ever holding it all in memory.
   const {
@@ -178,9 +180,8 @@ export function SeriesScreen({
     total: localGridTotal,
   } = useSeriesCatalogPage(source.id, {
     categoryId: isAllCategories ? undefined : activeCategoryId,
-    namePrefix: trimmedQuery || undefined,
     filter: catalogFilter,
-    enabled: isLocalCatalogReady && (!isAllCategories || trimmedQuery.length > 0),
+    enabled: isLocalCatalogReady && !isAllCategories,
   });
 
   // Fixed TV poster density (see tv-metrics.ts) — the grid and the D-pad focus graph share this column count.
@@ -199,7 +200,7 @@ export function SeriesScreen({
     "series",
     visibleCategories,
     mapShelfPage,
-    isLocalCatalogReady && isAllCategories && !trimmedQuery,
+    isLocalCatalogReady && isAllCategories,
   );
 
   // The browse card that opened the detail page, so Back returns focus to
@@ -264,17 +265,15 @@ export function SeriesScreen({
     if (!visibleCategories.some((c) => c.id === activeCategoryId)) setActiveCategoryId(ALL_CATEGORIES_ID);
   }, [policy.isKids, isAllCategories, categories.length, visibleCategories, activeCategoryId]);
 
-  // A category other than "All Categories", or a non-empty search query,
-  // replaces the shelf browser with a single flat, vertically-scrolling
-  // grid — Netflix's own "browsing a category"/search-results behavior,
-  // versus shelves' one-row-per-category layout which doesn't make sense
-  // once there's only one category (or an arbitrary text match) to show.
-  // Search takes priority over the category filter when both are active,
-  // searching within the selected category rather than across all series.
+  // A category other than "All Categories" replaces the shelf browser with
+  // a single flat, vertically-scrolling grid — Netflix's own "browsing a
+  // category" behavior, versus shelves' one-row-per-category layout which
+  // doesn't make sense once there's only one category to show. Searching
+  // is the Search screen's job (the header's Search button).
   // The filtering happens inside useSeriesCatalogPage's IndexedDB query;
   // the category fetch is rendered a page at a time like the table path.
   const categoryFetchPage = useIncrementalList(useCategoryFetch ? categoryFetchSeries : null);
-  const gridSeries = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridSeries) : (categoryFetchPage?.visible ?? null);
+  const gridSeries = isLocalCatalogReady ? (isAllCategories ? null : localGridSeries) : (categoryFetchPage?.visible ?? null);
   const gridHasMore = isLocalCatalogReady ? localGridHasMore : (categoryFetchPage?.hasMore ?? false);
   const loadMoreGrid = isLocalCatalogReady ? loadMoreLocalGrid : categoryFetchPage?.loadMore;
   // The grid's query hasn't answered yet — a spinner, never a premature "No series in this category".
@@ -325,7 +324,7 @@ export function SeriesScreen({
 
   // Header for the content area: the category (or search) being shown and,
   // for a single category, how many titles it holds.
-  const headerTitle = trimmedQuery ? `Results for "${trimmedQuery}"` : isAllCategories ? "Series" : activeCategoryLabel;
+  const headerTitle = isAllCategories ? "Series" : activeCategoryLabel;
   const headerCount = gridSeries ? (isLocalCatalogReady ? localGridTotal : categoryFetchSeries.length) : null;
 
   const firstContentId = gridSeries ? (gridSeries[0] ? gridItemId(gridSeries[0].id) : undefined) : shelves[0]?.items[0]?.id;
@@ -337,7 +336,7 @@ export function SeriesScreen({
   // focus follows into the new content once its focus graph registers —
   // see the browse graph effect below.
   const focusContentOnNextGraphRef = useRef(false);
-  // Set when focus was parked on the search box because there was nothing else to hold it (still loading).
+  // Set when focus was parked on the Search button because there was nothing else to hold it (still loading).
   const focusParkedRef = useRef(false);
 
   const selectCategory = useCallback((id: string) => {
@@ -352,24 +351,20 @@ export function SeriesScreen({
     setActiveCategoryId(id);
   }, [profile.id, source.id]);
 
-  /** Moves focus into the category rail (which expands it), leaving the search box's native focus if it had it. */
+  /** Moves focus into the category rail (which expands it). */
   const openCategoryRail = useCallback(() => {
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     useFocusStore.getState().focus(categoryRailItemId(activeCategoryIdRef.current));
   }, []);
 
-  // Search input's proxy focus node — see SeriesSearchInput's doc comment
-  // for why a native <input> needs a Focusable stand-in rather than being a
-  // spatial-nav node itself. Sits to the right of the category dropdown's
-  // trigger in the same sticky bar.
+  // The header's Search button, beside the title: Left to the category rail, Down into the content.
   useEffect(() => {
     if (selected) {
-      clearGraph("chrome:series-search"); // no search box on the detail page
+      clearGraph("chrome:series-search"); // no Search button on the detail page
       return;
     }
-    const node = { id: SEARCH_INPUT_ID, neighbors: { left: categoryRailItemId(activeCategoryId), down: firstContentId }, onSelect: () => searchInputRef.current?.focus() };
+    const node = { id: SEARCH_BUTTON_ID, neighbors: { left: categoryRailItemId(activeCategoryId), down: firstContentId }, onSelect: onOpenSearch };
     setGraph("chrome:series-search", [node], undefined, { passive: true });
-  }, [selected, activeCategoryId, firstContentId, setGraph, clearGraph]);
+  }, [selected, activeCategoryId, firstContentId, onOpenSearch, setGraph, clearGraph]);
   // Rebuilds above replace the scope in place (setGraph is atomic); clearing
   // it on every rebuild would drop focus for an instant and snap it back to
   // the first node. Clear only when this component goes away.
@@ -378,8 +373,8 @@ export function SeriesScreen({
 
   // Browse mode's focus graph: either the shelf browser (one row per
   // category, plus a trailing "See all" card) or a single flat grid (one
-  // category from the rail, or a search) — never both. Up from the top row
-  // reaches the search box; Left from the first column opens the category
+  // category from the rail) — never both. Up from the top row reaches the
+  // Search button; Left from the first column opens the category
   // rail on the active category.
   useEffect(() => {
     if (selected) return;
@@ -392,7 +387,7 @@ export function SeriesScreen({
         useFocusStore.getState().focus(returnTo);
         return;
       }
-      const parked = focusParkedRef.current && useFocusStore.getState().focusedId === SEARCH_INPUT_ID;
+      const parked = focusParkedRef.current && useFocusStore.getState().focusedId === SEARCH_BUTTON_ID;
       focusParkedRef.current = false;
       if (!focusContentOnNextGraphRef.current && !parked) return;
       focusContentOnNextGraphRef.current = false;
@@ -403,13 +398,13 @@ export function SeriesScreen({
     const parkFocus = () => {
       const { focusedId } = useFocusStore.getState();
       // Only take focus nobody holds — or move focus this screen parked itself.
-      if (focusedId !== null && !(focusParkedRef.current && focusedId === SEARCH_INPUT_ID)) return;
+      if (focusedId !== null && !(focusParkedRef.current && focusedId === SEARCH_BUTTON_ID)) return;
       if (showSyncNotice || showNoSeries) {
         focusParkedRef.current = false;
         useFocusStore.getState().focus(railEntryId);
         return;
       }
-      useFocusStore.getState().focus(SEARCH_INPUT_ID);
+      useFocusStore.getState().focus(SEARCH_BUTTON_ID);
       focusParkedRef.current = true;
     };
 
@@ -424,7 +419,7 @@ export function SeriesScreen({
         ...node,
         neighbors: {
           ...node.neighbors,
-          up: index < gridColumns ? SEARCH_INPUT_ID : node.neighbors.up,
+          up: index < gridColumns ? SEARCH_BUTTON_ID : node.neighbors.up,
           left: index % gridColumns === 0 ? railEntryId : node.neighbors.left,
         },
       }));
@@ -447,7 +442,7 @@ export function SeriesScreen({
         ...node,
         neighbors: {
           ...node.neighbors,
-          up: index < rows[0].length ? SEARCH_INPUT_ID : node.neighbors.up,
+          up: index < rows[0].length ? SEARCH_BUTTON_ID : node.neighbors.up,
           left: rowStarts.has(node.id) ? railEntryId : node.neighbors.left,
         },
         onSelect: seeAllCategory ? () => selectCategory(seeAllCategory) : undefined,
@@ -551,7 +546,10 @@ export function SeriesScreen({
       onBack: () => {
         // Detail view → back to browsing. Browsing: Back from the content
         // opens the category rail first; Back from the rail leaves the screen.
-        if (selected) setSelected(null);
+        if (selected) {
+          if (onCloseDetail) onCloseDetail();
+          else setSelected(null);
+        }
         else if (useFocusStore.getState().focusedId?.startsWith("rail:")) onBack();
         else openCategoryRail();
       },
@@ -560,13 +558,13 @@ export function SeriesScreen({
   );
 
   // The browse grid/shelves, memoised so screen-level state that doesn't
-  // change them — the category menu opening/closing, each raw keystroke in
-  // the search box — doesn't re-render every card on screen.
+  // change them — e.g. the category menu opening/closing — doesn't
+  // re-render every card on screen.
   const browseContent = useMemo(
     () => (
       <>
           {showSyncNotice ? (
-            <SyncNotice what="series" state={syncState} isSearching={trimmedQuery.length > 0} canPickCategory />
+            <SyncNotice what="series" state={syncState} canPickCategory />
           ) : showNoSeries ? (
             <p style={{ color: "var(--text-dim)", padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`, fontSize: TV_TEXT }}>This playlist has no series.</p>
           ) : isCheckingLocalCatalog || (gridSeries && isGridLoading) || (!gridSeries && isShelvesLoading) ? (
@@ -574,7 +572,7 @@ export function SeriesScreen({
           ) : gridSeries ? (
             gridSeries.length === 0 ? (
               <p style={{ color: "var(--text-dim)", padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`, fontSize: TV_TEXT }}>
-                {trimmedQuery ? `No series match "${trimmedQuery}".` : "No series in this category."}
+                No series in this category.
               </p>
             ) : (
               <div
@@ -625,7 +623,7 @@ export function SeriesScreen({
           )}
       </>
     ),
-    [gridSeries, shelves, trimmedQuery, favoriteSeriesIds, setSelected, selectCategory, showSyncNotice, showNoSeries, syncState, isGridLoading, isShelvesLoading, isCheckingLocalCatalog, useCategoryFetch],
+    [gridSeries, shelves, favoriteSeriesIds, setSelected, selectCategory, showSyncNotice, showNoSeries, syncState, isGridLoading, isShelvesLoading, isCheckingLocalCatalog, useCategoryFetch],
   );
 
   if (selected) {
@@ -694,7 +692,7 @@ export function SeriesScreen({
         sections={railSections}
       />
 
-      {/* Sticky so the title and search stay visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
+      {/* Sticky so the title and Search button stay visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
       <div
         style={{
           position: "sticky",
@@ -706,7 +704,7 @@ export function SeriesScreen({
           padding: `1.5rem ${BROWSE_SIDE_PADDING} 1.5rem ${BROWSE_CONTENT_LEFT}`,
           marginBottom: "0.5rem",
           // A soft fade (not a solid band) so posters scrolling under the
-          // bar stay out of the title/search while the mesh still shows.
+          // bar stay out of the title while the mesh still shows.
           background: "linear-gradient(180deg, rgba(8,9,11,0.85) 0%, rgba(8,9,11,0.6) 65%, rgba(8,9,11,0) 100%)",
         }}
       >
@@ -718,8 +716,8 @@ export function SeriesScreen({
             </div>
           )}
         </div>
-        <div style={{ marginLeft: "auto", width: "100%", maxWidth: "32rem" }}>
-          <SeriesSearchInput ref={searchInputRef} value={searchQuery} onChange={setSearchQuery} />
+        <div style={{ marginLeft: "auto" }}>
+          <SearchButton id={SEARCH_BUTTON_ID} onSelect={onOpenSearch} />
         </div>
       </div>
 
@@ -1043,72 +1041,3 @@ function EpisodeCard({ episode, progress, onSelect }: { episode: SeriesEpisode; 
   );
 }
 
-interface SeriesSearchInputProps {
-  value: string;
-  onChange: (value: string) => void;
-}
-
-/**
- * Plain native <input> for filtering series by title — kept as a normal
- * focusable form control rather than a spatial-nav tile, same as
- * AddSourceScreen/ProfileForm's text fields: text entry on a TV remote goes
- * through the platform's own on-screen keyboard once the input has native
- * focus, and useRemoteInput steps aside from arrow keys/Enter while a text
- * field has focus (see its isTypingIntoTextField guard) so typing a query
- * doesn't fight D-pad navigation.
- *
- * The SEARCH_INPUT_ID Focusable is a thin proxy: pressing Select while it's
- * spatially focused hands off to the real input via its ref (same pattern
- * as ProfileForm's name field), rather than the input being a graph node
- * itself.
- */
-const SeriesSearchInput = forwardRef<HTMLInputElement, SeriesSearchInputProps>(function SeriesSearchInput({ value, onChange }, ref) {
-  const isFocused = useIsFocused(SEARCH_INPUT_ID);
-
-  return (
-    <Focusable id={SEARCH_INPUT_ID}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.75rem",
-          width: "100%",
-          padding: "0.875rem 1.5rem",
-          borderRadius: 999,
-          border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.16)",
-          background: "rgba(28,28,34,0.7)",
-          ...glassBlur("blur(16px) saturate(140%)"),
-          boxShadow: isFocused ? "0 0 0 3px var(--accent, #38bdf8)" : undefined,
-          transition: "box-shadow 160ms ease-out, border-color 160ms ease-out",
-        }}
-      >
-        <Search size="1.5rem" color="var(--text-dim, #9a9aa4)" style={{ flexShrink: 0 }} />
-        <input
-          ref={ref}
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Search series"
-          style={{
-            flex: 1,
-            border: "none",
-            background: "transparent",
-            padding: 0,
-            fontSize: TV_TEXT,
-            color: "var(--text, #f4f4f6)",
-          }}
-        />
-        {value && (
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            aria-label="Clear search"
-            style={{ display: "flex", background: "none", border: "none", padding: 2, color: "var(--text-dim, #9a9aa4)" }}
-          >
-            <X size="1.375rem" />
-          </button>
-        )}
-      </div>
-    </Focusable>
-  );
-});

@@ -1,4 +1,4 @@
-import { Clapperboard, Film, Heart, History, ListVideo, Settings, Tv, type LucideIcon } from "lucide-react";
+import { Clapperboard, Film, Heart, History, ListVideo, Search, Settings, Tv, type LucideIcon } from "lucide-react";
 
 /**
  * One icon per app section, shared by Home's menu tiles and each section's
@@ -13,4 +13,5 @@ export const SECTION_ICONS = {
   favourites: Heart,
   history: History,
   settings: Settings,
+  search: Search,
 } satisfies Record<string, LucideIcon>;

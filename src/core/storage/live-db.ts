@@ -109,6 +109,16 @@ export function getSourceChannels(liveDb: LiveDb, sourceId: string): Promise<Liv
   return runRequest(tx.objectStore(CHANNELS_STORE).getAll(range) as IDBRequest<LiveChannelRecord[]>);
 }
 
+/** Up to `limit` of a source's channels after list position `afterPosition` (from the start when null) — one short readonly read, for the search indexer. */
+export function getSourceChannelsAfter(liveDb: LiveDb, sourceId: string, afterPosition: number | null, limit: number): Promise<LiveChannelRecord[]> {
+  const tx = liveDb.db.transaction(CHANNELS_STORE, "readonly");
+  const range =
+    afterPosition === null
+      ? IDBKeyRange.bound([sourceId, -Infinity], [sourceId, Infinity])
+      : IDBKeyRange.bound([sourceId, afterPosition], [sourceId, Infinity], true, false);
+  return runRequest(tx.objectStore(CHANNELS_STORE).getAll(range, limit) as IDBRequest<LiveChannelRecord[]>);
+}
+
 export function getLiveSyncMeta(liveDb: LiveDb, sourceId: string): Promise<LiveSyncMeta | undefined> {
   const tx = liveDb.db.transaction(META_STORE, "readonly");
   return runRequest(tx.objectStore(META_STORE).get(sourceId) as IDBRequest<LiveSyncMeta | undefined>);

@@ -4,6 +4,7 @@ import type { PlatformId, PlaylistSource, Profile } from "@core";
 import {
   Clock,
   Focusable,
+  SearchButton,
   LiftSurface,
   MeshBackground,
   ProfileSwitcher,
@@ -88,15 +89,21 @@ export function __resetHomeFocusMemoryForTests(): void {
   lastSelectedTileId = PRIMARY_TILES[0].id;
 }
 
+/** Focus id of the top bar's Search button. */
+const SEARCH_BUTTON_ID = "home-search";
+
 /**
- * Header (profile chip, and the playlist chip when there's more than one
- * playlist) and both tile rows as one focus graph. Left/Right move within
- * a row, Up/Down move between rows within the same column; Up from the
- * primary row reaches the header chip on that side (the playlist chip sits
- * over the right half) and Down from either chip reaches the tiles.
+ * Header (profile chip on the left; Search and — when there's more than one
+ * playlist — the playlist chip on the right) and both tile rows as one
+ * focus graph. Left/Right move within a row, Up/Down move between rows
+ * within the same column. Up from the primary row reaches the header item
+ * above it: the profile chip over the left half, Search over the right
+ * half, and the playlist chip (Search when there isn't one) over the last
+ * tile. Down from any header item reaches the tiles.
  */
 function buildHomeFocusGraph(
   onOpenProfiles: () => void,
+  onOpenSearch: () => void,
   onRefresh: () => void,
   onSelectTile: (id: string) => void,
   onOpenPlaylists: (() => void) | null,
@@ -107,16 +114,21 @@ function buildHomeFocusGraph(
   const secondaryIds = SECONDARY_TILES.map((tile) => tile.id);
 
   const hasPlaylistChip = onOpenPlaylists !== null;
-  const profileNode: FocusNode = {
-    id: PROFILE_SWITCHER_FOCUS_ID,
-    neighbors: { down: primaryIds[0], right: hasPlaylistChip ? PLAYLIST_CHIP_ID : undefined },
-    onSelect: onOpenProfiles,
+  const lastTileId = primaryIds[primaryIds.length - 1];
+  const headerNodes: FocusNode[] = [
+    { id: PROFILE_SWITCHER_FOCUS_ID, neighbors: { down: primaryIds[0], right: SEARCH_BUTTON_ID }, onSelect: onOpenProfiles },
+    {
+      id: SEARCH_BUTTON_ID,
+      neighbors: { left: PROFILE_SWITCHER_FOCUS_ID, right: hasPlaylistChip ? PLAYLIST_CHIP_ID : undefined, down: lastTileId },
+      onSelect: onOpenSearch,
+    },
+    ...(hasPlaylistChip ? [{ id: PLAYLIST_CHIP_ID, neighbors: { left: SEARCH_BUTTON_ID, down: lastTileId }, onSelect: onOpenPlaylists }] : []),
+  ];
+  // Up from a tile reaches the header item above its part of the screen.
+  const headerAbove = (index: number) => {
+    if (index === primaryIds.length - 1) return hasPlaylistChip ? PLAYLIST_CHIP_ID : SEARCH_BUTTON_ID;
+    return index >= primaryIds.length / 2 ? SEARCH_BUTTON_ID : PROFILE_SWITCHER_FOCUS_ID;
   };
-  const headerNodes: FocusNode[] = hasPlaylistChip
-    ? [profileNode, { id: PLAYLIST_CHIP_ID, neighbors: { left: PROFILE_SWITCHER_FOCUS_ID, down: primaryIds[primaryIds.length - 1] }, onSelect: onOpenPlaylists }]
-    : [profileNode];
-  // Up from a tile reaches the header chip above its half of the screen.
-  const headerAbove = (index: number) => (hasPlaylistChip && index >= primaryIds.length / 2 ? PLAYLIST_CHIP_ID : PROFILE_SWITCHER_FOCUS_ID);
 
   const primaryNodes: FocusNode[] = primaryIds.map((id, index) => ({
     id,
@@ -234,6 +246,10 @@ export function HomeScreen({ source, sources = [], onSelectSource, platform, pro
     },
     [onSelectTile],
   );
+  const openSearch = useCallback(() => {
+    lastSelectedTileId = SEARCH_BUTTON_ID; // back on Search when returning Home
+    onSelectTile("search");
+  }, [onSelectTile]);
 
   // Playlist switching: a header chip, shown only when there's something to switch to.
   const canSwitchPlaylist = sources.length > 1 && onSelectSource !== undefined;
@@ -259,12 +275,12 @@ export function HomeScreen({ source, sources = [], onSelectSource, platform, pro
       setGraph(SCOPE, []);
       return;
     }
-    setGraph(SCOPE, buildHomeFocusGraph(onOpenProfiles, handleRefresh, handleSelectTile, canSwitchPlaylist ? openPicker : null), lastSelectedTileId);
+    setGraph(SCOPE, buildHomeFocusGraph(onOpenProfiles, openSearch, handleRefresh, handleSelectTile, canSwitchPlaylist ? openPicker : null), lastSelectedTileId);
     if (refocusChipRef.current) {
       refocusChipRef.current = false;
       useFocusStore.getState().focus(PLAYLIST_CHIP_ID);
     }
-  }, [setGraph, onOpenProfiles, handleRefresh, handleSelectTile, canSwitchPlaylist, openPicker, isPickerOpen]);
+  }, [setGraph, onOpenProfiles, openSearch, handleRefresh, handleSelectTile, canSwitchPlaylist, openPicker, isPickerOpen]);
   useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
   // Tiles and the profile switcher carry their own node onSelect (see
@@ -304,11 +320,14 @@ export function HomeScreen({ source, sources = [], onSelectSource, platform, pro
         <div style={{ position: "absolute", left: "50%", top: 0, transform: "translateX(-50%)" }}>
           <Clock />
         </div>
-        {canSwitchPlaylist && (
-          <Focusable id={PLAYLIST_CHIP_ID} style={{ width: "auto", height: "auto" }}>
-            <PlaylistChip source={source} onOpen={openPicker} />
-          </Focusable>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: "1.25rem" }}>
+          <SearchButton id={SEARCH_BUTTON_ID} onSelect={openSearch} />
+          {canSwitchPlaylist && (
+            <Focusable id={PLAYLIST_CHIP_ID} style={{ width: "auto", height: "auto" }}>
+              <PlaylistChip source={source} onOpen={openPicker} />
+            </Focusable>
+          )}
+        </div>
       </header>
 
       <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: MENU_GAP }}>

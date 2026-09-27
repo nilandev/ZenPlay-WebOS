@@ -61,7 +61,7 @@ describe("VodScreen while the movie table is still being built", () => {
     const { loadChannelsByKind } = await import("../content-loader.js");
     const { syncSource } = await import("../sync/sync-manager.js");
 
-    render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
+    render(<VodScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
     await vi.waitFor(() => expect(syncSource).toHaveBeenCalledWith(source, { trigger: "first-run", stages: ["vod"] }));
     expect(await screen.findByText("Getting your movies ready…")).not.toBeNull();
 
@@ -72,7 +72,7 @@ describe("VodScreen while the movie table is still being built", () => {
   });
 
   it("says why when the sync failed", async () => {
-    render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
+    render(<VodScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
     await screen.findByText("Getting your movies ready…");
 
     act(() => useSyncStore.getState().setStage(source.id, "vod", { status: "failed", error: "The provider didn't respond within 120 seconds." }));
@@ -81,7 +81,7 @@ describe("VodScreen while the movie table is still being built", () => {
   });
 
   it("lets the rail hold focus while there's nothing to browse", async () => {
-    render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
+    render(<VodScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
     await screen.findByText("Getting your movies ready…");
     await vi.waitFor(() => expect(useFocusStore.getState().focusedId).toBe("rail:__all__"));
   });
@@ -92,7 +92,7 @@ describe("VodScreen while the movie table is still being built", () => {
       Promise.resolve(categoryId === "cat-1" ? [{ id: "m1", name: "Action Movie", streamUrl: "x", kind: "movie" as const, groupTitle: "cat-1" }] : []),
     );
 
-    render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
+    render(<VodScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: "Action" })); // the category rail row
 
     expect(await screen.findByText("Action Movie")).not.toBeNull();
@@ -105,7 +105,7 @@ describe("VodScreen while the movie table is still being built", () => {
     const { syncSource } = await import("../sync/sync-manager.js");
     const m3u: PlaylistSource = { kind: "m3u-url", id: "src-m3u", name: "M3U", url: "http://example.com/list.m3u" };
 
-    render(<VodScreen source={m3u} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
+    render(<VodScreen onOpenSearch={() => {}} source={m3u} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
     await vi.waitFor(() => expect(syncSource).toHaveBeenCalledWith(m3u, { trigger: "first-run", stages: ["live"] }));
   });
 });
@@ -123,7 +123,7 @@ describe("VodScreen with a synced local catalog", () => {
     const { loadChannelsByKind } = await import("../content-loader.js");
     const { syncSource } = await import("../sync/sync-manager.js");
 
-    render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
+    render(<VodScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
     await flush();
 
     expect(await screen.findByText("Action Movie")).not.toBeNull();
@@ -131,22 +131,14 @@ describe("VodScreen with a synced local catalog", () => {
     expect(syncSource).not.toHaveBeenCalled(); // keeping it fresh is the scheduler's job
   });
 
-  it("search reads a prefix match from the local table", async () => {
-    const catalogDb = await openCatalogDb();
-    await putRecordsBatch(catalogDb, "vod", [
-      { id: `${source.id}:1`, sourceId: source.id, streamId: "1", name: "Matrix Reloaded", nameLower: "matrix reloaded", generation: 1 },
-      { id: `${source.id}:2`, sourceId: source.id, streamId: "2", name: "Inception", nameLower: "inception", generation: 1 },
-    ]);
-    await putSyncMeta(catalogDb, { key: `vod:${source.id}`, lastSyncedAt: Date.now(), recordCount: 2, generation: 1 });
+  it("the header's Search button opens the Search screen instead of filtering the page", async () => {
+    await putSyncMeta(await openCatalogDb(), { key: `vod:${source.id}`, lastSyncedAt: Date.now(), recordCount: 0, generation: 1 });
+    const onOpenSearch = vi.fn();
+    render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} onOpenSearch={onOpenSearch} />);
 
-    render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
-    const searchInput = await screen.findByPlaceholderText("Search movies");
-
-    fireEvent.change(searchInput, { target: { value: "matrix" } });
-    await flush();
-
-    expect(await screen.findByText("Matrix Reloaded")).not.toBeNull();
-    expect(screen.queryByText("Inception")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull(); // no search field in the header any more
+    fireEvent.click(await screen.findByRole("button", { name: "Search" }));
+    expect(onOpenSearch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -172,7 +164,7 @@ describe("VodScreen at catalog scale", () => {
     );
     await putSyncMeta(catalogDb, { key: `vod:${source.id}`, lastSyncedAt: Date.now(), recordCount: 300, generation: 1 });
 
-    const { container } = render(<VodScreen source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
+    const { container } = render(<VodScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlay={() => {}} onBack={() => {}} />);
     await screen.findByText("Movie 000");
 
     const posters = Array.from(container.querySelectorAll('[role="button"]')).filter((el) => !el.textContent?.startsWith("See all"));
@@ -202,7 +194,7 @@ describe("VodScreen in a Kids profile", () => {
     ]);
     await putSyncMeta(catalogDb, { key: `vod:${source.id}`, lastSyncedAt: Date.now(), recordCount: 3, generation: 1 });
 
-    render(<VodScreen source={source} platform="web" profile={kid} onPlay={() => {}} onBack={() => {}} />);
+    render(<VodScreen onOpenSearch={() => {}} source={source} platform="web" profile={kid} onPlay={() => {}} onBack={() => {}} />);
     expect(await screen.findByText("Frozen")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Kids Movies" })).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Action" })).toBeNull();
@@ -212,7 +204,7 @@ describe("VodScreen in a Kids profile", () => {
 
   it("never falls back to an unfiltered provider fetch while the table is being built", async () => {
     const { loadChannelsByKind } = await import("../content-loader.js");
-    render(<VodScreen source={source} platform="web" profile={kid} onPlay={() => {}} onBack={() => {}} />);
+    render(<VodScreen onOpenSearch={() => {}} source={source} platform="web" profile={kid} onPlay={() => {}} onBack={() => {}} />);
     await screen.findByText("Getting your movies ready…");
     await flush();
     expect(loadChannelsByKind).not.toHaveBeenCalled();

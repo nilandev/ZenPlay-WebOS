@@ -41,6 +41,9 @@ vi.mock("./screens/HomeScreen.js", () => ({
           switch to {s.name}
         </button>
       ))}
+      <button type="button" onClick={() => onSelectTile("search")}>
+        search
+      </button>
       <button type="button" onClick={() => onSelectTile("favourites")}>
         my list
       </button>
@@ -58,6 +61,29 @@ vi.mock("./screens/FavouritesScreen.js", () => ({
 }));
 vi.mock("./screens/HistoryScreen.js", () => ({
   HistoryScreen: ({ profileId, source }: { profileId: string; source: PlaylistSource }) => <p>history of {profileId} on {source.name}</p>,
+}));
+vi.mock("./screens/SearchScreen.js", () => ({
+  SearchScreen: ({ onOpenSeries, onBack }: { onOpenSeries: (id: string) => void; onBack: () => void }) => (
+    <div>
+      <p>search screen</p>
+      <button type="button" onClick={() => onOpenSeries("s-1")}>
+        open series from search
+      </button>
+      <button type="button" onClick={onBack}>
+        leave search
+      </button>
+    </div>
+  ),
+}));
+vi.mock("./screens/SeriesScreen.js", () => ({
+  SeriesScreen: ({ initialSelectedId, onCloseDetail, onBack }: { initialSelectedId?: string; onCloseDetail?: () => void; onBack: () => void }) => (
+    <div>
+      <p>series detail {initialSelectedId ?? "none"}</p>
+      <button type="button" onClick={() => (onCloseDetail ? onCloseDetail() : onBack())}>
+        back from series
+      </button>
+    </div>
+  ),
 }));
 vi.mock("./sync/sync-scheduler.js", () => ({ startSyncScheduler: () => () => {} }));
 // Every playlist counts as already downloaded, so the first-sync screen never gets in the way.
@@ -142,5 +168,29 @@ describe("App: playlists per profile", () => {
     setActivePlaylistSourceId("a");
     render(<App />);
     expect(await screen.findByText("home on Provider A")).toBeTruthy();
+  });
+});
+
+describe("App: Search", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    addPlaylistSource(providerA);
+    setActivePlaylistSourceId("a");
+    addProfile(mum);
+  });
+
+  it("Home's Search opens the Search screen, and Back from a series opened there returns to Search", async () => {
+    render(<App />);
+    await pickProfile("Mum");
+    click("search");
+    expect(await screen.findByText("search screen")).toBeTruthy();
+
+    click("open series from search");
+    expect(await screen.findByText("series detail s-1")).toBeTruthy();
+    click("back from series");
+    expect(await screen.findByText("search screen")).toBeTruthy();
+
+    click("leave search");
+    expect(await screen.findByText(/^home on /)).toBeTruthy();
   });
 });

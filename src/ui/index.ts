@@ -21,6 +21,8 @@ export * from "./components/MeshBackground.js";
 export * from "./components/FavoriteHeart.js";
 export * from "./components/CategoryRail.js";
 export * from "./components/SeeAllCard.js";
+export * from "./components/SearchButton.js";
+export * from "./components/SearchKeyboard.js";
 export * from "./components/SlowLoadHint.js";
 export * from "./components/PlaybackControls.js";
 export * from "./perf-tier.js";

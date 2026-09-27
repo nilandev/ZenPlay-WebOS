@@ -1,6 +1,7 @@
 import { migrateAvatarUrl, type ContinueWatchingEntry, type FavoriteEntry, type FavoriteKind, type Profile, type WatchHistoryEntry } from "@core";
 import { removeProfileCategoryUsage, removeSourceCategoryUsage } from "./category-usage-store.js";
 import { removeKidsProfileRules } from "./parental-store.js";
+import { removeProfileRecentSearches, removeSourceRecentSearches } from "./search/recent-searches.js";
 
 const PROFILES_KEY = "iptv.profiles.v1";
 const ACTIVE_PROFILE_KEY = "iptv.active-profile-id.v1";
@@ -56,6 +57,7 @@ export function deleteProfile(profileId: string): Profile[] {
   writeWatchHistory(readWatchHistory().filter((e) => e.profileId !== profileId));
   removeKidsProfileRules(profileId);
   removeProfileCategoryUsage(profileId);
+  removeProfileRecentSearches(profileId);
   return profiles;
 }
 
@@ -207,4 +209,5 @@ export function removeSourceUserData(sourceId: string): void {
   }
   writeWatchHistory(readWatchHistory().filter((e) => e.sourceId !== sourceId));
   removeSourceCategoryUsage(sourceId);
+  removeSourceRecentSearches(sourceId);
 }

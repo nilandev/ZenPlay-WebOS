@@ -1,12 +1,10 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Channel, PlatformId, PlaylistSource, Profile } from "@core";
-import { Search, X } from "lucide-react";
 import {
   CategoryRail,
   categoryRailItemId,
   SeeAllCard,
   FavoriteHeart,
-  Focusable,
   MeshBackground,
   FocusCard,
   Shelf,
@@ -15,8 +13,7 @@ import {
   buildShelfFocusGraph,
   useFocusStore,
   useRemoteInput,
-  glassBlur,
-  useIsFocused,
+  SearchButton,
   BROWSE_CONTENT_LEFT,
   BROWSE_GAP,
   BROWSE_ROW_GAP,
@@ -28,7 +25,6 @@ import {
 } from "@ui";
 import { loadChannelsByKind, loadVodCategories } from "../content-loader.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
-import { useSearchQuery } from "../use-debounced-value.js";
 import { useIncrementalList } from "../use-incremental-list.js";
 import { useCachedContent } from "../use-cached-content.js";
 import { useVodCatalogPage } from "../use-catalog-page.js";
@@ -48,6 +44,8 @@ export interface VodScreenProps {
   profile: Profile;
   onPlay: (movie: Channel) => void;
   onBack: () => void;
+  /** Opens the global Search screen (the header's Search button). */
+  onOpenSearch: () => void;
   /** True while PlayerScreen is open on top of this screen — disables this screen's own useRemoteInput so a single Back press doesn't both close the player and navigate this screen away. */
   isPlaybackOpen?: boolean;
 }
@@ -72,9 +70,9 @@ export function __resetCategoryMemoryForTests(): void {
 }
 /** Focus id of a shelf's trailing "See all" card. */
 const seeAllId = (categoryId: string) => `seeall:${categoryId}`;
-const SEARCH_INPUT_ID = "vod-search-input";
+const SEARCH_BUTTON_ID = "vod-search-button";
 
-export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybackOpen = false }: VodScreenProps): JSX.Element {
+export function VodScreen({ source, platform, profile, onPlay, onBack, onOpenSearch, isPlaybackOpen = false }: VodScreenProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
   const memoryKey = `${profile.id}:${source.id}`;
@@ -84,13 +82,6 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   }, [memoryKey, activeCategoryId]);
   // Kids profiles only see what the content policy allows (docs/kids-profile.md §6); a standard profile's policy passes everything.
   const policy = useContentPolicy(profile, source.id);
-  const [searchQuery, setSearchQuery] = useState("");
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // The query that actually runs: debounced and ignored below 2 characters
-  // (see useSearchQuery), so typing doesn't refilter/re-render the catalog
-  // on every keystroke. searchQuery itself only drives the input's text.
-  const trimmedQuery = useSearchQuery(searchQuery);
   const isAllCategories = activeCategoryId === ALL_CATEGORIES_ID;
 
   // Every read below comes from the local movie table (use-catalog-page.ts/
@@ -116,7 +107,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // category_id filter — small, and it means picking a category isn't a
   // dead end during a first sync.
   // Never for a Kids profile: unfiltered provider data must not render while the table is built.
-  const useCategoryFetch = isAwaitingSync && !isAllCategories && !trimmedQuery && source.kind === "xtream" && !policy.isKids;
+  const useCategoryFetch = isAwaitingSync && !isAllCategories && source.kind === "xtream" && !policy.isKids;
   const loadCategoryMovies = useCallback(
     () => loadChannelsByKind(source, "movie", isAllCategories ? undefined : activeCategoryId),
     [source, isAllCategories, activeCategoryId],
@@ -134,7 +125,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   const visibleCategories = useMemo(() => policy.visibleCatalogCategories("vod", categories), [policy, categories]);
   const catalogFilter = useMemo(() => policy.catalogFilter("vod", categories), [policy, categories]);
 
-  // Local-table path: paginated grid/search reads, grown on demand (see
+  // Local-table path: paginated category grid reads, grown on demand (see
   // use-catalog-page.ts) — this is what lets the grid render 100k+ catalogs
   // without ever holding them all in memory.
   const {
@@ -145,9 +136,8 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     total: localGridTotal,
   } = useVodCatalogPage(source.id, {
     categoryId: isAllCategories ? undefined : activeCategoryId,
-    namePrefix: trimmedQuery || undefined,
     filter: catalogFilter,
-    enabled: isLocalCatalogReady && (!isAllCategories || trimmedQuery.length > 0),
+    enabled: isLocalCatalogReady && !isAllCategories,
   });
 
   // Fixed TV poster density (see tv-metrics.ts) — the grid and the D-pad focus graph share this column count.
@@ -182,7 +172,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     "vod",
     visibleCategories,
     mapShelfPage,
-    isLocalCatalogReady && isAllCategories && !trimmedQuery,
+    isLocalCatalogReady && isAllCategories,
   );
 
   // Most-opened categories first, under "Frequently used". Read once per
@@ -205,15 +195,14 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     if (!visibleCategories.some((c) => c.id === activeCategoryId)) setActiveCategoryId(ALL_CATEGORIES_ID);
   }, [policy.isKids, isAllCategories, categories.length, visibleCategories, activeCategoryId]);
 
-  // A category other than "All Categories", or a non-empty search query,
-  // replaces the shelf browser with a single flat, vertically-scrolling
-  // grid — same behavior as SeriesScreen's browse page. Search takes
-  // priority over the category filter when both are active, searching
-  // within the selected category. The filtering happens inside
+  // A category other than "All Categories" replaces the shelf browser with
+  // a single flat, vertically-scrolling grid — same behavior as
+  // SeriesScreen's browse page. The filtering happens inside
   // useVodCatalogPage's IndexedDB query; the category fetch (see
   // useCategoryFetch) is rendered a page at a time like the table path.
+  // Searching is the Search screen's job (the header's Search button).
   const categoryFetchPage = useIncrementalList(useCategoryFetch ? categoryFetchMovies : null);
-  const gridMovies = isLocalCatalogReady ? (isAllCategories && !trimmedQuery ? null : localGridMovies) : (categoryFetchPage?.visible ?? null);
+  const gridMovies = isLocalCatalogReady ? (isAllCategories ? null : localGridMovies) : (categoryFetchPage?.visible ?? null);
   const gridHasMore = isLocalCatalogReady ? localGridHasMore : (categoryFetchPage?.hasMore ?? false);
   const loadMoreGrid = isLocalCatalogReady ? loadMoreLocalGrid : categoryFetchPage?.loadMore;
   // The grid's query hasn't answered yet — a spinner, never a premature "No movies in this category".
@@ -224,20 +213,20 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   const showSyncNotice = isAwaitingSync && !useCategoryFetch;
 
   // Nothing to render until the local-catalog check answers. The screen's
-  // shell (category rail, search, Back) is always up meanwhile — a
+  // shell (category rail, Search button, Back) is always up meanwhile — a
   // full-screen loader with nothing focusable left the user stuck while a
   // sync kept the table busy.
   const isInitialLoading = isCheckingLocalCatalog
     ? true
     : isLocalCatalogReady
-      ? isAllCategories && !trimmedQuery
+      ? isAllCategories
         ? isLocalShelvesLoading
         : isLocalGridLoading
       : useCategoryFetch && isCategoryFetchLoading;
 
-  // Header for the content area: the category (or search) being shown and,
+  // Header for the content area: the category being shown and,
   // for a single category, how many titles it holds.
-  const headerTitle = trimmedQuery ? `Results for "${trimmedQuery}"` : isAllCategories ? "Movies" : activeCategoryLabel;
+  const headerTitle = isAllCategories ? "Movies" : activeCategoryLabel;
   const headerCount = gridMovies ? (isLocalCatalogReady ? localGridTotal : categoryFetchMovies.length) : null;
 
   const firstContentId = gridMovies ? (gridMovies[0] ? gridItemId(gridMovies[0].id) : undefined) : shelves[0]?.items[0]?.id;
@@ -249,7 +238,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
   // focus follows into the new content once its focus graph registers —
   // see the browse graph effect below.
   const focusContentOnNextGraphRef = useRef(false);
-  // Set when focus was parked on the search box because there was nothing else to hold it (still loading).
+  // Set when focus was parked on the Search button because there was nothing else to hold it (still loading).
   const focusParkedRef = useRef(false);
 
   const selectCategory = useCallback((id: string) => {
@@ -264,20 +253,16 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     setActiveCategoryId(id);
   }, [profile.id, source.id]);
 
-  /** Moves focus into the category rail (which expands it), leaving the search box's native focus if it had it. */
+  /** Moves focus into the category rail (which expands it). */
   const openCategoryRail = useCallback(() => {
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     useFocusStore.getState().focus(categoryRailItemId(activeCategoryIdRef.current));
   }, []);
 
-  // Search input's proxy focus node — see VodSearchInput's doc comment for
-  // why a native <input> needs a Focusable stand-in rather than being a
-  // spatial-nav node itself. Sits to the right of the category dropdown's
-  // trigger in the same sticky bar.
+  // The header's Search button, beside the title: Left to the category rail, Down into the content.
   useEffect(() => {
-    const node = { id: SEARCH_INPUT_ID, neighbors: { left: categoryRailItemId(activeCategoryId), down: firstContentId }, onSelect: () => searchInputRef.current?.focus() };
+    const node = { id: SEARCH_BUTTON_ID, neighbors: { left: categoryRailItemId(activeCategoryId), down: firstContentId }, onSelect: onOpenSearch };
     setGraph("chrome:vod-search", [node], undefined, { passive: true });
-  }, [activeCategoryId, firstContentId, setGraph, clearGraph]);
+  }, [activeCategoryId, firstContentId, onOpenSearch, setGraph, clearGraph]);
   // Rebuilds above replace the scope in place (setGraph is atomic); clearing
   // it on every rebuild would drop focus for an instant and snap it back to
   // the first node. Clear only when this component goes away.
@@ -286,13 +271,13 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
 
   // Browse mode's focus graph: either the shelf browser (one row per
   // category, plus a trailing "See all" card) or a single flat grid (one
-  // category from the rail, or a search) — never both. Up from the top row
-  // reaches the search box; Left from the first column opens the category
+  // category from the rail) — never both. Up from the top row reaches the
+  // Search button; Left from the first column opens the category
   // rail on the active category.
   useEffect(() => {
     const railEntryId = categoryRailItemId(activeCategoryId);
     const claimFocus = (id: string) => {
-      const parked = focusParkedRef.current && useFocusStore.getState().focusedId === SEARCH_INPUT_ID;
+      const parked = focusParkedRef.current && useFocusStore.getState().focusedId === SEARCH_BUTTON_ID;
       focusParkedRef.current = false;
       if (!focusContentOnNextGraphRef.current && !parked) return;
       focusContentOnNextGraphRef.current = false;
@@ -303,13 +288,13 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     const parkFocus = () => {
       const { focusedId } = useFocusStore.getState();
       // Only take focus nobody holds — or move focus this screen parked itself.
-      if (focusedId !== null && !(focusParkedRef.current && focusedId === SEARCH_INPUT_ID)) return;
+      if (focusedId !== null && !(focusParkedRef.current && focusedId === SEARCH_BUTTON_ID)) return;
       if (showSyncNotice) {
         focusParkedRef.current = false;
         useFocusStore.getState().focus(railEntryId);
         return;
       }
-      useFocusStore.getState().focus(SEARCH_INPUT_ID);
+      useFocusStore.getState().focus(SEARCH_BUTTON_ID);
       focusParkedRef.current = true;
     };
 
@@ -324,7 +309,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
         ...node,
         neighbors: {
           ...node.neighbors,
-          up: index < gridColumns ? SEARCH_INPUT_ID : node.neighbors.up,
+          up: index < gridColumns ? SEARCH_BUTTON_ID : node.neighbors.up,
           left: index % gridColumns === 0 ? railEntryId : node.neighbors.left,
         },
       }));
@@ -347,7 +332,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
         ...node,
         neighbors: {
           ...node.neighbors,
-          up: index < rows[0].length ? SEARCH_INPUT_ID : node.neighbors.up,
+          up: index < rows[0].length ? SEARCH_BUTTON_ID : node.neighbors.up,
           left: rowStarts.has(node.id) ? railEntryId : node.neighbors.left,
         },
         onSelect: seeAllCategory ? () => selectCategory(seeAllCategory) : undefined,
@@ -391,7 +376,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     if (isFocusInGridEndZone && gridHasMore) loadMoreGrid?.();
   }, [isFocusInGridEndZone, gridMovies, gridHasMore, loadMoreGrid]);
 
-  // Lookups (play/favourite) search whichever list is actually on screen.
+  // Lookups (play/favourite) look in whichever list is actually on screen.
   const visibleMovies = useMemo(() => gridMovies ?? shelves.flatMap((shelf) => shelf.items), [gridMovies, shelves]);
 
   useRemoteInput(
@@ -421,19 +406,19 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
 
 
   // The grid/shelves, memoised so screen-level state that doesn't change
-  // them — the category menu opening/closing, each raw keystroke in the
-  // search box — doesn't re-render every card on screen.
+  // them — e.g. the category menu opening/closing — doesn't re-render every
+  // card on screen.
   const browseContent = useMemo(
     () => (
       <>
           {showSyncNotice ? (
-            <SyncNotice what="movies" state={syncState} isSearching={trimmedQuery.length > 0} canPickCategory={source.kind === "xtream"} />
+            <SyncNotice what="movies" state={syncState} canPickCategory={source.kind === "xtream"} />
           ) : isCheckingLocalCatalog || (gridMovies && isGridLoading) || (!gridMovies && isShelvesLoading) ? (
             <LoadingState centered showSlowHint={useCategoryFetch} />
           ) : gridMovies ? (
             gridMovies.length === 0 ? (
               <p style={{ color: "var(--text-dim)", padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`, fontSize: TV_TEXT }}>
-                {trimmedQuery ? `No movies match "${trimmedQuery}".` : "No movies in this category."}
+                No movies in this category.
               </p>
             ) : (
               <div
@@ -484,7 +469,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
           )}
       </>
     ),
-    [gridMovies, shelves, trimmedQuery, favoriteMovieIds, onPlay, selectCategory, showSyncNotice, syncState, source.kind, isGridLoading, isShelvesLoading, isCheckingLocalCatalog, useCategoryFetch],
+    [gridMovies, shelves, favoriteMovieIds, onPlay, selectCategory, showSyncNotice, syncState, source.kind, isGridLoading, isShelvesLoading, isCheckingLocalCatalog, useCategoryFetch],
   );
 
   // Only a category fetch that failed with nothing to show is a hard error.
@@ -514,7 +499,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
         sections={railSections}
       />
 
-      {/* Sticky so the title and search stay visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
+      {/* Sticky so the title and Search button stay visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
       <div
         style={{
           position: "sticky",
@@ -526,7 +511,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
           padding: `1.5rem ${BROWSE_SIDE_PADDING} 1.5rem ${BROWSE_CONTENT_LEFT}`,
           marginBottom: "0.5rem",
           // A soft fade (not a solid band) so posters scrolling under the
-          // bar stay out of the title/search while the mesh still shows.
+          // bar stay out of the title while the mesh still shows.
           background: "linear-gradient(180deg, rgba(8,9,11,0.85) 0%, rgba(8,9,11,0.6) 65%, rgba(8,9,11,0) 100%)",
         }}
       >
@@ -538,8 +523,8 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
             </div>
           )}
         </div>
-        <div style={{ marginLeft: "auto", width: "100%", maxWidth: "32rem" }}>
-          <VodSearchInput ref={searchInputRef} value={searchQuery} onChange={setSearchQuery} />
+        <div style={{ marginLeft: "auto" }}>
+          <SearchButton id={SEARCH_BUTTON_ID} onSelect={onOpenSearch} />
         </div>
       </div>
 
@@ -548,67 +533,3 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, isPlaybac
     </MeshBackground>
   );
 }
-
-interface VodSearchInputProps {
-  value: string;
-  onChange: (value: string) => void;
-}
-
-/**
- * Plain native <input> for filtering movies by title — same pattern as
- * SeriesScreen's SeriesSearchInput (see its doc comment for the full
- * rationale: text entry goes through the platform's on-screen keyboard once
- * the input has native focus, useRemoteInput steps aside from arrow
- * keys/Enter while a text field has focus, and the SEARCH_INPUT_ID
- * Focusable is a thin proxy that hands off to the real input via ref).
- */
-const VodSearchInput = forwardRef<HTMLInputElement, VodSearchInputProps>(function VodSearchInput({ value, onChange }, ref) {
-  const isFocused = useIsFocused(SEARCH_INPUT_ID);
-
-  return (
-    <Focusable id={SEARCH_INPUT_ID}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.75rem",
-          width: "100%",
-          padding: "0.875rem 1.5rem",
-          borderRadius: 999,
-          border: isFocused ? "1px solid rgba(255,255,255,0.6)" : "1px solid rgba(255,255,255,0.16)",
-          background: "rgba(28,28,34,0.7)",
-          ...glassBlur("blur(16px) saturate(140%)"),
-          boxShadow: isFocused ? "0 0 0 3px var(--accent, #38bdf8)" : undefined,
-          transition: "box-shadow 160ms ease-out, border-color 160ms ease-out",
-        }}
-      >
-        <Search size="1.5rem" color="var(--text-dim, #9a9aa4)" style={{ flexShrink: 0 }} />
-        <input
-          ref={ref}
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Search movies"
-          style={{
-            flex: 1,
-            border: "none",
-            background: "transparent",
-            padding: 0,
-            fontSize: TV_TEXT,
-            color: "var(--text, #f4f4f6)",
-          }}
-        />
-        {value && (
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            aria-label="Clear search"
-            style={{ display: "flex", background: "none", border: "none", padding: 2, color: "var(--text-dim, #9a9aa4)" }}
-          >
-            <X size="1.375rem" />
-          </button>
-        )}
-      </div>
-    </Focusable>
-  );
-});

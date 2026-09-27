@@ -38,7 +38,7 @@ export interface CatalogPageQuery {
 /** Upper bound for counting the More for Kids category — it's walked, not counted by an index. */
 const MORE_FOR_KIDS_COUNT_LIMIT = 5000;
 
-function recordToChannel(record: CatalogRecord, kind: "movie"): Channel {
+export function recordToChannel(record: CatalogRecord, kind: "movie"): Channel {
   return {
     id: record.streamId,
     name: record.name,
@@ -49,7 +49,7 @@ function recordToChannel(record: CatalogRecord, kind: "movie"): Channel {
   };
 }
 
-function recordToSeriesSummary(record: CatalogRecord): Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre"> {
+export function recordToSeriesSummary(record: CatalogRecord): Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre"> {
   return {
     id: record.streamId,
     name: record.name,

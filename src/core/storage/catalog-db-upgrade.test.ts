@@ -32,7 +32,7 @@ function createV2Database(records: CatalogRecord[]): Promise<void> {
   });
 }
 
-describe("catalog-db v4 upgrade", () => {
+describe("catalog-db upgrades", () => {
   it("re-keys a v2 database's rows to padded ids in place, so they read newest first with no re-sync", async () => {
     await createV2Database(["7", "12", "m3u-1"].map(v2Record));
 
@@ -42,5 +42,9 @@ describe("catalog-db v4 upgrade", () => {
     expect(all.map((r) => r.id)).toEqual(["source-1:m3u-1", "source-1:000000000000012", "source-1:000000000000007"]);
     const [favourite] = await getRecordsByIds(catalogDb, "vod", [catalogRecordId("source-1", "12")]);
     expect(favourite?.name).toBe("Movie 12");
+
+    // v5: the search index's stores exist, empty — nothing was rewritten to create them.
+    expect([...catalogDb.db.objectStoreNames]).toEqual(expect.arrayContaining(["search_tokens", "search_index_meta"]));
+    expect(catalogDb.db.version).toBe(5);
   });
 });

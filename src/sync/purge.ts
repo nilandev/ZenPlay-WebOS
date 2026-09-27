@@ -1,7 +1,10 @@
 import type { PlaylistSource } from "@core";
 import { clearCatalogForSource } from "../catalog-sync.js";
 import { clearCachedContentForSource, clearCachedContentMatching } from "../content-cache.js";
+import { openCatalogDb } from "../core/storage/catalog-db.js";
+import { deleteSearchIndexForSource } from "../core/storage/search-index-db.js";
 import { clearEpgForSource } from "../epg-sync.js";
+import { pauseSearchIndexing } from "../search/search-index-scheduler.js";
 import { forgetWorkingLiveStreamFormat } from "../live-stream-url.js";
 import { clearLiveForSource } from "../live-sync.js";
 import { removeSourceUserData } from "../profile-store.js";
@@ -49,14 +52,15 @@ export async function resetSourceData(source: PlaylistSource): Promise<SyncOutco
 }
 
 /**
- * The playlist is being removed: stop its sync, then delete everything
- * stored for it — downloaded data, sync status, and every profile's
- * favourites and Recently Watched entries for it — so nothing with its id
- * is left behind.
+ * The playlist is being removed: stop its sync and the search indexer, then
+ * delete everything stored for it — downloaded data, its search index, sync
+ * status, and every profile's favourites and Recently Watched entries for
+ * it — so nothing with its id is left behind.
  */
 export async function purgeSourceData(sourceId: string): Promise<void> {
-  await stopSyncing(sourceId);
+  await Promise.all([stopSyncing(sourceId), pauseSearchIndexing()]);
   await clearDownloadedData(sourceId);
+  await deleteSearchIndexForSource(await openCatalogDb(), sourceId);
   removeSourceUserData(sourceId);
   removeSourceKidsRules(sourceId);
   forgetWorkingLiveStreamFormat(sourceId);

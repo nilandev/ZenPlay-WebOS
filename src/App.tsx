@@ -28,6 +28,7 @@ import { getLocalLiveMeta } from "./live-store.js";
 import { liveStreamUrl } from "./live-stream-url.js";
 import { purgeSourceData } from "./sync/purge.js";
 import { startSyncScheduler } from "./sync/sync-scheduler.js";
+import { setSearchIndexPlaybackActive, startSearchIndexScheduler } from "./search/search-index-scheduler.js";
 import { useSourceSyncState } from "./sync/sync-store.js";
 import { describeRunningSync } from "./sync/sync-summary.js";
 import { FirstSyncScreen } from "./screens/FirstSyncScreen.js";
@@ -40,6 +41,7 @@ import { KidsHomeScreen } from "./screens/KidsHomeScreen.js";
 import { LiveTvScreen } from "./screens/LiveTvScreen.js";
 import { VodScreen } from "./screens/VodScreen.js";
 import { SeriesScreen, type EpisodePlayContext } from "./screens/SeriesScreen.js";
+import { SearchScreen } from "./screens/SearchScreen.js";
 import { yearFromDate, type PlaybackInfo } from "./screens/PlayerOverlays.js";
 import { GuideScreen } from "./screens/GuideScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
@@ -52,6 +54,7 @@ import { detectPlatform } from "./platform.js";
 
 const TABS = [
   { id: "home", label: "Home" },
+  { id: "search", label: "Search" },
   { id: "live", label: "Live TV" },
   { id: "guide", label: "Guide" },
   { id: "movies", label: "Movies" },
@@ -131,6 +134,9 @@ export function App(): JSX.Element {
   // always drop the user back at the shelf browser instead of where they
   // left off. Reported via SeriesScreen's onSelectionChange.
   const [seriesSelectionId, setSeriesSelectionId] = useState<string | null>(null);
+  // Set when a series is opened from another screen that Back should return
+  // to (Search), rather than to the Series browse page.
+  const [seriesReturnTab, setSeriesReturnTab] = useState<TabId | null>(null);
   // Bumped every time playback closes, so SeriesScreen/VodScreen can re-read
   // Continue Watching (upsertContinueWatching persists to localStorage
   // during playback, which isn't itself reactive state — same shape as the
@@ -206,6 +212,28 @@ export function App(): JSX.Element {
     if (!source || !hasActiveProfile) return;
     return startSyncScheduler(source);
   }, [activeSource?.id, hasActiveProfile]);
+
+  // Builds the search index in the background, only while the app is idle
+  // (see search/search-index-scheduler.ts): the active playlist first, then
+  // the others. Restarted when the active playlist changes so it goes first.
+  const sourcesRef = useRef(sources);
+  sourcesRef.current = sources;
+  useEffect(() => {
+    if (!hasActiveProfile) return;
+    return startSearchIndexScheduler({
+      getJobs: () => {
+        const active = activeSourceRef.current;
+        const ordered = active ? [active, ...sourcesRef.current.filter((s) => s.id !== active.id)] : sourcesRef.current;
+        // Series, Movies, then Live TV — the sync order. An M3U playlist has no series.
+        return ordered.flatMap((s) => [
+          ...(s.kind === "xtream" ? [{ sourceId: s.id, kind: "series" as const }] : []),
+          { sourceId: s.id, kind: "vod" as const },
+          { sourceId: s.id, kind: "live" as const },
+        ]);
+      },
+    });
+  }, [activeSource?.id, hasActiveProfile]);
+  useEffect(() => setSearchIndexPlaybackActive(playbackUrl !== null), [playbackUrl]);
 
   // Whether each source still needs its first download, which gets its own
   // screen (FirstSyncScreen) instead of dropping the user onto empty tabs.
@@ -516,8 +544,10 @@ export function App(): JSX.Element {
 
   const goHome = () => {
     setPendingSeriesId(null);
+    setSeriesReturnTab(null);
     setActiveTab("home");
   };
+  const openSearch = () => setActiveTab("search");
 
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -548,6 +578,27 @@ export function App(): JSX.Element {
           isPlaybackOpen={Boolean(playbackUrl)}
         />
       )}
+      {activeTab === "search" && (
+        <SearchScreen
+          source={activeSource}
+          platform={platform}
+          profile={activeProfile}
+          onPlayMovie={playMovie}
+          onPlayChannel={playLive}
+          onOpenSeries={(seriesId) => {
+            setPendingSeriesId(seriesId);
+            setSeriesReturnTab("search");
+            setActiveTab("series");
+          }}
+          onContinueSeries={(entry) => {
+            // Plays the next episode over Search; if it can't, the series page opens — and its Back returns here.
+            setSeriesReturnTab("search");
+            continueSeries(entry);
+          }}
+          onBack={goHome}
+          isPlaybackOpen={Boolean(playbackUrl)}
+        />
+      )}
       {activeTab === "live" && (
         <LiveTvScreen
           source={activeSource}
@@ -555,6 +606,7 @@ export function App(): JSX.Element {
           profile={activeProfile}
           onBack={goHome}
           onPlay={playLive}
+          onOpenSearch={openSearch}
           isPlaybackOpen={Boolean(playbackUrl)}
         />
       )}
@@ -575,6 +627,7 @@ export function App(): JSX.Element {
           profile={activeProfile}
           onPlay={playMovie}
           onBack={goHome}
+          onOpenSearch={openSearch}
           isPlaybackOpen={Boolean(playbackUrl)}
         />
       )}
@@ -587,6 +640,17 @@ export function App(): JSX.Element {
           onBack={goHome}
           initialSelectedId={pendingSeriesId ?? seriesSelectionId ?? undefined}
           onSelectionChange={setSeriesSelectionId}
+          onCloseDetail={
+            seriesReturnTab
+              ? () => {
+                  setPendingSeriesId(null);
+                  setSeriesSelectionId(null);
+                  setSeriesReturnTab(null);
+                  setActiveTab(seriesReturnTab);
+                }
+              : undefined
+          }
+          onOpenSearch={openSearch}
           continueWatchingVersion={playbackCloseVersion}
           isPlaybackOpen={Boolean(playbackUrl)}
         />
