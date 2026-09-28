@@ -27,6 +27,49 @@ system rather than mouse hover.
 > playlists, providers or credentials. You are responsible for making sure
 > you have the rights to any streams you load into it.
 
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/2.png" alt="Home screen with Live TV, Movies, Series and Guide tiles, plus My List, Recently Watched, Refresh Playlist and App Settings" width="100%" />
+  <br />
+  <em>Home: everything one press away, with the playlist's expiry and last update at the bottom.</em>
+</p>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="screenshots/5.png" alt="Live TV: channel list with numbers and logos beside a live preview and now/next programme info" />
+      <p align="center"><strong>Live TV</strong><br />Channel list with a live preview and what's on now and next.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="screenshots/3.png" alt="TV guide grid with channels down the side, a timeline across the top and a now marker" />
+      <p align="center"><strong>TV Guide</strong><br />A full EPG grid, with catch-up on supported channels.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="screenshots/7.png" alt="Series details page with poster, rating, plot, cast, season tabs and episode cards" />
+      <p align="center"><strong>Series</strong><br />Details, seasons and episodes at a glance.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="screenshots/4.png" alt="Player showing an episode with progress bar, Pause, Audio &amp; Subtitles, Episodes, My List and Next Episode buttons" />
+      <p align="center"><strong>Player</strong><br />Audio and subtitle tracks, an episodes panel and Next Episode.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="screenshots/6.png" alt="Search screen with an on-screen keyboard and results grouped into Live TV, Movies and Series" />
+      <p align="center"><strong>Search</strong><br />One search across channels, movies and series, typed with the remote.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="screenshots/1.png" alt="Add a Playlist screen with Xtream Codes and M3U options and a sign-in form" />
+      <p align="center"><strong>Add a playlist</strong><br />Xtream Codes login or an M3U link.</p>
+    </td>
+  </tr>
+</table>
+
+<sub>Screenshots use invented demo data from the bundled <a href="mock-xtream/">mock Xtream server</a>: no real channels, titles or artwork.</sub>
+
 ## Features
 
 - **Live TV** – category rail, channel list with a live preview and
@@ -70,9 +113,13 @@ Open <http://localhost:5173> in a desktop browser. The arrow keys act as
 the remote's D-pad, `Enter` selects and `Escape` goes back. Add your own
 Xtream Codes account or M3U URL on the "Add source" screen.
 
-For a quick playback check without a provider, you can use a public HLS
-test stream such as
-`https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`.
+To try everything without a provider, run the bundled
+[mock Xtream server](mock-xtream/) (`pnpm mock:xtream`) and add
+`http://localhost:8787` with username and password `demo`: it serves an
+invented catalogue with channels, a TV guide, movies and series.
+
+For a quick playback check, you can also use a public HLS test stream such
+as `https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`.
 
 > **About CORS in development:** most IPTV providers don't send CORS
 > headers, so a browser would normally block requests to them. The dev
