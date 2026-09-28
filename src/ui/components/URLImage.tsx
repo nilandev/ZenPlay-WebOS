@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Clapperboard, Film, type LucideIcon } from "lucide-react";
 import { LITE_EFFECTS } from "../perf-tier.js";
 
@@ -42,6 +42,10 @@ const PLACEHOLDER_VARIANTS: Array<{ gradient: string; icon: typeof Film }> = [
   { gradient: "linear-gradient(160deg, #1f2e28 0%, #17211c 55%, #0f1512 100%)", icon: Clapperboard },
 ];
 
+/** Extra tries for an image that failed to load; the waits are 3s, then 6s. */
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 3000;
+
 function hashSeed(seed: string): number {
   let hash = 0;
   for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
@@ -61,9 +65,14 @@ function pickVariant(seed: string): (typeof PLACEHOLDER_VARIANTS)[number] {
  * FocusCard being the main one — so this fallback behavior only needs to
  * be right in one place.
  *
- * Resets to "loading" whenever `src` changes (rather than only on mount) so
- * scrolling a recycled/keyed list back onto a different item's URL doesn't
- * keep showing the previous item's error state.
+ * Status is kept per `src` (rather than reset by an effect when it
+ * changes): a poster served from the browser's cache can fire `load` before
+ * a post-mount effect runs, and a reset landing after it would hide an
+ * image that's already there — the "loads once, blank the next time" bug.
+ * An image the browser already has decoded is also caught at mount via
+ * `complete`/`naturalWidth`. A failed load is retried a couple of times
+ * after a short wait (a provider throttling a burst of poster requests
+ * fails some of them transiently) before settling on the placeholder.
  *
  * The loaded image crossfades in over the placeholder (opacity + a slight
  * scale-in) rather than popping in the instant it decodes — a hard swap
@@ -77,11 +86,25 @@ function pickVariant(seed: string): (typeof PLACEHOLDER_VARIANTS)[number] {
  * cached response resolves within a frame or two of the others.
  */
 export function URLImage({ src, alt = "", seed, loading = "lazy", style, className, objectFit = "cover", placeholderIcon }: URLImageProps): JSX.Element {
-  const [status, setStatus] = useState<"loading" | "loaded" | "error">(src ? "loading" : "error");
+  const [state, setState] = useState<{ src?: string; status: "loading" | "loaded" | "error"; attempt: number }>({ src, status: "loading", attempt: 0 });
+  // A different src starts over; the state only ever describes the src it was set for.
+  const current = state.src === src ? state : { src, status: "loading" as const, attempt: 0 };
+  const status = src ? current.status : "error";
+  const imgRef = useRef<HTMLImageElement>(null);
 
+  // Already in the browser's cache and decoded: no need to wait for (or risk missing) `load`.
+  useLayoutEffect(() => {
+    const img = imgRef.current;
+    if (src && img?.complete && img.naturalWidth > 0) setState((prev) => (prev.src === src && prev.status === "loaded" ? prev : { src, status: "loaded", attempt: current.attempt }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, current.attempt]);
+
+  // A failed load gets another try after a pause, remounting the <img> so the browser requests it again.
   useEffect(() => {
-    setStatus(src ? "loading" : "error");
-  }, [src]);
+    if (!src || current.status !== "error" || current.attempt >= MAX_RETRIES) return;
+    const timer = setTimeout(() => setState({ src, status: "loading", attempt: current.attempt + 1 }), RETRY_DELAY_MS * (current.attempt + 1));
+    return () => clearTimeout(timer);
+  }, [src, current.status, current.attempt]);
 
   const isLoaded = status === "loaded";
   const variant = pickVariant(seed ?? alt ?? src ?? "placeholder");
@@ -109,11 +132,14 @@ export function URLImage({ src, alt = "", seed, loading = "lazy", style, classNa
       </div>
       {src && (
         <img
+          key={current.attempt}
+          ref={imgRef}
           src={src}
           alt={alt}
           loading={loading}
-          onLoad={() => setStatus("loaded")}
-          onError={() => setStatus("error")}
+          decoding="async"
+          onLoad={() => setState({ src, status: "loaded", attempt: current.attempt })}
+          onError={() => setState({ src, status: "error", attempt: current.attempt })}
           style={{
             position: "absolute",
             inset: 0,

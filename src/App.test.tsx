@@ -2,7 +2,9 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistSource, Profile } from "@core";
 import { addPlaylistSource, setActivePlaylistSourceId } from "./playlist-store.js";
-import { addProfile } from "./profile-store.js";
+import { addProfile, setActiveProfileId } from "./profile-store.js";
+import { __resetBootSplashForTests } from "./boot-splash.js";
+import { getLocalLiveMeta } from "./live-store.js";
 import { App } from "./App.js";
 
 /**
@@ -41,6 +43,9 @@ vi.mock("./screens/HomeScreen.js", () => ({
           switch to {s.name}
         </button>
       ))}
+      <button type="button" onClick={() => onSelectTile("search")}>
+        search
+      </button>
       <button type="button" onClick={() => onSelectTile("favourites")}>
         my list
       </button>
@@ -58,6 +63,29 @@ vi.mock("./screens/FavouritesScreen.js", () => ({
 }));
 vi.mock("./screens/HistoryScreen.js", () => ({
   HistoryScreen: ({ profileId, source }: { profileId: string; source: PlaylistSource }) => <p>history of {profileId} on {source.name}</p>,
+}));
+vi.mock("./screens/SearchScreen.js", () => ({
+  SearchScreen: ({ onOpenSeries, onBack }: { onOpenSeries: (id: string) => void; onBack: () => void }) => (
+    <div>
+      <p>search screen</p>
+      <button type="button" onClick={() => onOpenSeries("s-1")}>
+        open series from search
+      </button>
+      <button type="button" onClick={onBack}>
+        leave search
+      </button>
+    </div>
+  ),
+}));
+vi.mock("./screens/SeriesScreen.js", () => ({
+  SeriesScreen: ({ initialSelectedId, onCloseDetail, onBack }: { initialSelectedId?: string; onCloseDetail?: () => void; onBack: () => void }) => (
+    <div>
+      <p>series detail {initialSelectedId ?? "none"}</p>
+      <button type="button" onClick={() => (onCloseDetail ? onCloseDetail() : onBack())}>
+        back from series
+      </button>
+    </div>
+  ),
 }));
 vi.mock("./sync/sync-scheduler.js", () => ({ startSyncScheduler: () => () => {} }));
 // Every playlist counts as already downloaded, so the first-sync screen never gets in the way.
@@ -142,5 +170,65 @@ describe("App: playlists per profile", () => {
     setActivePlaylistSourceId("a");
     render(<App />);
     expect(await screen.findByText("home on Provider A")).toBeTruthy();
+  });
+});
+
+describe("App: Search", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    addPlaylistSource(providerA);
+    setActivePlaylistSourceId("a");
+    addProfile(mum);
+  });
+
+  it("Home's Search opens the Search screen, and Back from a series opened there returns to Search", async () => {
+    render(<App />);
+    await pickProfile("Mum");
+    click("search");
+    expect(await screen.findByText("search screen")).toBeTruthy();
+
+    click("open series from search");
+    expect(await screen.findByText("series detail s-1")).toBeTruthy();
+    click("back from series");
+    expect(await screen.findByText("search screen")).toBeTruthy();
+
+    click("leave search");
+    expect(await screen.findByText(/^home on /)).toBeTruthy();
+  });
+});
+
+describe("App: launch splash", () => {
+  let splash: HTMLElement;
+  beforeEach(() => {
+    localStorage.clear();
+    addPlaylistSource(providerA);
+    setActivePlaylistSourceId("a");
+    addProfile(mum);
+    __resetBootSplashForTests();
+    document.getElementById("boot-splash")?.remove();
+    splash = document.createElement("div");
+    splash.id = "boot-splash";
+    document.body.appendChild(splash);
+  });
+
+  it("on a relaunch, stays up through restoring the profile and the first-download check, and fades once Home is showing", async () => {
+    setActiveProfileId(mum.id);
+    let answer!: (meta: Awaited<ReturnType<typeof getLocalLiveMeta>>) => void;
+    vi.mocked(getLocalLiveMeta).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+
+    render(<App />);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(screen.queryByText(/^home on /)).toBeNull(); // still checking
+    expect(splash.classList.contains("is-hidden")).toBe(false);
+
+    await act(async () => answer({ sourceId: "a", lastSyncedAt: Date.now(), generation: 1, channelCount: 1 }));
+    expect(await screen.findByText(/^home on /)).toBeTruthy();
+    await vi.waitFor(() => expect(splash.classList.contains("is-hidden")).toBe(true));
+  });
+
+  it("with no saved profile, fades once the profile picker is showing", async () => {
+    render(<App />);
+    expect(screen.getByRole("button", { name: "pick Mum" })).toBeTruthy();
+    await vi.waitFor(() => expect(splash.classList.contains("is-hidden")).toBe(true));
   });
 });

@@ -206,7 +206,7 @@ describe("HomeScreen sync status", () => {
       useSyncStore.getState().beginRun(source.id, "interval");
       useSyncStore.getState().setStage(source.id, "vod", { status: "running", done: 4000 });
     });
-    expect(screen.getByText(`Syncing Movies… ${(4000).toLocaleString()}`)).toBeTruthy();
+    expect(screen.getByText("Sync in progress…")).toBeTruthy();
   });
 
   it("after Refresh, reports what's now stored", async () => {
@@ -238,6 +238,25 @@ describe("HomeScreen sync status", () => {
   });
 });
 
+describe("HomeScreen Search button", () => {
+  beforeEach(() => {
+    clearAllCachedContent();
+    __resetHomeFocusMemoryForTests();
+    useFocusStore.getState().clearGraph("home-grid");
+  });
+  afterEach(() => useFocusStore.getState().clearGraph("home-grid"));
+
+  it("sits in the top bar right of the profile chip and opens Search", () => {
+    const onSelectTile = vi.fn();
+    renderHome(onSelectTile);
+    act(() => useFocusStore.getState().focus(PROFILE_SWITCHER_FOCUS_ID));
+    press("ArrowRight");
+    expect(useFocusStore.getState().focusedId).toBe("home-search");
+    press("Enter");
+    expect(onSelectTile).toHaveBeenCalledWith("search");
+  });
+});
+
 describe("HomeScreen playlist switching", () => {
   const second: PlaylistSource = { kind: "m3u-url", id: "src-2", name: "Sports Playlist", url: "http://example.com/list.m3u" };
 
@@ -259,10 +278,18 @@ describe("HomeScreen playlist switching", () => {
     return onSelectSource;
   }
 
-  it("shows no playlist chip with a single playlist", () => {
+  it("shows no playlist chip with a single playlist — Search is then the rightmost item in the top bar", () => {
     renderWithPlaylists([source]);
     expect(screen.queryByRole("button", { name: /Switch playlist/ })).toBeNull();
     expect(useFocusStore.getState().nodes["home-playlist-chip"]).toBeUndefined();
+
+    act(() => useFocusStore.getState().focus("guide"));
+    press("ArrowUp");
+    expect(useFocusStore.getState().focusedId).toBe("home-search");
+    press("ArrowRight");
+    expect(useFocusStore.getState().focusedId).toBe("home-search"); // nothing further right
+    press("ArrowDown");
+    expect(useFocusStore.getState().focusedId).toBe("guide");
   });
 
   it("with more than one, the header chip names the active playlist and sits above the right-hand tiles", () => {
@@ -272,7 +299,12 @@ describe("HomeScreen playlist switching", () => {
     press("ArrowUp");
     expect(useFocusStore.getState().focusedId).toBe("home-playlist-chip");
     press("ArrowLeft");
+    expect(useFocusStore.getState().focusedId).toBe("home-search"); // Search sits just left of the chip
+    press("ArrowLeft");
     expect(useFocusStore.getState().focusedId).toBe(PROFILE_SWITCHER_FOCUS_ID);
+    act(() => useFocusStore.getState().focus("series"));
+    press("ArrowUp");
+    expect(useFocusStore.getState().focusedId).toBe("home-search"); // the rest of the right half goes to Search
     act(() => useFocusStore.getState().focus("live"));
     press("ArrowUp");
     expect(useFocusStore.getState().focusedId).toBe(PROFILE_SWITCHER_FOCUS_ID); // the left half still goes to the profile chip

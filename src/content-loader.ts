@@ -9,6 +9,7 @@ import {
   type SeriesDetails,
   type SeriesEpisode,
 } from "@core";
+import { sortNewestFirst } from "./catalog-records.js";
 import { getCatalogCategories } from "./catalog-store.js";
 import { proxyDownloadFetch, proxyFetch } from "./proxy-fetch.js";
 import { createCatalogWorkerClient } from "./workers/catalog-worker-client.js";
@@ -65,7 +66,7 @@ export async function loadChannelsByKind(source: PlaylistSource, kind: Channel["
     await client.authenticate();
     if (kind === "live") return client.getLiveChannels(categoryId);
     if (kind === "movie") {
-      return catalogWorker.fetchCatalog({ credentials: source, action: "get_vod_streams", categoryId }) as Promise<Channel[]>;
+      return sortNewestFirst((await catalogWorker.fetchCatalog({ credentials: source, action: "get_vod_streams", categoryId })) as Channel[]);
     }
     return []; // series are fetched via loadSeriesList/loadSeriesDetails instead.
   }
@@ -79,7 +80,7 @@ export async function loadSeriesList(source: PlaylistSource, categoryId?: string
   if (source.kind !== "xtream") return [];
   const client = new XtreamClient(source, proxyFetch);
   await client.authenticate();
-  return catalogWorker.fetchCatalog({ credentials: source, action: "get_series", categoryId }) as ReturnType<XtreamClient["getSeriesList"]>;
+  return sortNewestFirst((await catalogWorker.fetchCatalog({ credentials: source, action: "get_series", categoryId })) as Awaited<ReturnType<XtreamClient["getSeriesList"]>>);
 }
 
 /** Series categories for the browse grid's category filter — M3U sources have no separate category API, so this is Xtream-only like loadSeriesList. */

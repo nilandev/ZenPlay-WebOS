@@ -6,9 +6,10 @@ import {
   loadSettings,
   updateSettings,
   type AppSettings,
+  type CatalogRefreshHours,
   type GuideDaysToKeep,
   type GuideRefreshHours,
-  type LiveStreamFormat,
+  type LiveStreamFormatSetting,
   type PlaybackSpeed,
   type UpdateOnLaunch,
 } from "../settings-store.js";
@@ -21,9 +22,10 @@ const AUTO_REFRESH_ID = "settings-auto-refresh";
 const PARENTAL_ID = "settings-parental-controls";
 const SCOPE = "settings";
 const updateOnLaunchId = (value: UpdateOnLaunch) => `settings-update-on-launch:${value}`;
+const catalogRefreshId = (value: CatalogRefreshHours) => `settings-catalog-refresh:${value}`;
 const guideRefreshId = (value: GuideRefreshHours) => `settings-guide-refresh:${value}`;
 const guideDaysId = (value: GuideDaysToKeep) => `settings-guide-days:${value}`;
-const liveFormatId = (value: LiveStreamFormat) => `settings-live-format:${value}`;
+const liveFormatId = (value: LiveStreamFormatSetting) => `settings-live-format:${value}`;
 const playbackSpeedId = (value: PlaybackSpeed) => `settings-playback-speed:${value}`;
 
 interface Option<T> {
@@ -35,6 +37,12 @@ const UPDATE_ON_LAUNCH_OPTIONS: Option<UpdateOnLaunch>[] = [
   { value: "off", label: "Off" },
   { value: "when-stale", label: "When out of date" },
   { value: "always", label: "Always" },
+];
+
+const CATALOG_REFRESH_OPTIONS: Option<CatalogRefreshHours>[] = [
+  { value: 24, label: "24 hours" },
+  { value: 48, label: "48 hours" },
+  { value: 72, label: "72 hours" },
 ];
 
 const GUIDE_REFRESH_OPTIONS: Option<GuideRefreshHours>[] = [
@@ -49,7 +57,8 @@ const GUIDE_DAYS_OPTIONS: Option<GuideDaysToKeep>[] = [
   { value: 7, label: "7 days" },
 ];
 
-const LIVE_FORMAT_OPTIONS: Option<LiveStreamFormat>[] = [
+const LIVE_FORMAT_OPTIONS: Option<LiveStreamFormatSetting>[] = [
+  { value: "auto", label: "Auto (recommended)" },
   { value: "m3u8", label: "HLS (.m3u8)" },
   { value: "ts", label: "MPEG-TS (.ts)" },
 ];
@@ -176,6 +185,7 @@ function SettingsView({
       [{ id: AUTO_REFRESH_ID, onSelect: () => patch({ automaticRefresh: !settingsRef.current.automaticRefresh }) }],
       ...[
         pickerRow(UPDATE_ON_LAUNCH_OPTIONS, updateOnLaunchId, "updateOnLaunch"),
+        pickerRow(CATALOG_REFRESH_OPTIONS, catalogRefreshId, "catalogRefreshHours"),
         pickerRow(GUIDE_REFRESH_OPTIONS, guideRefreshId, "guideRefreshHours"),
         pickerRow(GUIDE_DAYS_OPTIONS, guideDaysId, "guideDaysToKeep"),
         pickerRow(LIVE_FORMAT_OPTIONS, liveFormatId, "liveStreamFormat"),
@@ -242,11 +252,23 @@ function SettingsView({
           />
           <PickerRow
             label="Update Playlist on Launch"
-            description="What to download when the app starts"
+            description={
+              settings.updateOnLaunch === "always"
+                ? "Always downloads every channel, movie and series at each start — slow on large playlists"
+                : "What to download when the app starts"
+            }
             options={UPDATE_ON_LAUNCH_OPTIONS}
             value={settings.updateOnLaunch}
             getId={updateOnLaunchId}
             onSelect={(value) => patch({ updateOnLaunch: value })}
+          />
+          <PickerRow
+            label="Movies & Series Sync Interval"
+            description="Xtream playlists · large catalogs take a while to download, so less often is lighter on the TV"
+            options={CATALOG_REFRESH_OPTIONS}
+            value={settings.catalogRefreshHours}
+            getId={catalogRefreshId}
+            onSelect={(value) => patch({ catalogRefreshHours: value })}
           />
           <PickerRow
             label="Guide Sync Interval"
@@ -268,7 +290,7 @@ function SettingsView({
         <SettingsSection title="Playback">
           <PickerRow
             label="Live Stream Format"
-            description="Xtream live channels · if a channel won't play, the player offers the other format"
+            description="Xtream live channels · Auto uses what works for your provider and switches by itself if a channel won't play"
             options={LIVE_FORMAT_OPTIONS}
             value={settings.liveStreamFormat}
             getId={liveFormatId}

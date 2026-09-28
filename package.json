@@ -1,7 +1,7 @@
 {
   "name": "zenplay",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "An open-source IPTV player for LG webOS TV: Live TV, EPG, movies and series from your own Xtream Codes or M3U playlists.",
   "keywords": [
     "iptv",
@@ -38,11 +38,13 @@
     "test": "vitest run",
     "package": "pnpm build && ares-package dist -o webos-dist",
     "install-device": "node scripts/install-device.mjs",
-    "launch-device": "ares-launch com.stacktips.zenplay --device",
+    "launch-device": "ares-launch com.spannable.zenplay --device",
     "launch-hosted": "ares-launch --hosted dist --device",
-    "inspect-device": "ares-inspect --app com.stacktips.zenplay --open --device"
+    "inspect-device": "ares-inspect --app com.spannable.zenplay --open --device",
+    "mock:xtream": "node mock-xtream/server.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
     "hls.js": "^1.5.17",
     "lucide-react": "^1.47.0",
     "react": "^18.3.1",

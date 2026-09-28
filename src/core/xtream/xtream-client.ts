@@ -1,6 +1,7 @@
 import type { Category, Channel, MovieDetails, SeriesDetails, SeriesEpisode, SeriesInfo } from "../models/channel.js";
 import type { EpgProgramme } from "../models/epg.js";
 import type { XtreamCredentials } from "../models/playlist-source.js";
+import { cleanTitle } from "../text/clean-title.js";
 import {
   buildXtreamStreamUrl,
   mapEpgListing,
@@ -311,7 +312,7 @@ export class XtreamClient {
           seriesId,
           season: ep.season,
           episode: ep.episode_num,
-          title: ep.title,
+          title: cleanTitle(ep.title),
           posterUrl: ep.info?.movie_image,
           durationSeconds: ep.info?.duration_secs,
           plot: ep.info?.plot,

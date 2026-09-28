@@ -17,8 +17,8 @@ import {
 import { ArrowLeft, Play, RotateCcw, TriangleAlert } from "lucide-react";
 import { isFavorite, toggleFavorite, upsertContinueWatching, type ResumePoint } from "../profile-store.js";
 import { loadSettings } from "../settings-store.js";
-import { alternateLiveStream, LIVE_STREAM_FORMAT_LABELS } from "../live-stream-url.js";
-import { liveStreamFormatOf } from "@core";
+import { alternateLiveStream, LIVE_STREAM_FORMAT_LABELS, rememberWorkingLiveStreamFormat } from "../live-stream-url.js";
+import { liveStreamFormatOf, withLiveStreamFormat, type LiveStreamFormat } from "@core";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 import type { ChannelLineup } from "../channel-lineup.js";
 import { useNowNext } from "../use-now-next.js";
@@ -71,11 +71,11 @@ export interface PlayerScreenProps {
   /** What's playing, for Recently Watched (omitted for catch-up). */
   watchTarget?: WatchTarget;
   /**
-   * Plays the same Xtream live channel in the other format (HLS ↔ MPEG-TS)
-   * — offered on the error screen when this stream fails. Omitted: no
-   * alternative is offered.
+   * Live TV: the playlist the channel belongs to. On the Auto live stream
+   * format, the format a channel starts in is remembered for it (see
+   * live-stream-url.ts), so the next channel starts in it too.
    */
-  onPlayAlternateStream?: (streamUrl: string) => void;
+  liveSourceId?: string;
   /** Test seam — see VideoSurface. */
   engineFactory?: () => PlayerEngine;
 }
@@ -91,6 +91,16 @@ const SEEK_COMMIT_MS = 800;
 
 /** Buffering this long without recovering (a dead link, or a stream that stopped) is shown as an error. */
 const STALL_TIMEOUT_MS = 30_000;
+
+/** Auto live format: a channel that hasn't started after this long is tried in the other format (HLS ↔ MPEG-TS). */
+const FORMAT_SWITCH_AFTER_MS = 12_000;
+
+/** A live channel that was playing and stalls this long is reconnected (in the same format)… */
+const LIVE_RECONNECT_STALL_MS = 15_000;
+/** …up to this many times in a row before the error is shown. */
+const MAX_LIVE_RECONNECTS = 2;
+/** Playing this long since the last reconnect makes the next drop a fresh one, with its reconnects available again. */
+const RECONNECT_RESET_MS = 60_000;
 
 /** How long the channel banner stays up after changing channel. */
 const CHANNEL_BANNER_MS = 5000;
@@ -117,7 +127,6 @@ const START_OVER_ID = "player-resume-start-over";
 const ERROR_SCOPE = "player-error";
 const RETRY_ID = "player-error-retry";
 const ERROR_BACK_ID = "player-error-back";
-const ALTERNATE_STREAM_ID = "player-error-alternate";
 
 /** Scrub step grows the longer Left/Right is held or tapped in a row: 10s, then 30s, then 60s. */
 function seekStepFor(pressCount: number): number {
@@ -166,6 +175,14 @@ function describeFailure(failure: PlaybackFailure, isLive: boolean): string {
  * engine error, or buffering for STALL_TIMEOUT_MS) it shows an error with
  * Try Again, which reloads from where playback got to.
  *
+ * Xtream live channels come as HLS or MPEG-TS. On the Auto format setting,
+ * a channel that fails before its first frame is quietly tried in the
+ * other format behind the loading screen, and the error only shows if that
+ * fails too. A channel that drops after it was playing is reconnected in
+ * the same format (MAX_LIVE_RECONNECTS times) — a drop mid-stream is
+ * usually the network, not the format. The Audio & Subtitles menu also
+ * lets the viewer switch format by hand.
+ *
  * No on-screen volume control: TV playback uses the TV's own volume.
  */
 export function PlayerScreen({
@@ -178,7 +195,7 @@ export function PlayerScreen({
   onNextEpisode,
   upNextEpisode,
   isLive = false,
-  onPlayAlternateStream,
+  liveSourceId,
   liveChannel,
   guideSource,
   channelLineup,
@@ -217,13 +234,24 @@ export function PlayerScreen({
   const startPositionSeconds =
     startAt?.streamUrl === streamUrl ? startAt.seconds : autoResume && resumeFrom ? resumeFrom.positionSeconds : undefined;
   const [attempt, setAttempt] = useState(0);
-  // An Xtream live channel can also be played in the other format — offered if this one fails.
-  const alternateStream = useMemo(() => alternateLiveStream(streamUrl), [streamUrl]);
-  const currentFormat = liveStreamFormatOf(streamUrl);
+  // An Xtream live channel playing in the other format than it was opened
+  // in (Auto's fallback, or the viewer's pick) — tied to the URL it
+  // replaces, so a channel change drops it.
+  const [formatSwitch, setFormatSwitch] = useState<{ from: string; url: string } | null>(null);
+  const activeUrl = formatSwitch?.from === streamUrl ? formatSwitch.url : streamUrl;
+  const currentFormat = liveStreamFormatOf(activeUrl);
   // App Settings → Playback, read for each stream (and each retry) so a change applies to the next thing played.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const playbackPrefs = useMemo(() => loadSettings(), [streamUrl, attempt]);
+  // Auto may switch format once per channel open (a manual pick counts as the switch).
+  const autoAlternate =
+    isLive && playbackPrefs.liveStreamFormat === "auto" && formatSwitch?.from !== streamUrl ? alternateLiveStream(activeUrl) : undefined;
   const [failure, setFailure] = useState<PlaybackFailure | null>(null);
+  // The URL that has shown a frame since this channel opened: a failure
+  // before that is a startup failure (try the other format), after it a
+  // drop (reconnect in the same one).
+  const startedUrlRef = useRef<string | null>(null);
+  const reconnectsRef = useRef({ count: 0, lastAt: 0 });
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [positionSeconds, setPositionSeconds] = useState(0);
@@ -336,6 +364,8 @@ export function PlayerScreen({
   panelRef.current = panel;
   const stateRef = useRef({ isPlaying, isPanelOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo, isPausedInfoShown, hasEpisodes });
   stateRef.current = { isPlaying, isPanelOpen, areControlsVisible, positionSeconds, durationSeconds, pendingSeekSeconds, isShowingVideo, isPausedInfoShown, hasEpisodes };
+  const streamRef = useRef({ activeUrl, autoAlternate, isAutoFormat: playbackPrefs.liveStreamFormat === "auto", liveSourceId });
+  streamRef.current = { activeUrl, autoAlternate, isAutoFormat: playbackPrefs.liveStreamFormat === "auto", liveSourceId };
 
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -404,28 +434,86 @@ export function PlayerScreen({
     [onNextEpisode, showControls],
   );
 
-  // Stable identity: VideoSurface reloads the stream when onError changes.
-  const handleError = useCallback(
-    (error: PlayerError) => {
-      if (!error.fatal) return; // the engine is recovering; buffering covers it
+  /** A fresh engine on the current (or a switched-to) URL, behind the loading screen or banner. */
+  const reloadStream = useCallback(() => {
+    clearStallTimer();
+    setFailure(null);
+    setHasStarted(false);
+    sawBufferingRef.current = false;
+    setAttempt((n) => n + 1);
+  }, [clearStallTimer]);
+
+  /**
+   * A fatal error or a stall. Live channels get two chances before the
+   * error shows: before the first frame, Auto tries the other format; after
+   * it, the same stream is reconnected a couple of times.
+   */
+  const handleFailure = useCallback(
+    (failed: PlaybackFailure) => {
       clearStallTimer();
-      setFailure({ kind: error.kind });
+      const { activeUrl: url, autoAlternate: alternate } = streamRef.current;
+      const hasPlayed = startedUrlRef.current === url;
+      if (!hasPlayed && alternate) {
+        setFormatSwitch({ from: streamUrl, url: alternate.url });
+        reloadStream();
+        return;
+      }
+      if (hasPlayed && isLive) {
+        const reconnects = reconnectsRef.current;
+        const now = Date.now();
+        if (now - reconnects.lastAt > RECONNECT_RESET_MS) reconnects.count = 0;
+        if (reconnects.count < MAX_LIVE_RECONNECTS) {
+          reconnects.count += 1;
+          reconnects.lastAt = now;
+          reloadStream();
+          return;
+        }
+      }
+      setFailure(failed);
     },
-    [clearStallTimer],
+    [clearStallTimer, reloadStream, streamUrl, isLive],
   );
+  const handleFailureRef = useRef(handleFailure);
+  handleFailureRef.current = handleFailure;
+
+  // Stable identity: VideoSurface reloads the stream when onError changes.
+  const handleError = useCallback((error: PlayerError) => {
+    if (!error.fatal) return; // the engine is recovering; buffering covers it
+    handleFailureRef.current({ kind: error.kind });
+  }, []);
 
   const handleBufferingChange = useCallback(
     (isBuffering: boolean) => {
       clearStallTimer();
       if (isBuffering) {
         sawBufferingRef.current = true;
-        stallTimerRef.current = setTimeout(() => setFailure({ kind: "network", stalled: true }), STALL_TIMEOUT_MS);
+        // A channel not yet started is given less time when Auto has another format to try; a dropped one is reconnected sooner.
+        const { activeUrl: url, autoAlternate: alternate } = streamRef.current;
+        const hasPlayed = startedUrlRef.current === url;
+        const timeout = !hasPlayed && alternate ? FORMAT_SWITCH_AFTER_MS : hasPlayed && isLive ? LIVE_RECONNECT_STALL_MS : STALL_TIMEOUT_MS;
+        stallTimerRef.current = setTimeout(() => handleFailureRef.current({ kind: "network", stalled: true }), timeout);
       } else if (sawBufferingRef.current) {
         setHasStarted(true); // the first load finished — the stream is playing
+        // A live channel that starts on Auto: remember its format for the playlist, so the next channel starts in it.
+        const { activeUrl: url, isAutoFormat, liveSourceId: sourceId } = streamRef.current;
+        startedUrlRef.current = url;
+        const format = liveStreamFormatOf(url);
+        if (isLive && isAutoFormat && format && sourceId) rememberWorkingLiveStreamFormat(sourceId, format);
       }
     },
-    [clearStallTimer],
+    [clearStallTimer, isLive],
   );
+
+  /** Stream Format in the menu: the same channel in the chosen format, now. */
+  function selectStreamFormat(format: LiveStreamFormat): void {
+    setPanel("none");
+    if (format === currentFormat) return;
+    const url = withLiveStreamFormat(streamUrl, format);
+    if (!url) return;
+    setFormatSwitch(url === streamUrl ? null : { from: streamUrl, url });
+    reloadStream();
+    showControls();
+  }
 
   // A fresh stream (channel/episode change) starts with no known tracks
   // until the new engine reports in — reset so the Audio & Subtitles panel
@@ -440,6 +528,8 @@ export function PlayerScreen({
     setPanel("none");
     setHasStarted(false);
     sawBufferingRef.current = false;
+    startedUrlRef.current = null;
+    reconnectsRef.current = { count: 0, lastAt: 0 };
     if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
   }, [streamUrl]);
 
@@ -455,10 +545,11 @@ export function PlayerScreen({
     const { positionSeconds: position } = stateRef.current;
     const from = isLive ? undefined : position > 0 ? position : startPositionSeconds;
     setStartAt(from !== undefined ? { streamUrl, seconds: from } : null);
-    setFailure(null);
-    setHasStarted(false);
-    sawBufferingRef.current = false;
-    setAttempt((n) => n + 1);
+    // A fresh start: the channel's first format again, with Auto's switch and the reconnects available.
+    setFormatSwitch(null);
+    startedUrlRef.current = null;
+    reconnectsRef.current = { count: 0, lastAt: 0 };
+    reloadStream();
     showControls();
   }
 
@@ -711,7 +802,7 @@ export function PlayerScreen({
       {failure === null && (
         <VideoSurface
           key={attempt}
-          streamUrl={streamUrl}
+          streamUrl={activeUrl}
           engineFactory={engineFactory}
           startPositionSeconds={startPositionSeconds}
           playbackRate={isLive ? 1 : playbackPrefs.playbackSpeed}
@@ -766,6 +857,15 @@ export function PlayerScreen({
             onSelectAudioTrack={selectAudioTrack}
             onSelectSubtitleTrack={selectSubtitleTrack}
             onNextEpisode={() => onNextEpisode?.()}
+            streamFormat={
+              isLive && currentFormat
+                ? {
+                    options: (["m3u8", "ts"] as const).map((format) => ({ id: format, label: LIVE_STREAM_FORMAT_LABELS[format] })),
+                    activeId: currentFormat,
+                    onSelect: (id) => selectStreamFormat(id as LiveStreamFormat),
+                  }
+                : undefined
+            }
           />
           {panel === "episodes" && episodes && (
             <PlayerEpisodesPanel
@@ -782,10 +882,8 @@ export function PlayerScreen({
         <PlaybackError
           title={title}
           message={describeFailure(failure, isLive)}
-          alternate={onPlayAlternateStream ? alternateStream : undefined}
-          currentFormatLabel={currentFormat ? LIVE_STREAM_FORMAT_LABELS[currentFormat] : undefined}
+          hint={isLive && currentFormat && playbackPrefs.liveStreamFormat !== "auto" ? LIVE_FORMAT_HINT : undefined}
           onRetry={retry}
-          onAlternate={alternateStream && onPlayAlternateStream ? () => onPlayAlternateStream(alternateStream.url) : undefined}
           onBack={onClose}
         />
       )}
@@ -868,51 +966,24 @@ function ResumeChoice({
   );
 }
 
-/**
- * A failed stream. For an Xtream live channel it also offers the same
- * channel in the other format (HLS ↔ MPEG-TS) — first and focused, since
- * retrying the format that just failed usually fails the same way, and
- * which one a panel serves reliably varies.
- */
+/** Shown under a live channel's error when the format is fixed in App Settings — Auto would have tried the other one. */
+const LIVE_FORMAT_HINT = "Your Live Stream Format is fixed in App Settings. Set it to Auto to try the other format automatically.";
+
+/** A failed stream: Try Again (focused) or Back. */
 function PlaybackError({
   title,
   message,
-  alternate,
-  currentFormatLabel,
+  hint,
   onRetry,
-  onAlternate,
   onBack,
 }: {
   title?: string;
   message: string;
-  alternate?: { label: string };
-  currentFormatLabel?: string;
+  hint?: string;
   onRetry: () => void;
-  onAlternate?: () => void;
   onBack: () => void;
 }): JSX.Element {
-  const setGraph = useFocusStore((state) => state.setGraph);
-  const clearGraph = useFocusStore((state) => state.clearGraph);
-  const focus = useFocusStore((state) => state.focus);
-  const latestRef = useRef({ onRetry, onAlternate, onBack });
-  latestRef.current = { onRetry, onAlternate, onBack };
-  const hasAlternate = Boolean(alternate && onAlternate);
-
-  useEffect(() => {
-    const ids = [...(hasAlternate ? [ALTERNATE_STREAM_ID] : []), RETRY_ID, ERROR_BACK_ID];
-    const actions: Record<string, () => void> = {
-      [ALTERNATE_STREAM_ID]: () => latestRef.current.onAlternate?.(),
-      [RETRY_ID]: () => latestRef.current.onRetry(),
-      [ERROR_BACK_ID]: () => latestRef.current.onBack(),
-    };
-    setGraph(
-      ERROR_SCOPE,
-      ids.map((id, index) => ({ id, neighbors: { left: ids[index - 1], right: ids[index + 1] }, onSelect: actions[id] })),
-    );
-    // Other scopes (the controls) may still hold focus while unmounting.
-    focus(ids[0]);
-    return () => clearGraph(ERROR_SCOPE);
-  }, [hasAlternate, setGraph, clearGraph, focus]);
+  useTwoButtonGraph(ERROR_SCOPE, RETRY_ID, ERROR_BACK_ID, onRetry, onBack);
 
   return (
     <PlayerMessage>
@@ -920,14 +991,9 @@ function PlaybackError({
         <TriangleAlert size="3.5rem" strokeWidth={1.75} color="#ffb347" />
         <h1 style={{ fontSize: "3rem", fontWeight: 800, color: "#fff", margin: "1.25rem 0 0.75rem" }}>Can't play {title ? `“${title}”` : "this"}</h1>
         <p style={{ fontSize: "1.625rem", color: "rgba(255,255,255,0.8)", margin: "0 0 1rem", lineHeight: 1.45, maxWidth: "52rem" }}>{message}</p>
-        {hasAlternate && (
-          <p style={{ fontSize: "1.375rem", color: "rgba(255,255,255,0.65)", margin: "0 0 1rem", lineHeight: 1.45, maxWidth: "52rem" }}>
-            This channel was playing as {currentFormatLabel}. Some providers stream more reliably as {alternate!.label} — you can set the default in App Settings.
-          </p>
-        )}
+        {hint && <p style={{ fontSize: "1.375rem", color: "rgba(255,255,255,0.65)", margin: "0 0 1rem", lineHeight: 1.45, maxWidth: "52rem" }}>{hint}</p>}
         <div style={{ display: "flex", gap: "1.25rem", marginTop: "2rem" }}>
-          {hasAlternate && <TvButton id={ALTERNATE_STREAM_ID} label={`Try ${alternate!.label}`} icon={Play} variant="primary" onSelect={onAlternate!} />}
-          <TvButton id={RETRY_ID} label="Try Again" icon={RotateCcw} variant={hasAlternate ? "default" : "primary"} onSelect={onRetry} />
+          <TvButton id={RETRY_ID} label="Try Again" icon={RotateCcw} variant="primary" onSelect={onRetry} />
           <TvButton id={ERROR_BACK_ID} label="Back" icon={ArrowLeft} onSelect={onBack} />
         </div>
       </div>

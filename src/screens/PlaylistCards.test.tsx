@@ -120,7 +120,7 @@ describe("PlaylistCards", () => {
       useSyncStore.getState().beginRun("a", "manual");
       useSyncStore.getState().setStage("a", "vod", { status: "running", done: 1200 });
     });
-    expect(screen.getByText(`Syncing Movies… ${(1200).toLocaleString()}`)).toBeDefined();
+    expect(screen.getByText("Sync in progress…")).toBeDefined();
 
     await act(async () => {
       useSyncStore.getState().setStage("a", "vod", { status: "synced", count: 1200 });

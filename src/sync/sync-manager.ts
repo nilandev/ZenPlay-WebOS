@@ -1,5 +1,6 @@
 import { XtreamAuthError, XtreamClient, type PlaylistSource } from "@core";
 import { bumpCacheVersion } from "../cache-invalidation-store.js";
+import { CatalogEmptyError } from "../catalog-sync-core.js";
 import { catalogVersionKey, isCatalogSyncDue, syncCatalog } from "../catalog-sync.js";
 import { clearCachedContentMatching, isCacheStale, loadCachedEntry, setCachedContent, type CacheKind } from "../content-cache.js";
 import { loadLiveCategories, loadSeriesCategories, loadVodCategories } from "../content-loader.js";
@@ -8,7 +9,7 @@ import { epgUrlFor, isEpgSyncDue, syncEpg } from "../epg-sync.js";
 import { LiveEmptyError } from "../live-sync-core.js";
 import { isLiveSyncDue, syncLiveChannels } from "../live-sync.js";
 import { proxyFetch } from "../proxy-fetch.js";
-import { runWithConcurrency, withRetry } from "./retry.js";
+import { withRetry } from "./retry.js";
 import { CONTENT_STAGES, useSyncStore, type ContentStage, type StageState, type StageStatus, type SyncStage, type SyncTrigger } from "./sync-store.js";
 
 /**
@@ -18,9 +19,9 @@ import { CONTENT_STAGES, useSyncStore, type ContentStage, type StageState, type 
  * checks — now asks this module (via sync-scheduler.ts, Home's Refresh, or
  * a screen that finds its table empty).
  *
- * A job runs a source's stages in order: sign-in (Xtream), then live, VOD
- * and series two at a time, then the guide last (the biggest download and
- * the least urgent). Each stage is skipped while its data is fresh unless
+ * A job runs a source's stages one at a time: sign-in (Xtream), then Live
+ * TV, Series, Movies and the guide last (CONTENT_STAGES order, whatever
+ * order the request listed them in). Each stage is skipped while its data is fresh unless
  * the request forces it, retried with backoff on failure, and reported to
  * sync-store.ts as it goes. One failing stage doesn't stop the others; a
  * failed sign-in stops the job, since every later stage would fail the same
@@ -36,9 +37,6 @@ import { CONTENT_STAGES, useSyncStore, type ContentStage, type StageState, type 
 
 /** Freshness of the account info (name/expiry) the sign-in stage refreshes. */
 const ACCOUNT_INFO_KEY = (sourceId: string) => `playlist-info:${sourceId}`;
-/** How many of live/VOD/series run at once. */
-const CONTENT_CONCURRENCY = 2;
-
 export interface SyncRequest {
   trigger: SyncTrigger;
   /** Content stages to consider; all of them when omitted. */
@@ -124,16 +122,14 @@ const STAGE_RUNNERS: Record<SyncStage, (source: PlaylistSource, onProgress: Prog
     return result.channelCount;
   },
   async vod(source, onProgress) {
-    let written = 0;
-    await syncCatalog(source, "vod", { onProgress: (n) => onProgress((written = n)) });
+    const result = await syncCatalog(source, "vod", { onProgress });
     await refreshCached(`vod-categories:${source.id}`, "category", () => loadVodCategories(source));
-    return written;
+    return result?.recordCount;
   },
   async series(source, onProgress) {
-    let written = 0;
-    await syncCatalog(source, "series", { onProgress: (n) => onProgress((written = n)) });
+    const result = await syncCatalog(source, "series", { onProgress });
     await refreshCached(`series-categories:${source.id}`, "category", () => loadSeriesCategories(source));
-    return written;
+    return result?.recordCount;
   },
   async epg(source, onProgress) {
     const result = await syncEpg(source, { onProgress });
@@ -141,9 +137,22 @@ const STAGE_RUNNERS: Record<SyncStage, (source: PlaylistSource, onProgress: Prog
   },
 };
 
-/** Errors a retry can't fix: a rejected login, or a provider that answered with nothing. */
-function isRetryable(err: unknown): boolean {
-  return !(err instanceof XtreamAuthError || err instanceof LiveEmptyError || err instanceof EpgEmptyError);
+/**
+ * Errors a retry can't fix: a rejected login, or a provider that answered
+ * with nothing. Matched by name as well as class, since an error from the
+ * sync worker arrives as a plain Error carrying the original name (literal
+ * names: a minified build renames the classes themselves).
+ */
+const PERMANENT_ERRORS = new Set(["XtreamAuthError", "LiveEmptyError", "EpgEmptyError", "CatalogEmptyError"]);
+
+function isRetryable(stage: SyncStage, err: unknown): boolean {
+  if (!(err instanceof Error)) return true;
+  if (err instanceof XtreamAuthError || err instanceof LiveEmptyError || err instanceof EpgEmptyError || err instanceof CatalogEmptyError) return false;
+  if (PERMANENT_ERRORS.has(err.name)) return false;
+  // A big download that ran out of time (minutes) won't finish on an immediate
+  // retry either — the next launch, resume or interval check tries again.
+  if (stage !== "auth" && err.name === "RequestTimeoutError") return false;
+  return true;
 }
 
 function messageOf(err: unknown): string {
@@ -171,7 +180,7 @@ async function runJob(source: PlaylistSource, request: Required<SyncRequest>, jo
     try {
       const count = await withRetry(() => STAGE_RUNNERS[stage](source, (done) => report(stage, { status: "running", done })), {
         ...retryConfig,
-        shouldRetry: isRetryable,
+        shouldRetry: (err) => isRetryable(stage, err),
       });
       const finishedAt = Date.now();
       job.syncedAt[stage] = finishedAt;
@@ -186,7 +195,7 @@ async function runJob(source: PlaylistSource, request: Required<SyncRequest>, jo
   useSyncStore.getState().beginRun(source.id, request.trigger);
   try {
     const toRun: ContentStage[] = [];
-    for (const stage of request.stages) {
+    for (const stage of CONTENT_STAGES.filter((s) => request.stages.includes(s))) {
       if (!appliesTo(source, stage)) report(stage, { status: "not-applicable" });
       else if (request.force || (await isStageDue(source, stage))) {
         toRun.push(stage);
@@ -202,12 +211,7 @@ async function runJob(source: PlaylistSource, request: Required<SyncRequest>, jo
       }
     }
 
-    await runWithConcurrency(
-      toRun.filter((stage) => stage !== "epg"),
-      CONTENT_CONCURRENCY,
-      async (stage) => void (await runStage(stage)),
-    );
-    if (toRun.includes("epg")) await runStage("epg");
+    for (const stage of toRun) await runStage(stage);
     return outcome;
   } finally {
     useSyncStore.getState().endRun(source.id);

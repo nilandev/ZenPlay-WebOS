@@ -5,6 +5,7 @@ import { useFocusStore } from "../ui/focus/focus-store.js";
 import { isFavorite } from "../profile-store.js";
 import { PlayerScreen } from "./PlayerScreen.js";
 import { updateSettings } from "../settings-store.js";
+import { workingLiveStreamFormat } from "../live-stream-url.js";
 
 const guide = vi.hoisted(() => ({ nowNext: null as unknown }));
 vi.mock("../use-now-next.js", () => ({
@@ -191,40 +192,115 @@ describe("PlayerScreen", () => {
     expect(second.engine.load).toHaveBeenCalledWith("s", expect.objectContaining({ startPositionSeconds: undefined }));
   });
 
-  it("when an Xtream live channel fails, offers it in the other format first", async () => {
+  describe("live stream formats", () => {
     const hls = "http://tv.example/live/me/pw/42.m3u8";
-    const { engine, fail } = makeEngine(NaN);
-    const onPlayAlternateStream = vi.fn();
-    render(<PlayerScreen streamUrl={hls} platform="web" onClose={() => {}} title="News" isLive onPlayAlternateStream={onPlayAlternateStream} engineFactory={() => engine} />);
-    await act(async () => {});
+    const ts = "http://tv.example/live/me/pw/42.ts";
+    beforeEach(() => localStorage.clear());
 
-    fail({ kind: "media", fatal: true, message: "unsupported" });
-    expect(screen.getByText(/was playing as HLS\. Some providers stream more reliably as MPEG-TS/)).toBeDefined();
-    expect(focusedId()).toBe("player-error-alternate");
-    press("Enter");
-    expect(onPlayAlternateStream).toHaveBeenCalledWith("http://tv.example/live/me/pw/42.ts");
+    /** Engines handed out in order; `hang` ones never finish loading (a channel that doesn't start). */
+    function engineQueue(...hang: boolean[]) {
+      const engines = hang.map((hangOnLoad) => makeEngine(NaN, { hangOnLoad }));
+      let created = 0;
+      return { engines, factory: () => engines[created++].engine, created: () => created };
+    }
+    const loadedUrl = (engine: PlayerEngine) => (engine.load as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
 
-    press("ArrowRight");
-    expect(focusedId()).toBe("player-error-retry");
-  });
+    it("Auto: a channel that fails before its first frame is quietly tried in the other format, which is remembered", async () => {
+      const { engines, factory } = engineQueue(true, false);
+      render(<PlayerScreen streamUrl={hls} platform="web" onClose={() => {}} title="News" isLive liveSourceId="src-1" engineFactory={factory} />);
+      await act(async () => {});
 
-  it("offers HLS when an MPEG-TS channel fails", async () => {
-    const { engine, fail } = makeEngine(NaN);
-    render(
-      <PlayerScreen streamUrl="http://tv.example/live/me/pw/42.ts" platform="web" onClose={() => {}} title="News" isLive onPlayAlternateStream={() => {}} engineFactory={() => engine} />,
-    );
-    await act(async () => {});
-    fail({ kind: "network", fatal: true, message: "gone" });
-    expect(screen.getByRole("button", { name: "Try HLS" })).toBeDefined();
-  });
+      engines[0].fail({ kind: "manifest", fatal: true, message: "bad playlist" });
+      await act(async () => {});
 
-  it("offers no other format for anything that isn't an Xtream live channel", async () => {
-    const { engine, fail } = makeEngine(3600);
-    render(<PlayerScreen streamUrl="http://tv.example/movie/me/pw/7.mkv" platform="web" onClose={() => {}} title="Film" onPlayAlternateStream={() => {}} engineFactory={() => engine} />);
-    await act(async () => {});
-    fail({ kind: "media", fatal: true, message: "codec" });
-    expect(screen.queryByRole("button", { name: /Try (HLS|MPEG-TS)/ })).toBeNull();
-    expect(focusedId()).toBe("player-error-retry");
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(loadedUrl(engines[1].engine)).toBe(ts);
+      expect(workingLiveStreamFormat("src-1")).toBe("ts");
+    });
+
+    it("Auto: a channel that hasn't started after 12 seconds is tried in the other format", async () => {
+      const { engines, factory } = engineQueue(true, true);
+      render(<PlayerScreen streamUrl={hls} platform="web" onClose={() => {}} title="News" isLive liveSourceId="src-1" engineFactory={factory} />);
+      await act(async () => {});
+
+      act(() => vi.advanceTimersByTime(11_000));
+      expect(engines[1].engine.load).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(1_000));
+      await act(async () => {});
+      expect(loadedUrl(engines[1].engine)).toBe(ts);
+    });
+
+    it("Auto: the error shows only once both formats have failed; Try Again starts over in the first", async () => {
+      const { engines, factory } = engineQueue(true, true, false);
+      render(<PlayerScreen streamUrl={hls} platform="web" onClose={() => {}} title="News" isLive liveSourceId="src-1" engineFactory={factory} />);
+      await act(async () => {});
+      engines[0].fail({ kind: "network", fatal: true, message: "gone" });
+      await act(async () => {});
+      engines[1].fail({ kind: "network", fatal: true, message: "gone" });
+
+      expect(screen.getByRole("alert")).toBeDefined();
+      expect(screen.queryByRole("button", { name: /Try (HLS|MPEG-TS)/ })).toBeNull();
+      expect(screen.queryByText(/fixed in App Settings/)).toBeNull();
+      expect(focusedId()).toBe("player-error-retry");
+      expect(workingLiveStreamFormat("src-1")).toBeUndefined();
+
+      press("Enter");
+      await act(async () => {});
+      expect(loadedUrl(engines[2].engine)).toBe(hls);
+    });
+
+    it("a fixed format never switches by itself, and the error says where to change it", async () => {
+      updateSettings({ liveStreamFormat: "m3u8" });
+      const { engines, factory, created } = engineQueue(true, false);
+      render(<PlayerScreen streamUrl={hls} platform="web" onClose={() => {}} title="News" isLive liveSourceId="src-1" engineFactory={factory} />);
+      await act(async () => {});
+      engines[0].fail({ kind: "manifest", fatal: true, message: "bad playlist" });
+
+      expect(screen.getByRole("alert").textContent).toContain("Set it to Auto");
+      expect(created()).toBe(1);
+    });
+
+    it("a channel that drops after playing is reconnected in the same format, twice, before the error", async () => {
+      const { engines, factory } = engineQueue(false, false, false);
+      render(<PlayerScreen streamUrl={hls} platform="web" onClose={() => {}} title="News" isLive liveSourceId="src-1" engineFactory={factory} />);
+      await act(async () => {});
+
+      for (const index of [0, 1]) {
+        engines[index].fail({ kind: "network", fatal: true, message: "dropped" });
+        await act(async () => {});
+        expect(screen.queryByRole("alert")).toBeNull();
+        expect(loadedUrl(engines[index + 1].engine)).toBe(hls);
+      }
+      engines[2].fail({ kind: "network", fatal: true, message: "dropped" });
+      expect(screen.getByRole("alert")).toBeDefined();
+    });
+
+    it("the menu's Stream Format switches the channel by hand", async () => {
+      const { engines, factory } = engineQueue(false, false);
+      render(<PlayerScreen streamUrl={hls} platform="web" onClose={() => {}} title="News" isLive liveSourceId="src-1" engineFactory={factory} />);
+      await act(async () => {});
+      engines[0].tick(10);
+      press("ArrowRight");
+      press("Enter");
+      expect(screen.getByRole("button", { name: "HLS", pressed: true })).toBeDefined();
+
+      act(() => useFocusStore.getState().focus("player-stream-format:ts"));
+      press("Enter");
+      await act(async () => {});
+      expect(loadedUrl(engines[1].engine)).toBe(ts);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("offers no format choice for anything that isn't an Xtream live channel", async () => {
+      const { engine, tick } = makeEngine(NaN);
+      render(<PlayerScreen streamUrl="http://cdn.example/news/index.m3u8" platform="web" onClose={() => {}} title="News" isLive engineFactory={() => engine} />);
+      await act(async () => {});
+      tick(10);
+      press("ArrowRight");
+      press("Enter");
+      expect(screen.getByRole("dialog", { name: "Audio & Subtitles" })).toBeDefined();
+      expect(screen.queryByText("Stream Format")).toBeNull();
+    });
   });
 
   it("shows an error for a fatal failure (not a recovering one); Try Again reloads from where it got to", async () => {

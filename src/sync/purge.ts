@@ -1,7 +1,11 @@
 import type { PlaylistSource } from "@core";
 import { clearCatalogForSource } from "../catalog-sync.js";
-import { clearCachedContentForSource } from "../content-cache.js";
+import { clearCachedContentForSource, clearCachedContentMatching } from "../content-cache.js";
+import { openCatalogDb } from "../core/storage/catalog-db.js";
+import { deleteSearchIndexForSource } from "../core/storage/search-index-db.js";
 import { clearEpgForSource } from "../epg-sync.js";
+import { pauseSearchIndexing } from "../search/search-index-scheduler.js";
+import { forgetWorkingLiveStreamFormat } from "../live-stream-url.js";
 import { clearLiveForSource } from "../live-sync.js";
 import { removeSourceUserData } from "../profile-store.js";
 import { removeSourceKidsRules } from "../parental-store.js";
@@ -25,27 +29,41 @@ async function clearDownloadedData(sourceId: string): Promise<void> {
 }
 
 /**
- * Manage Playlists → "Reset data": throws away everything downloaded for
- * the source and syncs it again from scratch. The user's favourites and
- * history are kept — they're still the same playlist.
+ * Manage Playlists → "Reset data": downloads everything for the source
+ * again from scratch. The user's favourites and history are kept — they're
+ * still the same playlist.
+ *
+ * Nothing is deleted up front: live channels and the guide write under a
+ * new generation and sweep the old one only once it has landed, and the
+ * movie/series catalogs write only what changed (see catalog-sync-core.ts), so
+ * the current lists stay on screen until their replacements are ready, and
+ * a stage that fails leaves its previous data in place rather than an empty
+ * tab. Afterwards the small-item cache is cleared except for the category
+ * lists and account info the sync itself just refreshed.
  */
 export async function resetSourceData(source: PlaylistSource): Promise<SyncOutcome> {
   await stopSyncing(source.id);
-  await clearDownloadedData(source.id);
   useSyncStore.getState().forget(source.id);
-  return syncSource(source, { trigger: "manual", force: true });
+  const outcome = await syncSource(source, { trigger: "manual", force: true });
+  const segment = `:${source.id}`;
+  clearCachedContentMatching(
+    (key) => (key.endsWith(segment) || key.includes(`${segment}:`)) && !key.includes("-categories:") && !key.startsWith("playlist-info:"),
+  );
+  return outcome;
 }
 
 /**
- * The playlist is being removed: stop its sync, then delete everything
- * stored for it — downloaded data, sync status, and every profile's
- * favourites and Recently Watched entries for it — so nothing with its id
- * is left behind.
+ * The playlist is being removed: stop its sync and the search indexer, then
+ * delete everything stored for it — downloaded data, its search index, sync
+ * status, and every profile's favourites and Recently Watched entries for
+ * it — so nothing with its id is left behind.
  */
 export async function purgeSourceData(sourceId: string): Promise<void> {
-  await stopSyncing(sourceId);
+  await Promise.all([stopSyncing(sourceId), pauseSearchIndexing()]);
   await clearDownloadedData(sourceId);
+  await deleteSearchIndexForSource(await openCatalogDb(), sourceId);
   removeSourceUserData(sourceId);
   removeSourceKidsRules(sourceId);
+  forgetWorkingLiveStreamFormat(sourceId);
   useSyncStore.getState().forget(sourceId);
 }

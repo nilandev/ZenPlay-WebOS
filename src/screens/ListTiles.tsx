@@ -32,6 +32,7 @@ export function ChannelTile({
   seed,
   isEditing,
   onSelect,
+  width = "24rem",
 }: {
   id: string;
   title: string;
@@ -40,6 +41,8 @@ export function ChannelTile({
   seed: string;
   isEditing: boolean;
   onSelect: () => void;
+  /** Defaults to the My List / Recently Watched tile size. */
+  width?: string;
 }): JSX.Element {
   const isFocused = useIsFocused(id);
   return (
@@ -47,7 +50,7 @@ export function ChannelTile({
       <LiftSurface
         isFocused={isFocused}
         radius="1rem"
-        width="24rem"
+        width={width}
         role="button"
         tabIndex={-1}
         onClick={onSelect}

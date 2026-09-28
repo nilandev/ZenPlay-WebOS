@@ -8,4 +8,5 @@ export * from "./epg/epg-lookup.js";
 export * from "./xtream/xtream-client.js";
 export * from "./xtream/xtream-mappers.js";
 export * from "./input/keymap.js";
+export * from "./text/clean-title.js";
 export * from "./kids/index.js";

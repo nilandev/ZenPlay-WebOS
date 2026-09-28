@@ -22,17 +22,9 @@ import { proxyDownloadFetch } from "../proxy-fetch.js";
  * and no reason to carry XtreamClient's request-dedupe/auth machinery,
  * which belongs to the main thread's screens.
  *
- * Two response shapes come out of one fetch, chosen by the caller
- * (catalog-worker-client.ts): a single `ok`/`data` reply for a caller that
- * wants the whole (typically category-scoped, so already small) list at
- * once, or a `progress`/`done` stream of batches for a full-catalog sync
- * (see catalog-sync.ts) — `response.json()` still parses the entire payload
- * in one call (Chrome 79/webOS has no native incremental JSON parser to
- * stream against), but slicing the *mapped* result into ~2000-record
- * batches before posting means the main thread's IndexedDB writes (see
- * catalog-db.ts's putRecordsBatch) can start, and its structured-clone
- * cost per message stays small, well before the full 129k-entry array would
- * otherwise finish serializing as one postMessage.
+ * Serves screens' category-scoped lists (content-loader.ts) — the full
+ * catalog sync runs in the sync worker instead (catalog-sync-core.ts),
+ * which writes straight into IndexedDB rather than posting rows back.
  */
 
 export interface CatalogWorkerCredentials {
@@ -48,17 +40,11 @@ export interface CatalogWorkerRequest {
   credentials: CatalogWorkerCredentials;
   action: CatalogWorkerAction;
   categoryId?: string;
-  /** When set, the worker posts `progress` batches of this size followed by `done` instead of one `ok`/`data` reply — see syncCatalog in catalog-worker-client.ts. */
-  streamBatchSize?: number;
 }
 
 export type CatalogWorkerResponse =
   | { id: string; ok: true; data: unknown[] }
-  | { id: string; type: "progress"; batch: unknown[] }
-  | { id: string; type: "done"; total: number }
   | { id: string; ok: false; error: string };
-
-const DEFAULT_STREAM_BATCH_SIZE = 2000;
 
 function stripTrailingSlash(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url;
@@ -97,21 +83,8 @@ async function fetchAndMap(request: CatalogWorkerRequest): Promise<unknown[]> {
 self.onmessage = async (event: MessageEvent<CatalogWorkerRequest>) => {
   const request = event.data;
   try {
-    const data = await fetchAndMap(request);
-
-    if (request.streamBatchSize === undefined) {
-      const response: CatalogWorkerResponse = { id: request.id, ok: true, data };
-      self.postMessage(response);
-      return;
-    }
-
-    const batchSize = request.streamBatchSize || DEFAULT_STREAM_BATCH_SIZE;
-    for (let i = 0; i < data.length; i += batchSize) {
-      const progress: CatalogWorkerResponse = { id: request.id, type: "progress", batch: data.slice(i, i + batchSize) };
-      self.postMessage(progress);
-    }
-    const done: CatalogWorkerResponse = { id: request.id, type: "done", total: data.length };
-    self.postMessage(done);
+    const response: CatalogWorkerResponse = { id: request.id, ok: true, data: await fetchAndMap(request) };
+    self.postMessage(response);
   } catch (err) {
     const response: CatalogWorkerResponse = { id: request.id, ok: false, error: err instanceof Error ? err.message : String(err) };
     self.postMessage(response);

@@ -35,8 +35,9 @@ interface NavTile {
   icon: LucideIcon;
 }
 
-/** The Kids profile's sections — Home's destinations without App Settings or Refresh Playlist. */
+/** The Kids profile's sections — Home's destinations without App Settings or Refresh Playlist, with Search first. */
 const NAV_TILES: NavTile[] = [
+  { id: "search", label: "Search", icon: SECTION_ICONS.search },
   { id: "live", label: "Live TV", icon: SECTION_ICONS.live },
   { id: "movies", label: "Movies", icon: SECTION_ICONS.movies },
   { id: "series", label: "Series", icon: SECTION_ICONS.series },

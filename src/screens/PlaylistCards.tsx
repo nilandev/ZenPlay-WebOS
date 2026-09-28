@@ -344,7 +344,7 @@ function PlaylistCard({
   // What's stored and how fresh — or, while this playlist syncs, its progress.
   const syncState = useSourceSyncState(source.id);
   const summary = useSyncSummary(source);
-  const running = describeRunningSync(syncState, source);
+  const running = describeRunningSync(syncState);
   const counts = formatCounts(summary);
 
   const dim = isFocused ? "rgba(235,236,242,0.8)" : "rgba(235,236,242,0.6)";

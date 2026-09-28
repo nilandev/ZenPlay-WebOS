@@ -15,7 +15,7 @@ export const BROWSE_SIDE_PADDING = "3.5rem";
 /** Width of the collapsed category rail (see CategoryRail) — always on screen at the left edge. */
 export const CATEGORY_RAIL_COLLAPSED_WIDTH = "5rem";
 /** Width of the category rail when expanded over the content. */
-export const CATEGORY_RAIL_EXPANDED_WIDTH = "28rem";
+export const CATEGORY_RAIL_EXPANDED_WIDTH = "32rem";
 /** Where browse content starts: after the collapsed rail, plus breathing room. */
 export const BROWSE_CONTENT_LEFT = `calc(${CATEGORY_RAIL_COLLAPSED_WIDTH} + 2rem)`;
 /**

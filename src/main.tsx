@@ -1,7 +1,13 @@
-import { StrictMode, useState } from "react";
+import { StrictMode } from "react";
+// Inter ships with the app: TVs don't have it installed, and their own
+// system font is narrower with shorter lowercase letters, so the UI read
+// smaller there than in a browser that happens to have Inter. Weight axis
+// only; every subset is bundled, but a device only loads the ranges it uses.
+import "@fontsource-variable/inter/wght.css";
 import { createRoot } from "react-dom/client";
-import { ShimmerStyles, SplashScreen } from "@ui";
+import { ShimmerStyles } from "@ui";
 import { App } from "./App.js";
+import { startBootSplashTimeout } from "./boot-splash.js";
 import { purgeLegacyCacheEntries } from "./content-cache.js";
 
 // Background housekeeping only — deletes pre-table cache blobs by key (see
@@ -9,23 +15,15 @@ import { purgeLegacyCacheEntries } from "./content-cache.js";
 // from IndexedDB lazily, per key, when a screen first asks for one.
 void purgeLegacyCacheEntries();
 
-/**
- * Root component: renders the real App immediately (never blocked on the
- * splash — see SplashScreen's doc comment for why it's not tied to any
- * data fetch) with the animated splash drawn on top as a plain overlay,
- * unmounting itself once its hold+fade finishes. webOS's own static
- * splashBackground (see webos-meta/appinfo.json) covers the OS-level gap
- * before this script even runs; this bridges the moment after that, once
- * React has taken over.
- */
-function Root(): JSX.Element {
-  const [isSplashing, setIsSplashing] = useState(true);
+// The launch splash index.html has shown since the page's first paint stays
+// until App has a real screen up (see boot-splash.ts) — or this runs out.
+startBootSplashTimeout();
 
+function Root(): JSX.Element {
   return (
     <>
       <ShimmerStyles />
       <App />
-      {isSplashing && <SplashScreen onExited={() => setIsSplashing(false)} />}
     </>
   );
 }

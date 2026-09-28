@@ -27,6 +27,14 @@ export const NEXT_EPISODE_WINDOW_SECONDS = 120;
 
 const audioOptionId = (id: number) => `player-audio:${id}`;
 const subtitleOptionId = (id: number | null) => `player-subtitle:${id ?? "off"}`;
+export const streamFormatOptionId = (id: string) => `player-stream-format:${id}`;
+
+/** The stream-format choices the menu offers (live channels that come in more than one format). */
+export interface StreamFormatChoice {
+  options: Array<{ id: string; label: string }>;
+  activeId: string;
+  onSelect: (id: string) => void;
+}
 
 export interface PlaybackControlsProps {
   title: string;
@@ -67,6 +75,8 @@ export interface PlaybackControlsProps {
   onSelectAudioTrack: (id: number) => void;
   onSelectSubtitleTrack: (id: number | null) => void;
   onNextEpisode: () => void;
+  /** Adds a Stream Format column to the Audio & Subtitles panel — the manual way to switch a live channel between HLS and MPEG-TS. */
+  streamFormat?: StreamFormatChoice;
 }
 
 export function formatPlaybackTime(totalSeconds: number): string {
@@ -368,9 +378,10 @@ function SeekBadge({ deltaSeconds }: { deltaSeconds: number }): JSX.Element {
 }
 
 /**
- * Netflix-style two-column Audio | Subtitles panel on the right. Its rows
- * are a focus scope of their own: Up/Down within a column, Left/Right
- * across at the same row, OK picks, Back (handled by PlayerScreen) closes.
+ * Netflix-style Audio | Subtitles panel on the right, plus a Stream Format
+ * column for live channels that offer one. Its rows are a focus scope of
+ * their own: Up/Down within a column, Left/Right across at the same row,
+ * OK picks, Back (handled by PlayerScreen) closes.
  */
 function AudioSubtitlesPanel({
   audioTracks,
@@ -379,6 +390,7 @@ function AudioSubtitlesPanel({
   activeSubtitleTrackId,
   onSelectAudioTrack,
   onSelectSubtitleTrack,
+  streamFormat,
 }: PlaybackControlsProps): JSX.Element {
   const setGraph = useFocusStore((state) => state.setGraph);
   const clearGraph = useFocusStore((state) => state.clearGraph);
@@ -387,28 +399,32 @@ function AudioSubtitlesPanel({
   // The engine doesn't report its starting audio track; until one is picked, the stream's default (first) track is the current one.
   const audioIds = audioTracks.map((track) => audioOptionId(track.id));
   const subtitleIds = [subtitleOptionId(null), ...subtitleTracks.map((track) => subtitleOptionId(track.id))];
+  const formatIds = (streamFormat?.options ?? []).map((option) => streamFormatOptionId(option.id));
 
-  const latestRef = useRef({ audioTracks, subtitleTracks, onSelectAudioTrack, onSelectSubtitleTrack });
-  latestRef.current = { audioTracks, subtitleTracks, onSelectAudioTrack, onSelectSubtitleTrack };
-  const shapeKey = `${audioIds.join(",")}|${subtitleIds.join(",")}`;
+  const latestRef = useRef({ audioTracks, subtitleTracks, onSelectAudioTrack, onSelectSubtitleTrack, streamFormat });
+  latestRef.current = { audioTracks, subtitleTracks, onSelectAudioTrack, onSelectSubtitleTrack, streamFormat };
+  const shapeKey = `${audioIds.join(",")}|${subtitleIds.join(",")}|${formatIds.join(",")}`;
 
   useEffect(() => {
-    const column = (ids: string[], other: string[], side: "left" | "right"): FocusNode[] =>
+    const select = (id: string) => {
+      const current = latestRef.current;
+      const audio = current.audioTracks.find((track) => audioOptionId(track.id) === id);
+      const format = current.streamFormat?.options.find((option) => streamFormatOptionId(option.id) === id);
+      if (audio) current.onSelectAudioTrack(audio.id);
+      else if (format) current.streamFormat?.onSelect(format.id);
+      else current.onSelectSubtitleTrack(current.subtitleTracks.find((track) => subtitleOptionId(track.id) === id)?.id ?? null);
+    };
+    // Left/Right go to the neighbouring column at the same row (or its last row).
+    const columns = [audioIds, subtitleIds, formatIds].filter((ids) => ids.length > 0);
+    const rowIn = (ids: string[] | undefined, index: number) => ids?.[Math.min(index, ids.length - 1)];
+    const nodes: FocusNode[] = columns.flatMap((ids, c) =>
       ids.map((id, index) => ({
         id,
-        neighbors: {
-          up: ids[index - 1],
-          down: ids[index + 1],
-          [side]: other.length > 0 ? other[Math.min(index, other.length - 1)] : undefined,
-        },
-        onSelect: () => {
-          const current = latestRef.current;
-          const audio = current.audioTracks.find((track) => audioOptionId(track.id) === id);
-          if (audio) current.onSelectAudioTrack(audio.id);
-          else current.onSelectSubtitleTrack(current.subtitleTracks.find((track) => subtitleOptionId(track.id) === id)?.id ?? null);
-        },
-      }));
-    setGraph(MENU_SCOPE, [...column(audioIds, subtitleIds, "right"), ...column(subtitleIds, audioIds, "left")]);
+        neighbors: { up: ids[index - 1], down: ids[index + 1], left: rowIn(columns[c - 1], index), right: rowIn(columns[c + 1], index) },
+        onSelect: () => select(id),
+      })),
+    );
+    setGraph(MENU_SCOPE, nodes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shapeKey, setGraph]);
 
@@ -430,7 +446,7 @@ function AudioSubtitlesPanel({
           top: 0,
           right: 0,
           bottom: 0,
-          width: "52rem",
+          width: streamFormat ? "72rem" : "52rem",
           boxSizing: "border-box",
           padding: `3.5rem ${BROWSE_SIDE_PADDING} 3rem 3rem`,
           display: "flex",
@@ -440,7 +456,7 @@ function AudioSubtitlesPanel({
           zIndex: 60,
         }}
       >
-        <h2 style={{ fontSize: "2.25rem", fontWeight: 800, color: "#fff", margin: "0 0 0.5rem" }}>Audio &amp; Subtitles</h2>
+        <h2 style={{ fontSize: "2.25rem", fontWeight: 800, color: "#fff", margin: "0 0 0.5rem" }}>{streamFormat ? "Audio, Subtitles & Stream" : "Audio & Subtitles"}</h2>
         <p style={{ fontSize: "1.125rem", color: "var(--text-dim)", margin: "0 0 2.5rem" }}>Press Back to return to the video</p>
         <div style={{ display: "flex", gap: "2.5rem", flex: 1, minHeight: 0 }}>
           <MenuColumn title="Audio">
@@ -470,6 +486,19 @@ function AudioSubtitlesPanel({
               />
             ))}
           </MenuColumn>
+          {streamFormat && (
+            <MenuColumn title="Stream Format">
+              {streamFormat.options.map((option) => (
+                <MenuRow
+                  key={option.id}
+                  id={streamFormatOptionId(option.id)}
+                  label={option.label}
+                  isActive={option.id === streamFormat.activeId}
+                  onClick={() => streamFormat.onSelect(option.id)}
+                />
+              ))}
+            </MenuColumn>
+          )}
         </div>
       </div>
     </FocusScrollManagedContext.Provider>

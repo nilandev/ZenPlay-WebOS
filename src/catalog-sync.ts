@@ -1,57 +1,46 @@
-import { KIDS_RULES_VERSION, XtreamClient, type Channel, type PlaylistSource, type SeriesInfo } from "@core";
-import {
-  catalogSyncMetaKey,
-  deleteSourceCatalog,
-  deleteStaleGeneration,
-  getSyncMeta,
-  openCatalogDb,
-  putRecordsBatch,
-  putSyncMeta,
-  type CatalogKind,
-} from "./core/storage/catalog-db.js";
+import { KIDS_RULES_VERSION, XtreamClient, type PlaylistSource } from "@core";
+import { deleteSourceCatalog, getSyncMeta, openCatalogDb, catalogSyncMetaKey, type CatalogKind } from "./core/storage/catalog-db.js";
 import { bumpCacheVersion } from "./cache-invalidation-store.js";
-import { channelToRecord, seriesToRecord } from "./catalog-records.js";
+import type { CatalogSyncResult } from "./catalog-sync-core.js";
 import { clearCachedContentMatching } from "./content-cache.js";
 import { proxyFetch } from "./proxy-fetch.js";
-import { createCatalogWorkerClient } from "./workers/catalog-worker-client.js";
+import { loadSettings } from "./settings-store.js";
+import { runSyncJobOffMainThread } from "./workers/sync-worker-client.js";
 
 export type { CatalogKind };
 
 /**
- * Background full-catalog sync: fetches the *entire* VOD/series catalog for
- * a source via the catalog worker's streaming syncCatalog (see
- * catalog-worker-client.ts/catalog-fetch-worker.ts), writing it into the
- * local IndexedDB table (catalog-db.ts) in batches as it arrives, instead of
- * content-cache.ts's old approach of holding one big array in memory/
- * sessionStorage/IndexedDB-as-a-blob.
+ * Background full-catalog sync for Xtream movies and series. The download,
+ * parse and writes run in the sync worker (catalog-sync-core.ts, which
+ * only writes what changed since the last sync); this is the main-thread
+ * side — checking the login first, deciding when a sync is due, deduping,
+ * and telling mounted screens (use-catalog-page.ts) when the table changed.
  *
- * This is what lets VodScreen/SeriesScreen (see use-catalog-page.ts) read
- * paginated, indexed slices of a source's catalog without ever loading the
- * whole thing themselves — the full fetch still happens exactly once
- * per-source per sync interval, just here, off the screen's critical path.
- *
- * Only Xtream sources are synced here — an M3U playlist's movies arrive in
- * the same file as its live channels, so live-sync-core.ts writes them into
- * this same table from that one download. When to sync is decided by
- * sync/sync-manager.ts, never by screens.
+ * VodScreen/SeriesScreen read paginated, indexed slices of the table and
+ * never load the whole catalog themselves. An M3U playlist's movies arrive
+ * in the same file as its live channels, so live-sync-core.ts writes them.
+ * When to sync is decided by sync/sync-manager.ts, never by screens — except
+ * refreshCatalogCategory, a screen's "Refresh" on the category it shows.
  */
 
-const SYNC_STALE_AFTER_MS = 24 * 60 * 60 * 1000; // once/day, per the request's "periodically once every day" ask — coarser than content-cache.ts's hours-scale CacheKind thresholds, since this is the full-table resync, not the screen-level blob cache.
+const HOUR_MS = 60 * 60 * 1000;
 
-const catalogWorker = createCatalogWorkerClient();
+/** A catalog is refetched once it's older than this — the "Movies & Series Sync Interval" setting. */
+export function catalogStaleAfterMs(): number {
+  return loadSettings().catalogRefreshHours * HOUR_MS;
+}
 
-/** One in-flight sync per source+kind, so overlapping requests never write the same table twice at once. */
-const inFlightSyncs = new Map<string, Promise<void>>();
+/** One in-flight sync per source+kind (and per refreshed category), so overlapping requests never write the same rows twice at once. */
+const inFlightSyncs = new Map<string, Promise<unknown>>();
+
+/** When each category was last refreshed on its own this session — for a screen's "Updated …" line. */
+const categoryRefreshedAt = new Map<string, number>();
 
 const syncMetaKey = catalogSyncMetaKey;
 
 /** Cache-invalidation key screens subscribe to (via use-catalog-page.ts) to notice a completed sync without remounting — same mechanism content-cache.ts's revalidation/prefetch/IDB-warm-up already use (see cache-invalidation-store.ts). */
 export function catalogVersionKey(sourceId: string, kind: CatalogKind): string {
   return `local-catalog:${sourceId}:${kind}`;
-}
-
-function actionForKind(kind: CatalogKind): "get_vod_streams" | "get_series" {
-  return kind === "vod" ? "get_vod_streams" : "get_series";
 }
 
 export async function isCatalogSyncDue(sourceId: string, kind: CatalogKind): Promise<boolean> {
@@ -61,7 +50,7 @@ export async function isCatalogSyncDue(sourceId: string, kind: CatalogKind): Pro
     if (!meta) return true;
     // Tagged under older Kids rules: re-sync so the tag index matches the bundled rules.
     if ((meta.rulesVersion ?? 0) < KIDS_RULES_VERSION) return true;
-    return Date.now() - meta.lastSyncedAt > SYNC_STALE_AFTER_MS;
+    return Date.now() - meta.lastSyncedAt > catalogStaleAfterMs();
   } catch {
     // IndexedDB unavailable — nothing to sync into, so there's no sync to be "due".
     return false;
@@ -79,66 +68,74 @@ export async function hasCompletedSync(sourceId: string, kind: CatalogKind): Pro
   }
 }
 
-/**
- * Runs one full sync for a source+kind: authenticates on the main thread
- * first (same reasoning as content-loader.ts's loadChannelsByKind — a bad
- * login should surface as XtreamAuthError rather than a generic worker
- * failure), then streams the catalog worker's batches straight into
- * IndexedDB tagged with a new generation, and only once every batch has
- * landed does it flip sync_meta to that generation and delete the old one —
- * see catalog-db.ts's deleteStaleGeneration doc comment. A refresh is a
- * full replace (dropped titles disappear); during it readers may briefly
- * see old and new rows side by side, but never a title missing, and a sync
- * that dies partway leaves the previous generation fully readable.
- */
-async function runSync(source: PlaylistSource, kind: CatalogKind, onProgress?: (written: number) => void): Promise<void> {
-  if (source.kind !== "xtream") return;
+/** When the stored catalog was last fully synced, or undefined before its first sync. */
+export async function getCatalogSyncedAt(sourceId: string, kind: CatalogKind): Promise<number | undefined> {
+  try {
+    return (await getSyncMeta(await openCatalogDb(), syncMetaKey(sourceId, kind)))?.lastSyncedAt;
+  } catch {
+    return undefined;
+  }
+}
 
-  const client = new XtreamClient(source, proxyFetch);
-  await client.authenticate();
+/** When a category was last refreshed on its own this session (see refreshCatalogCategory). */
+export function getCategoryRefreshedAt(sourceId: string, kind: CatalogKind, categoryId: string): number | undefined {
+  return categoryRefreshedAt.get(`${sourceId}:${kind}:${categoryId}`);
+}
 
-  const catalogDb = await openCatalogDb();
-  const key = syncMetaKey(source.id, kind);
-  const previousMeta = await getSyncMeta(catalogDb, key);
-  const generation = (previousMeta?.generation ?? 0) + 1;
-
-  let recordCount = 0;
-  const writeQueue: Promise<void>[] = [];
-
-  const { total } = await catalogWorker.syncCatalog({ credentials: source, action: actionForKind(kind) }, (batch) => {
-    const records =
-      kind === "vod"
-        ? (batch as Channel[]).map((item) => channelToRecord(source.id, generation, item))
-        : (batch as Array<Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre">>).map((item) => seriesToRecord(source.id, generation, item));
-    recordCount += records.length;
-    onProgress?.(recordCount);
-    // Batches are written as they arrive rather than awaited serially here —
-    // queued and drained together below — so a slow IndexedDB write never
-    // backs up the worker's postMessage stream.
-    writeQueue.push(putRecordsBatch(catalogDb, kind, records));
-  });
-
-  await Promise.all(writeQueue);
-  await putSyncMeta(catalogDb, { key, lastSyncedAt: Date.now(), recordCount: total || recordCount, generation, rulesVersion: KIDS_RULES_VERSION });
-  if (previousMeta) await deleteStaleGeneration(catalogDb, kind, source.id, generation);
-  // Lets an already-mounted VodScreen/SeriesScreen (via use-catalog-page.ts)
-  // notice this completed sync and switch from its fallback direct-fetch
-  // path to the local table, without needing to remount — same pattern
-  // useCachedContent uses for its own cache keys.
-  bumpCacheVersion(catalogVersionKey(source.id, kind));
-  // The per-category lists fetched while the table was being built (and any
-  // full-list blob from before the table existed) are superseded now — free them.
-  const blobKey = kind === "vod" ? `vod:${source.id}` : `series-list:${source.id}`;
+/** Lets mounted screens re-read the table (see use-catalog-page.ts) and frees the per-category lists fetched before it existed. */
+function afterCatalogChange(sourceId: string, kind: CatalogKind): void {
+  bumpCacheVersion(catalogVersionKey(sourceId, kind));
+  const blobKey = kind === "vod" ? `vod:${sourceId}` : `series-list:${sourceId}`;
   clearCachedContentMatching((key) => key === blobKey || key.startsWith(`${blobKey}:cat:`));
 }
 
+/**
+ * Runs one full sync for a source+kind: checks the login on the main
+ * thread first (cheap, deduped by XtreamClient, and a bad password rejects
+ * with XtreamAuthError rather than a generic worker failure), then hands the
+ * download and writes to the sync worker.
+ */
+async function runSync(source: PlaylistSource, kind: CatalogKind, onProgress?: (processed: number) => void): Promise<CatalogSyncResult | undefined> {
+  if (source.kind !== "xtream") return undefined;
+  await new XtreamClient(source, proxyFetch).authenticate();
+  const result = await runSyncJobOffMainThread("catalog", { source, kind }, onProgress);
+  afterCatalogChange(source.id, kind);
+  return result;
+}
+
 /** Fetches and stores the full catalog for one source+kind, deduping overlapping calls for the same source+kind (see inFlightSyncs' doc comment). Safe to call even when a sync isn't due — callers that only want to sync when due should check isCatalogSyncDue first. */
-export function syncCatalog(source: PlaylistSource, kind: CatalogKind, options: { onProgress?: (written: number) => void } = {}): Promise<void> {
+export function syncCatalog(
+  source: PlaylistSource,
+  kind: CatalogKind,
+  options: { onProgress?: (processed: number) => void } = {},
+): Promise<CatalogSyncResult | undefined> {
   const key = `${source.id}:${kind}`;
-  const existing = inFlightSyncs.get(key);
+  const existing = inFlightSyncs.get(key) as Promise<CatalogSyncResult | undefined> | undefined;
   if (existing) return existing;
 
   const promise = runSync(source, kind, options.onProgress).finally(() => inFlightSyncs.delete(key));
+  inFlightSyncs.set(key, promise);
+  return promise;
+}
+
+/**
+ * Re-downloads one category of an already-synced Xtream catalog (a
+ * screen's "Refresh") and writes only what changed in it. Waits for a
+ * full sync of the same catalog that's already running, then goes ahead.
+ */
+export function refreshCatalogCategory(source: PlaylistSource, kind: CatalogKind, categoryId: string): Promise<CatalogSyncResult> {
+  const key = `${source.id}:${kind}:${categoryId}`;
+  const existing = inFlightSyncs.get(key) as Promise<CatalogSyncResult> | undefined;
+  if (existing) return existing;
+
+  const promise = (async () => {
+    await inFlightSyncs.get(`${source.id}:${kind}`)?.catch(() => undefined);
+    if (source.kind === "xtream") await new XtreamClient(source, proxyFetch).authenticate();
+    const result = await runSyncJobOffMainThread("catalog", { source, kind, categoryId });
+    categoryRefreshedAt.set(key, Date.now());
+    afterCatalogChange(source.id, kind);
+    return result;
+  })().finally(() => inFlightSyncs.delete(key));
   inFlightSyncs.set(key, promise);
   return promise;
 }
@@ -158,4 +155,5 @@ export async function clearCatalogForSource(sourceId: string): Promise<void> {
 /** Test-only escape hatch: clears in-flight sync tracking between tests, mirroring xtream-client.ts's __resetRequestDedupeCacheForTests. */
 export function __resetCatalogSyncForTests(): void {
   inFlightSyncs.clear();
+  categoryRefreshedAt.clear();
 }

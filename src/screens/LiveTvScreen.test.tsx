@@ -103,15 +103,15 @@ describe("LiveTvScreen", () => {
     localStorage.clear();
     __resetLiveCategoryMemoryForTests();
     __resetNowNextCacheForTests();
-    for (const scope of ["chrome:category-rail", "content:channel-sidebar", "content:live-favorite"]) useFocusStore.getState().clearGraph(scope);
+    for (const scope of ["chrome:category-rail", "content:channel-sidebar", "content:live-favorite", "chrome:live-search"]) useFocusStore.getState().clearGraph(scope);
   });
 
   afterEach(() => {
-    for (const scope of ["chrome:category-rail", "content:channel-sidebar", "content:live-favorite"]) useFocusStore.getState().clearGraph(scope);
+    for (const scope of ["chrome:category-rail", "content:channel-sidebar", "content:live-favorite", "chrome:live-search"]) useFocusStore.getState().clearGraph(scope);
   });
 
   it("lists every channel with its number under All Channels, with the provider's categories in the rail", async () => {
-    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
     await flush();
 
     expect(screen.getByRole("button", { name: "News" })).toBeDefined(); // rail rows
@@ -122,8 +122,23 @@ describe("LiveTvScreen", () => {
     expect(useFocusStore.getState().focusedId).toBe("ch-1");
   });
 
+  it("has a Search button above the channel list — Up from the first channel reaches it, and it opens Search", async () => {
+    const onOpenSearch = vi.fn();
+    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} onOpenSearch={onOpenSearch} />);
+    await flush();
+    expect(useFocusStore.getState().focusedId).toBe("ch-1");
+
+    press("ArrowUp");
+    expect(useFocusStore.getState().focusedId).toBe("live-search-button");
+    press("ArrowDown");
+    expect(useFocusStore.getState().focusedId).toBe("ch-1");
+    press("ArrowUp");
+    press("Enter");
+    expect(onOpenSearch).toHaveBeenCalledTimes(1);
+  });
+
   it("selecting a rail category filters the channel list and moves focus into it", async () => {
-    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
     await flush();
 
     await act(async () => {
@@ -137,7 +152,7 @@ describe("LiveTvScreen", () => {
 
   it("OK on a channel plays it full screen in one press", async () => {
     const onPlay = vi.fn();
-    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={onPlay} />);
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={onPlay} />);
     await flush();
 
     press("ArrowDown");
@@ -154,14 +169,14 @@ describe("LiveTvScreen", () => {
   });
 
   it("marks the preview On Now (not LIVE — the programme may be recorded)", async () => {
-    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
     await flush();
     expect(screen.getByText("On Now")).toBeDefined();
     expect(screen.queryByText(/LIVE/)).toBeNull();
   });
 
   it("shows what's on now and next for the previewed channel", async () => {
-    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
     expect(await screen.findByText("Morning Headlines")).toBeDefined();
     expect(screen.getByText("Business Hour")).toBeDefined();
     expect(screen.getByText("NOW")).toBeDefined();
@@ -170,7 +185,7 @@ describe("LiveTvScreen", () => {
 
   it("Back goes channel list → category rail → leaves Live TV", async () => {
     const onBack = vi.fn();
-    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={onBack} onPlay={() => {}} />);
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={onBack} onPlay={() => {}} />);
     await flush();
 
     press("Escape");
@@ -183,7 +198,7 @@ describe("LiveTvScreen", () => {
   it("lists favourite channels under the My List rail entry, with its heart icon", async () => {
     const { toggleFavorite } = await import("../profile-store.js");
     toggleFavorite(profile.id, source.id, "live", "ch-3");
-    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
     await flush();
 
     const myList = screen.getByRole("button", { name: "My List 1" });
@@ -199,7 +214,7 @@ describe("LiveTvScreen", () => {
   });
 
   it("Right from a channel reaches the favourite button, which adds and removes the channel", async () => {
-    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
     await flush();
 
     press("ArrowRight");
@@ -219,7 +234,7 @@ describe("LiveTvScreen", () => {
 
   it("favourites the channel just left even if the preview hadn't caught up yet, and Back returns to it", async () => {
     const { loadFavorites } = await import("../profile-store.js");
-    render(<LiveTvScreen source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
     await flush();
 
     press("ArrowDown"); // highlight ch-2; the preview is still on ch-1 (debounced)

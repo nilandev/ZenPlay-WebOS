@@ -4,8 +4,9 @@ import { runSyncJob } from "./sync-jobs.js";
 import type { SyncWorkerRequest, SyncWorkerResponse } from "./sync-worker-protocol.js";
 
 /**
- * Runs the heavy sync jobs — the XMLTV guide (epg-sync-core.ts) and the live
- * channel list (live-sync-core.ts) — entirely off the main thread: download,
+ * Runs the heavy sync jobs — the XMLTV guide (epg-sync-core.ts), the live
+ * channel list (live-sync-core.ts) and the movie/series catalogs
+ * (catalog-sync-core.ts) — entirely off the main thread: download,
  * parse, map and the IndexedDB writes. On webOS's WebKit, parsing a 50MB+
  * guide or a 20k-channel JSON list takes seconds of CPU; on the main thread
  * that froze the remote (see docs/sync-architecture-plan.md §1.1/§1.2).

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { act } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { URLImage } from "./URLImage.js";
 
@@ -35,6 +36,51 @@ describe("URLImage", () => {
 
     expect(img.style.opacity).toBe("0");
     expect(document.querySelector("svg")).toBeTruthy();
+  });
+
+  it("shows an image the browser already has cached as soon as it mounts, without waiting for load", () => {
+    const complete = vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
+    const width = vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(300);
+    try {
+      render(<URLImage src="http://example.com/cached.jpg" alt="Cached" />);
+      expect((screen.getByRole("img", { hidden: true }) as HTMLImageElement).style.opacity).toBe("1");
+    } finally {
+      complete.mockRestore();
+      width.mockRestore();
+    }
+  });
+
+  it("retries a failed image a couple of times before settling on the placeholder", () => {
+    vi.useFakeTimers();
+    try {
+      render(<URLImage src="http://example.com/flaky.jpg" alt="Flaky" />);
+      const first = screen.getByRole("img", { hidden: true }) as HTMLImageElement;
+      fireEvent.error(first);
+      act(() => vi.advanceTimersByTime(3000));
+      const second = screen.getByRole("img", { hidden: true }) as HTMLImageElement;
+      expect(second).not.toBe(first); // a fresh <img>, so the browser asks again
+      fireEvent.load(second);
+      expect(second.style.opacity).toBe("1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up after its retries", () => {
+    vi.useFakeTimers();
+    try {
+      render(<URLImage src="http://example.com/gone.jpg" alt="Gone" />);
+      for (const wait of [3000, 6000]) {
+        fireEvent.error(screen.getByRole("img", { hidden: true }));
+        act(() => vi.advanceTimersByTime(wait));
+      }
+      const last = screen.getByRole("img", { hidden: true });
+      fireEvent.error(last);
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(screen.getByRole("img", { hidden: true })).toBe(last);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("resets to the loading/placeholder state when src changes", () => {

@@ -68,16 +68,17 @@ async function resetScreenState(): Promise<void> {
 describe("SeriesScreen while the series table is still being built", () => {
   beforeEach(resetScreenState);
 
-  it("asks the sync manager for the series table and shows its progress — never downloading the catalog itself", async () => {
+  it("asks the sync manager for the series table and says it's on its way, without a row count — never downloading the catalog itself", async () => {
     const { loadSeriesList } = await import("../content-loader.js");
     const { syncSource } = await import("../sync/sync-manager.js");
 
-    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await vi.waitFor(() => expect(syncSource).toHaveBeenCalledWith(source, { trigger: "first-run", stages: ["series"] }));
     expect(await screen.findByText("Getting your series ready…")).not.toBeNull();
 
     act(() => useSyncStore.getState().setStage(source.id, "series", { status: "running", done: 800 }));
-    expect(screen.getByText("800 so far")).not.toBeNull();
+    expect(screen.queryByText(/800/)).toBeNull();
+    expect(screen.getByText("Getting your series ready…")).not.toBeNull();
     expect(loadSeriesList).not.toHaveBeenCalled();
   });
 
@@ -87,7 +88,7 @@ describe("SeriesScreen while the series table is still being built", () => {
       Promise.resolve(categoryId === "cat-1" ? [{ id: "s1", name: "Drama Show", groupTitle: "cat-1" }] : []),
     );
 
-    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: "Drama" })); // the category rail row
 
     expect(await screen.findByText("Drama Show")).not.toBeNull();
@@ -100,7 +101,7 @@ describe("SeriesScreen while the series table is still being built", () => {
     const { syncSource } = await import("../sync/sync-manager.js");
     const m3u: PlaylistSource = { kind: "m3u-url", id: "src-m3u", name: "M3U", url: "http://example.com/list.m3u" };
 
-    render(<SeriesScreen source={m3u} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    render(<SeriesScreen onOpenSearch={() => {}} source={m3u} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     expect(await screen.findByText("This playlist has no series.")).not.toBeNull();
     expect(syncSource).not.toHaveBeenCalled();
   });
@@ -119,37 +120,28 @@ describe("SeriesScreen with a synced local catalog", () => {
     const { loadSeriesList } = await import("../content-loader.js");
 
     render(
-      <SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />,
+      <SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />,
     );
 
     expect(await screen.findByText("Drama Show")).not.toBeNull();
     expect(loadSeriesList).not.toHaveBeenCalled();
   });
 
-  it("search reads a prefix match from the local table", async () => {
-    const catalogDb = await openCatalogDb();
-    await putRecordsBatch(catalogDb, "series", [
-      { id: `${source.id}:1`, sourceId: source.id, streamId: "1", name: "Breaking News", nameLower: "breaking news", generation: 1 },
-      { id: `${source.id}:2`, sourceId: source.id, streamId: "2", name: "Comedy Hour", nameLower: "comedy hour", generation: 1 },
-    ]);
-    await putSyncMeta(catalogDb, { key: `series:${source.id}`, lastSyncedAt: Date.now(), recordCount: 2, generation: 1 });
+  it("the header's Search button opens the Search screen instead of filtering the page", async () => {
+    await seedSeries([{ id: "1", name: "Breaking News", groupTitle: "cat-1" }]);
+    const onOpenSearch = vi.fn();
+    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} onOpenSearch={onOpenSearch} />);
 
-    render(
-      <SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />,
-    );
-    const searchInput = await screen.findByPlaceholderText("Search series");
-
-    fireEvent.change(searchInput, { target: { value: "break" } });
-    await flush();
-
-    expect(await screen.findByText("Breaking News")).not.toBeNull();
-    expect(screen.queryByText("Comedy Hour")).toBeNull();
+    await screen.findByText("Breaking News");
+    expect(screen.queryByRole("textbox")).toBeNull(); // no search field in the header any more
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(onOpenSearch).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("SeriesScreen at catalog scale", () => {
-  // Zero-padded ids: the table returns rows in key order, and "s10" would otherwise sort before "s2".
-  const manySeries = Array.from({ length: 500 }, (_, i) => ({ id: `s${String(i).padStart(3, "0")}`, name: i % 2 ? `Drama Show ${i}` : `Comedy Hour ${i}`, groupTitle: "cat-1" }));
+  // Ids descend so series 0 is the newest, which pages list first.
+  const manySeries = Array.from({ length: 500 }, (_, i) => ({ id: `s${999 - i}`, name: i % 2 ? `Drama Show ${i}` : `Comedy Hour ${i}`, groupTitle: "cat-1" }));
 
   beforeEach(async () => {
     await resetScreenState();
@@ -161,13 +153,13 @@ describe("SeriesScreen at catalog scale", () => {
     Array.from(container.querySelectorAll('[role="button"]')).filter((el) => !el.textContent?.startsWith("See all")).length;
 
   it("caps each All Categories shelf at 20 cards instead of mounting the whole catalog", async () => {
-    const { container } = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    const { container } = render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Comedy Hour 0");
     expect(cardCount(container)).toBe(20);
   });
 
   it("renders a picked category a page (60) at a time", async () => {
-    const { container } = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    const { container } = render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Comedy Hour 0");
 
     fireEvent.click(await screen.findByRole("button", { name: "Drama" })); // the category rail row (categories may land after the list)
@@ -175,38 +167,22 @@ describe("SeriesScreen at catalog scale", () => {
   });
 
   it("keeps focus where it is when the next page of a category loads", async () => {
-    const { container } = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    const { container } = render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Comedy Hour 0");
     fireEvent.click(await screen.findByRole("button", { name: "Drama" }));
     await vi.waitFor(() => expect(cardCount(container)).toBe(60));
 
     // The last row of the first page is the "load more" trigger zone.
-    act(() => useFocusStore.getState().focus("series-grid:s057"));
+    act(() => useFocusStore.getState().focus("series-grid:s942"));
     await vi.waitFor(() => expect(cardCount(container)).toBe(120));
-    expect(useFocusStore.getState().focusedId).toBe("series-grid:s057");
+    expect(useFocusStore.getState().focusedId).toBe("series-grid:s942");
   });
 
-  it("debounces search and ignores single-character queries", async () => {
-    const { container } = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
-    await screen.findByText("Comedy Hour 0");
-    const input = container.querySelector("input") as HTMLInputElement;
-    const shelfCount = () => container.querySelectorAll("section").length;
-
-    fireEvent.change(input, { target: { value: "d" } });
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(shelfCount()).toBe(1); // one letter: still browsing shelves, no search ran
-
-    fireEvent.change(input, { target: { value: "dr" } });
-    expect(shelfCount()).toBe(1); // not yet — waits for typing to pause
-    await vi.waitFor(() => expect(shelfCount()).toBe(0));
-    expect(await screen.findByText("Drama Show 1")).toBeTruthy(); // read from the table's name index
-    expect(screen.queryByText("Comedy Hour 0")).toBeNull();
-    await vi.waitFor(() => expect(cardCount(container)).toBe(60)); // 250 matches, first page only
-  });
 });
 
 describe("SeriesScreen category rail", () => {
-  const manySeries = Array.from({ length: 100 }, (_, i) => ({ id: `s${i}`, name: `Drama Show ${i}`, groupTitle: "cat-1" }));
+  // Ids descend so show 0 is the newest, which pages list first.
+  const manySeries = Array.from({ length: 100 }, (_, i) => ({ id: `s${999 - i}`, name: `Drama Show ${i}`, groupTitle: "cat-1" }));
 
   beforeEach(async () => {
     await resetScreenState();
@@ -224,21 +200,21 @@ describe("SeriesScreen category rail", () => {
     Array.from(container.querySelectorAll('[role="button"]')).filter((el) => !el.textContent?.startsWith("See all")).length;
 
   it("opens with focus on the content, not the rail", async () => {
-    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Drama Show 0");
-    await vi.waitFor(() => expect(focusedId()).toBe("s0"));
+    await vi.waitFor(() => expect(focusedId()).toBe("s999"));
   });
 
   it("Left from the first column opens the rail; Back goes content → rail → leaves the screen", async () => {
     const onBack = vi.fn();
-    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={onBack} />);
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={onBack} />);
     await screen.findByText("Drama Show 0");
-    await vi.waitFor(() => expect(focusedId()).toBe("s0"));
+    await vi.waitFor(() => expect(focusedId()).toBe("s999"));
 
     press("ArrowLeft");
     expect(focusedId()).toBe("rail:__all__");
     press("ArrowRight");
-    expect(focusedId()).toBe("s0");
+    expect(focusedId()).toBe("s999");
 
     press("Escape");
     expect(focusedId()).toBe("rail:__all__");
@@ -247,8 +223,52 @@ describe("SeriesScreen category rail", () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Keeps a readwrite transaction open on the series table, as a sync writing
+   * batches does — reads queue behind it until release() is called.
+   */
+  async function holdSeriesTableBusy(): Promise<() => void> {
+    const catalogDb = await openCatalogDb();
+    let released = false;
+    const tx = catalogDb.db.transaction("series", "readwrite");
+    const store = tx.objectStore("series");
+    const spin = () => {
+      if (!released) store.count().onsuccess = spin;
+    };
+    spin();
+    return () => {
+      released = true;
+    };
+  }
+
+  it("while a sync keeps the table busy, the rail and Back still work instead of a dead full-screen loader", async () => {
+    const release = await holdSeriesTableBusy();
+    const onBack = vi.fn();
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={onBack} />);
+
+    await vi.waitFor(() => expect(focusedId()).toBe("series-search-button"));
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    expect(screen.queryByText("Drama Show 0")).toBeNull();
+
+    press("ArrowLeft");
+    expect(focusedId()).toBe("rail:__all__");
+    press("Escape");
+    expect(onBack).toHaveBeenCalledTimes(1);
+    release();
+  });
+
+  it("hands focus to the content once it loads, if the user hasn't moved meanwhile", async () => {
+    const release = await holdSeriesTableBusy();
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    await vi.waitFor(() => expect(focusedId()).toBe("series-search-button"));
+
+    release();
+    await screen.findByText("Drama Show 0");
+    await vi.waitFor(() => expect(focusedId()).toBe("s999"));
+  });
+
   it("ends each shelf with a See all card that opens the category and moves focus into it", async () => {
-    const { container } = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    const { container } = render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Drama Show 0");
     expect(screen.getByRole("button", { name: /^See all/ })).toBeTruthy();
 
@@ -256,18 +276,19 @@ describe("SeriesScreen category rail", () => {
     press("Enter");
 
     await vi.waitFor(() => expect(posterCount(container)).toBe(60));
-    await vi.waitFor(() => expect(focusedId()).toBe("series-grid:s0"));
-    expect(screen.getByText("100 titles")).toBeTruthy();
+    await vi.waitFor(() => expect(focusedId()).toBe("series-grid:s999"));
+    expect(screen.getByText(/^100 titles · Updated just now$/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy(); // one category shown: it can be refreshed on its own
   });
 
   it("remembers the chosen category when the screen is opened again", async () => {
-    const first = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    const first = render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Drama Show 0");
     fireEvent.click(await screen.findByRole("button", { name: "Drama" }));
     await vi.waitFor(() => expect(posterCount(first.container)).toBe(60));
     first.unmount();
 
-    const second = render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    const second = render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await vi.waitFor(() => expect(posterCount(second.container)).toBe(60));
     expect(second.container.querySelectorAll("section")).toHaveLength(0); // category grid, not Browse shelves
   });
@@ -295,7 +316,7 @@ describe("SeriesScreen detail page", () => {
   const focusedId = () => useFocusStore.getState().focusedId;
 
   it("starts on Play and chains Down/Up through actions → season tabs → episodes", async () => {
-    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} initialSelectedId="s0" />);
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} initialSelectedId="s0" />);
     await screen.findByRole("button", { name: "Play S1 E1" });
     await vi.waitFor(() => expect(focusedId()).toBe("series-hero-play"));
 
@@ -315,7 +336,7 @@ describe("SeriesScreen detail page", () => {
     localStorage.clear();
     const { isFavorite } = await import("../profile-store.js");
     const onPlayEpisode = vi.fn();
-    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={onPlayEpisode} onBack={() => {}} initialSelectedId="s0" />);
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={onPlayEpisode} onBack={() => {}} initialSelectedId="s0" />);
     await screen.findByRole("button", { name: "Play S1 E1" });
     await vi.waitFor(() => expect(focusedId()).toBe("series-hero-play"));
 
@@ -332,7 +353,7 @@ describe("SeriesScreen detail page", () => {
   });
 
   it("switching season updates the episode row and Up from it returns to that season's tab", async () => {
-    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} initialSelectedId="s0" />);
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} initialSelectedId="s0" />);
     await screen.findByRole("button", { name: "Play S1 E1" });
 
     act(() => useFocusStore.getState().focus("season-tab:2"));
@@ -345,7 +366,7 @@ describe("SeriesScreen detail page", () => {
   });
 
   it("Back from the detail page returns focus to the series card that opened it", async () => {
-    render(<SeriesScreen source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
+    render(<SeriesScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onPlayEpisode={() => {}} onBack={() => {}} />);
     await screen.findByText("Drama Show 3");
     act(() => useFocusStore.getState().focus("s3"));
     press("Enter");

@@ -1,5 +1,5 @@
 import { getDefaultKidsRules, type Channel, type SeriesInfo } from "@core";
-import type { CatalogRecord } from "./core/storage/catalog-db.js";
+import { catalogRecordId, streamIdSortKey, type CatalogRecord } from "./core/storage/catalog-db.js";
 
 /**
  * Channel/series → catalog-db row mappers, shared by catalog-sync.ts
@@ -24,7 +24,7 @@ function kidsFields(sourceId: string, text: string): Pick<CatalogRecord, "tags" 
 
 export function channelToRecord(sourceId: string, generation: number, item: Channel): CatalogRecord {
   return {
-    id: `${sourceId}:${item.id}`,
+    id: catalogRecordId(sourceId, item.id),
     sourceId,
     streamId: item.id,
     name: item.name,
@@ -43,7 +43,7 @@ export function seriesToRecord(
   item: Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre">,
 ): CatalogRecord {
   return {
-    id: `${sourceId}:${item.id}`,
+    id: catalogRecordId(sourceId, item.id),
     sourceId,
     streamId: item.id,
     name: item.name,
@@ -54,4 +54,12 @@ export function seriesToRecord(
     ...kidsFields(sourceId, item.genre ? `${item.name} ${item.genre}` : item.name),
     generation,
   };
+}
+
+/** Newest first — descending stream id, the same order the local table is read in (see catalog-db.ts's queryPage) — for lists fetched straight from the provider. Returns a new array. */
+export function sortNewestFirst<T extends { id: string }>(items: readonly T[]): T[] {
+  return items
+    .map((item) => ({ item, key: streamIdSortKey(item.id) }))
+    .sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0))
+    .map(({ item }) => item);
 }

@@ -21,7 +21,7 @@ export type CatalogKind = "vod" | "series";
 
 /** One VOD or series record as stored — a flattened, IndexedDB-friendly shape rather than the richer Channel/SeriesInfo types screens render, which catalog-store.ts maps to/from. */
 export interface CatalogRecord {
-  /** `${sourceId}:${streamId}` — unique across every source sharing this store. */
+  /** catalogRecordId(sourceId, streamId) — unique across every source sharing this store, and the order browse pages read in (descending). */
   id: string;
   sourceId: string;
   streamId: string;
@@ -41,7 +41,7 @@ export interface CatalogRecord {
   mature?: 0 | 1;
   /** `${sourceId}|${tag}` per tag — multiEntry-indexed, so "every animation title in this playlist" is one index range. */
   tagKeys?: string[];
-  /** Bumped once per completed sync (see catalog-sync.ts) — lets a sync that dies partway through be told apart from the previous complete generation, so its leftovers are swept by the next one. */
+  /** The catalog generation the row was written under (see SyncMeta.generation). */
   generation: number;
 }
 
@@ -49,6 +49,11 @@ export interface SyncMeta {
   key: string;
   lastSyncedAt: number;
   recordCount: number;
+  /**
+   * Set when the table is first built and kept across refreshes, which only
+   * write what changed (see catalog-sync-core.ts) — so the search index,
+   * which starts over when this changes, keeps what it has built.
+   */
   generation: number;
   /** The Kids rules version the records were tagged with (see KIDS_RULES_VERSION) — an older one makes the sync due. */
   rulesVersion?: number;
@@ -64,16 +69,50 @@ export interface CatalogDb {
 const DB_NAME = "iptv-catalog-v1";
 // v2: the multiEntry by_tag_key index (Kids tags). Rows written before it
 // simply aren't in the index until the next sync re-tags them.
-const DB_VERSION = 2;
+// v3: two addedAt indexes, from a short-lived build — dropped again by v4.
+// v4: zero-padded numeric ids (see catalogRecordId), existing rows re-keyed in place.
+// v5: the search index's two stores (see search-index-db.ts), created empty —
+// nothing existing is rewritten; the background indexer fills them later.
+const DB_VERSION = 5;
+/** Indexes an older build created that this one no longer uses. */
+const RETIRED_INDEXES = ["by_source_added", "by_source_category_added"];
 const SYNC_META_STORE = "sync_meta";
+/** One row per indexed title: its search words (see src/search/). Kept apart from vod/series so indexing never blocks their reads. */
+export const SEARCH_TOKENS_STORE = "search_tokens";
+/** Where the background indexer got to, per source and kind. */
+export const SEARCH_INDEX_META_STORE = "search_index_meta";
+/** multiEntry over each row's `keys` (`${sourceId}\0${kind}\0${word}`). */
+export const SEARCH_BY_KEY_INDEX = "by_key";
+/** [sourceId, kind, generation] — for sweeping rows an older catalog generation left behind, and for purging a source. */
+export const SEARCH_BY_SOURCE_KIND_GENERATION_INDEX = "by_source_kind_generation";
 
 const BY_SOURCE_INDEX = "by_source";
 const BY_SOURCE_CATEGORY_INDEX = "by_source_category";
 const BY_SOURCE_NAME_INDEX = "by_source_name";
 const BY_TAG_KEY_INDEX = "by_tag_key";
 
+/** Wide enough for any Xtream stream id, so every numeric id pads to the same length. */
+const STREAM_ID_WIDTH = 15;
+
+/**
+ * A stream id as it sorts in the primary key: numeric ids zero-padded so
+ * text order is numeric order ("000…100000" after "000…99999", where the
+ * bare strings sort the other way round). Providers hand out ids as titles
+ * are added, so descending id order is roughly newest first — the order
+ * browse pages read in (see queryPage). Non-numeric ids (M3U tvg-ids) pass
+ * through unchanged.
+ */
+export function streamIdSortKey(streamId: string): string {
+  return /^\d+$/.test(streamId) ? streamId.padStart(STREAM_ID_WIDTH, "0") : streamId;
+}
+
+/** The primary key for one source's stream — the only way records should be keyed or looked up. */
+export function catalogRecordId(sourceId: string, streamId: string): string {
+  return `${sourceId}:${streamIdSortKey(streamId)}`;
+}
+
 /** Upper bound for a same-prefix IDBKeyRange scan — the highest code point IndexedDB's default key comparator will ever sort a real string below. */
-const MAX_UTF16_SUFFIX = "￿";
+export const MAX_UTF16_SUFFIX = "￿";
 
 function storeName(kind: CatalogKind): string {
   return kind;
@@ -90,7 +129,7 @@ export function openCatalogDb(): Promise<CatalogDb> {
         return;
       }
       const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = (event) => {
         const db = request.result;
         for (const kind of ["vod", "series"] as CatalogKind[]) {
           const name = storeName(kind);
@@ -104,9 +143,19 @@ export function openCatalogDb(): Promise<CatalogDb> {
             store.createIndex(BY_SOURCE_NAME_INDEX, ["sourceId", "nameLower"]);
           }
           if (!store.indexNames.contains(BY_TAG_KEY_INDEX)) store.createIndex(BY_TAG_KEY_INDEX, "tagKeys", { multiEntry: true });
+          for (const retired of RETIRED_INDEXES) if (store.indexNames.contains(retired)) store.deleteIndex(retired);
+          if (event.oldVersion > 0 && event.oldVersion < 4) rekeyRecords(store);
         }
         if (!db.objectStoreNames.contains(SYNC_META_STORE)) {
           db.createObjectStore(SYNC_META_STORE, { keyPath: "key" });
+        }
+        if (!db.objectStoreNames.contains(SEARCH_TOKENS_STORE)) {
+          const search = db.createObjectStore(SEARCH_TOKENS_STORE, { keyPath: "id" });
+          search.createIndex(SEARCH_BY_KEY_INDEX, "keys", { multiEntry: true });
+          search.createIndex(SEARCH_BY_SOURCE_KIND_GENERATION_INDEX, ["sourceId", "kind", "generation"]);
+        }
+        if (!db.objectStoreNames.contains(SEARCH_INDEX_META_STORE)) {
+          db.createObjectStore(SEARCH_INDEX_META_STORE, { keyPath: "key" });
         }
       };
       request.onsuccess = () => resolve({ db: request.result });
@@ -116,6 +165,28 @@ export function openCatalogDb(): Promise<CatalogDb> {
   return dbPromise;
 }
 
+/**
+ * Moves every pre-v4 row to its padded catalogRecordId, inside the upgrade
+ * transaction — so a synced catalog reads newest first (and Favorites'
+ * lookups by padded id still find it) straight away, without a re-sync.
+ * A re-keyed row sorts before the cursor's position ("0" < "1"–"9"), so
+ * the walk never visits it twice.
+ */
+function rekeyRecords(store: IDBObjectStore): void {
+  const cursorRequest = store.openCursor();
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (!cursor) return;
+    const record = cursor.value as CatalogRecord;
+    const id = catalogRecordId(record.sourceId, record.streamId);
+    if (id !== record.id) {
+      cursor.delete();
+      store.put({ ...record, id });
+    }
+    cursor.continue();
+  };
+}
+
 function runRequest<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -123,7 +194,7 @@ function runRequest<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-/** Writes a batch of records in one readwrite transaction — the "batched DB transactions" piece: a sync's ~2000-record chunks each cost one transaction, not one per record. */
+/** Writes a batch of records in one readwrite transaction — one transaction per batch, not one per record. */
 export function putRecordsBatch(catalogDb: CatalogDb, kind: CatalogKind, records: CatalogRecord[]): Promise<void> {
   if (records.length === 0) return Promise.resolve();
   const tx = catalogDb.db.transaction(storeName(kind), "readwrite");
@@ -135,37 +206,53 @@ export function putRecordsBatch(catalogDb: CatalogDb, kind: CatalogKind, records
   });
 }
 
+export interface CatalogChanges {
+  put: CatalogRecord[];
+  /** Primary keys (catalogRecordId) to remove. */
+  delete: string[];
+  /** Search rows (search-index-db.ts's SearchTokenRow) for titles that are new or renamed — only while the search index is being kept up to date. */
+  searchPut?: object[];
+  /** Search row ids for titles that are gone or renamed. */
+  searchDelete?: string[];
+}
+
 /**
- * Deletes every record for `sourceId` whose generation is older than
- * `currentGeneration` — the cleanup half of the shadow-write-then-swap sync
- * strategy (see catalog-sync.ts): the new generation's records are written
- * first, sync_meta is flipped to point at it, and only then does the old
- * generation get deleted. A refresh is therefore a full replace: titles the
- * provider dropped disappear, the rest are upserted. While a sync runs a
- * reader can briefly see a mix of old and new rows — never a title missing.
+ * Applies one batch of a sync's changes (see catalog-sync-core.ts) in a
+ * single readwrite transaction: the catalog rows and, when given, their
+ * search rows together — so search never points at a title that's gone,
+ * and a sync that dies partway leaves whole batches, never half of one.
  */
-export async function deleteStaleGeneration(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, currentGeneration: number): Promise<void> {
-  const tx = catalogDb.db.transaction(storeName(kind), "readwrite");
-  const index = tx.objectStore(storeName(kind)).index(BY_SOURCE_INDEX);
-  const range = IDBKeyRange.only(sourceId);
-  await new Promise<void>((resolve, reject) => {
-    const cursorRequest = index.openCursor(range);
-    cursorRequest.onsuccess = () => {
-      const cursor = cursorRequest.result;
-      if (!cursor) {
-        resolve();
-        return;
-      }
-      const record = cursor.value as CatalogRecord;
-      if (record.generation < currentGeneration) cursor.delete();
-      cursor.continue();
-    };
-    cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error("Stale-generation cleanup failed"));
-  });
+export function writeCatalogChanges(catalogDb: CatalogDb, kind: CatalogKind, changes: CatalogChanges): Promise<void> {
+  const withSearch = Boolean(changes.searchPut?.length || changes.searchDelete?.length);
+  if (changes.put.length === 0 && changes.delete.length === 0 && !withSearch) return Promise.resolve();
+  const tx = catalogDb.db.transaction(withSearch ? [storeName(kind), SEARCH_TOKENS_STORE] : storeName(kind), "readwrite");
+  const store = tx.objectStore(storeName(kind));
+  for (const record of changes.put) store.put(record);
+  for (const id of changes.delete) store.delete(id);
+  if (withSearch) {
+    const search = tx.objectStore(SEARCH_TOKENS_STORE);
+    for (const id of changes.searchDelete ?? []) search.delete(id);
+    for (const row of changes.searchPut ?? []) search.put(row);
+  }
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error("Stale-generation cleanup transaction failed"));
+    tx.onerror = () => reject(tx.error ?? new Error("Catalog write failed"));
   });
+}
+
+/** Up to `limit` of a source's records after primary key `lastKey` (null: from the start), in key order — one short readonly read. */
+export async function readRecordsAfter(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, lastKey: string | null, limit: number): Promise<CatalogRecord[]> {
+  const prefix = `${sourceId}:`;
+  const range = lastKey === null ? IDBKeyRange.bound(prefix, prefix + MAX_UTF16_SUFFIX) : IDBKeyRange.bound(lastKey, prefix + MAX_UTF16_SUFFIX, true, false);
+  const tx = catalogDb.db.transaction(storeName(kind), "readonly");
+  const records = await runRequest(tx.objectStore(storeName(kind)).getAll(range, limit) as IDBRequest<CatalogRecord[]>);
+  return records.filter((record) => record.sourceId === sourceId);
+}
+
+/** Every record in one of a source's categories. */
+export function readCategoryRecords(catalogDb: CatalogDb, kind: CatalogKind, sourceId: string, categoryId: string): Promise<CatalogRecord[]> {
+  const tx = catalogDb.db.transaction(storeName(kind), "readonly");
+  return runRequest(tx.objectStore(storeName(kind)).index(BY_SOURCE_CATEGORY_INDEX).getAll(IDBKeyRange.only([sourceId, categoryId])) as IDBRequest<CatalogRecord[]>);
 }
 
 /** Every record and the sync_meta entry for one source+kind — used when a source's data is reset or the source is removed. */
@@ -208,11 +295,16 @@ export function queryPage(catalogDb: CatalogDb, kind: CatalogKind, options: Quer
   const tx = catalogDb.db.transaction(storeName(kind), "readonly");
   const store = tx.objectStore(storeName(kind));
 
+  // Search results read alphabetically. Category and full listings share one
+  // index key per row, so they come out in primary-key order — walked
+  // backwards, that's newest first (see streamIdSortKey).
   let source: IDBIndex;
   let range: IDBKeyRange;
+  let direction: IDBCursorDirection = "prev";
   if (namePrefixLower !== undefined) {
     source = store.index(BY_SOURCE_NAME_INDEX);
     range = IDBKeyRange.bound([sourceId, namePrefixLower], [sourceId, namePrefixLower + MAX_UTF16_SUFFIX]);
+    direction = "next";
   } else if (categoryId !== undefined) {
     source = store.index(BY_SOURCE_CATEGORY_INDEX);
     range = IDBKeyRange.only([sourceId, categoryId]);
@@ -224,7 +316,7 @@ export function queryPage(catalogDb: CatalogDb, kind: CatalogKind, options: Quer
   const results: CatalogRecord[] = [];
   let skipped = 0;
   return new Promise((resolve, reject) => {
-    const cursorRequest = source.openCursor(range);
+    const cursorRequest = source.openCursor(range, direction);
     cursorRequest.onsuccess = () => {
       const cursor = cursorRequest.result;
       if (!cursor || results.length >= limit) {
@@ -248,7 +340,7 @@ export function queryPage(catalogDb: CatalogDb, kind: CatalogKind, options: Quer
 }
 
 /**
- * Looks up records by primary key (`${sourceId}:${streamId}`), preserving
+ * Looks up records by primary key (catalogRecordId), preserving
  * `ids`' order and silently dropping any id with no matching record (the
  * stream was removed from the provider since it was favourited/watched) —
  * callers (catalog-store.ts's getRecordsByIds) never see a hole in the
@@ -400,7 +492,7 @@ export function __resetCatalogDbForTests(): void {
 /** Test-only escape hatch: wipes every store (vod/series/sync_meta) so one test file's writes never leak into the next — fake-indexeddb persists the "database" across openCatalogDb() calls within a test file, only __resetCatalogDbForTests's connection-cache reset doesn't clear its contents. */
 export async function __clearCatalogDbForTests(): Promise<void> {
   const catalogDb = await openCatalogDb();
-  const storeNames = ["vod", "series", SYNC_META_STORE];
+  const storeNames = ["vod", "series", SYNC_META_STORE, SEARCH_TOKENS_STORE, SEARCH_INDEX_META_STORE];
   await Promise.all(
     storeNames.map(
       (name) =>

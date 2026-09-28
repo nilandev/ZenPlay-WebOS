@@ -1,5 +1,6 @@
-import { KIDS_TAGS, type Category, type Channel, type SeriesInfo } from "@core";
+import { cleanTitle, KIDS_TAGS, type Category, type Channel, type SeriesInfo } from "@core";
 import {
+  catalogRecordId,
   countRecords,
   getCategoryIds,
   getRecordsByIds as getCatalogDbRecordsByIds,
@@ -37,10 +38,10 @@ export interface CatalogPageQuery {
 /** Upper bound for counting the More for Kids category — it's walked, not counted by an index. */
 const MORE_FOR_KIDS_COUNT_LIMIT = 5000;
 
-function recordToChannel(record: CatalogRecord, kind: "movie"): Channel {
+export function recordToChannel(record: CatalogRecord, kind: "movie"): Channel {
   return {
     id: record.streamId,
-    name: record.name,
+    name: cleanTitle(record.name), // rows stored before titles were cleaned at sync time
     logoUrl: record.logoUrl,
     groupTitle: record.groupTitle,
     streamUrl: record.streamUrl ?? "",
@@ -48,10 +49,10 @@ function recordToChannel(record: CatalogRecord, kind: "movie"): Channel {
   };
 }
 
-function recordToSeriesSummary(record: CatalogRecord): Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre"> {
+export function recordToSeriesSummary(record: CatalogRecord): Pick<SeriesInfo, "id" | "name" | "posterUrl" | "groupTitle" | "genre"> {
   return {
     id: record.streamId,
-    name: record.name,
+    name: cleanTitle(record.name),
     posterUrl: record.posterUrl,
     groupTitle: record.groupTitle,
     ...(record.genre ? { genre: record.genre } : {}),
@@ -68,7 +69,7 @@ function recordToSeriesSummary(record: CatalogRecord): Pick<SeriesInfo, "id" | "
 async function readRecords(catalogDb: CatalogDb, sourceId: string, kind: CatalogKind, query: CatalogPageQuery): Promise<CatalogRecord[]> {
   const { filter } = query;
   if (filter && query.categoryId === PARENT_PICKS_CATEGORY_ID) {
-    const records = await getCatalogDbRecordsByIds(catalogDb, kind, filter.pickedIds.map((id) => `${sourceId}:${id}`));
+    const records = await getCatalogDbRecordsByIds(catalogDb, kind, filter.pickedIds.map((id) => catalogRecordId(sourceId, id)));
     return records.slice(query.offset, query.offset + query.limit);
   }
   if (filter && query.categoryId === MORE_FOR_KIDS_CATEGORY_ID) {
@@ -109,7 +110,7 @@ export async function getCatalogCount(sourceId: string, kind: CatalogKind, query
   const catalogDb = await openCatalogDb();
   const { filter } = query;
   if (filter && query.categoryId === PARENT_PICKS_CATEGORY_ID) {
-    return (await getCatalogDbRecordsByIds(catalogDb, kind, filter.pickedIds.map((id) => `${sourceId}:${id}`))).length;
+    return (await getCatalogDbRecordsByIds(catalogDb, kind, filter.pickedIds.map((id) => catalogRecordId(sourceId, id)))).length;
   }
   if (filter && query.categoryId === MORE_FOR_KIDS_CATEGORY_ID) {
     if (!filter.moreForKids) return 0;
@@ -139,7 +140,7 @@ export async function getRecordsByIds(
  */
 export async function getRecordsByIds(sourceId: string, kind: CatalogKind, streamIds: string[]): Promise<unknown[]> {
   const catalogDb = await openCatalogDb();
-  const ids = streamIds.map((streamId) => `${sourceId}:${streamId}`);
+  const ids = streamIds.map((streamId) => catalogRecordId(sourceId, streamId));
   const records = await getCatalogDbRecordsByIds(catalogDb, kind, ids);
   return kind === "vod" ? records.map((r) => recordToChannel(r, "movie")) : records.map(recordToSeriesSummary);
 }
