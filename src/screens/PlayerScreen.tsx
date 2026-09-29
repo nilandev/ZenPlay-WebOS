@@ -14,6 +14,7 @@ import {
   swallowNextKeyUp,
   useFocusStore,
   useRemoteInput,
+  handOffVideo,
   hasParkedVideo,
 } from "@ui";
 import { ArrowLeft, Play, RotateCcw, TriangleAlert, VolumeX } from "lucide-react";
@@ -805,16 +806,25 @@ export function PlayerScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platform, isLive, showControls]);
 
+  /** Leaves the player. A live channel still playing goes back to Live TV's preview as is (see video-handoff.ts) — it adopts the stream if it's showing the same channel. */
+  function close(): void {
+    if (isLive) {
+      engineRef.current?.setMuted(false); // the preview has no mute control of its own
+      if (!handOffVideo(activeUrl) && isMutedRef.current) engineRef.current?.setMuted(true);
+    }
+    onClose();
+  }
+
   useRemoteInput(platform, {
     onBack: () => {
       if (panelRef.current === "next-up") closeNextUp();
       else if (stateRef.current.isPanelOpen) setPanel("none");
-      else onClose();
+      else close();
     },
     onPlayPause: togglePlayPause,
     onPlay: play,
     onPause: pause,
-    onStop: onClose,
+    onStop: close,
     onChannelUp: () => changeChannel(1),
     onChannelDown: () => changeChannel(-1),
     onRewind: () => scrubFromMediaKey(-1),
@@ -861,6 +871,7 @@ export function PlayerScreen({
           onError={handleError}
           onBufferingChange={handleBufferingChange}
           onStreamAdopted={handleStreamAdopted}
+          canHandOff={isLive}
         />
       )}
       {failure === null && (

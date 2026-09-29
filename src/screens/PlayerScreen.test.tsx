@@ -461,6 +461,53 @@ describe("PlayerScreen", () => {
       expect(screen.getByTestId("player-loading").style.opacity).toBe("0");
     });
 
+    /** A live player on `url` whose <video> looks like it's playing. */
+    async function renderPlayingPlayer(url: string, onClose = () => {}) {
+      const player = makeEngine(NaN);
+      const view = render(<PlayerScreen streamUrl={url} platform="web" onClose={onClose} title="News" isLive engineFactory={() => player.engine} />);
+      await act(async () => {});
+      const video = view.container.querySelector("video")!;
+      Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+      Object.defineProperty(video, "readyState", { configurable: true, get: () => 4 });
+      return { player, video, ...view };
+    }
+
+    it("Back hands the playing channel back to the preview, which carries on without reloading", async () => {
+      const onClose = vi.fn();
+      const { player, video, unmount } = await renderPlayingPlayer("live/1.m3u8", onClose);
+      press("Escape");
+      expect(onClose).toHaveBeenCalledTimes(1);
+      unmount(); // App closes the player
+      expect(video.isConnected).toBe(true); // parked, still in the document
+
+      const preview = makeEngine(NaN);
+      const { container } = render(<VideoSurface streamUrl="live/1.m3u8" engineFactory={() => preview.engine} canHandOff />);
+      await act(async () => {});
+      expect(preview.engine.load).not.toHaveBeenCalled();
+      expect(player.engine.destroy).not.toHaveBeenCalled();
+      expect(container.contains(video)).toBe(true);
+    });
+
+    it("after a channel change in the player, the preview's own channel loads and the handed-back one stops at once", async () => {
+      const { player, unmount } = await renderPlayingPlayer("live/2.m3u8");
+      press("Escape");
+      unmount();
+      const preview = makeEngine(NaN);
+      render(<VideoSurface streamUrl="live/1.m3u8" engineFactory={() => preview.engine} canHandOff />);
+      await act(async () => {});
+      expect(preview.engine.load).toHaveBeenCalledWith("live/1.m3u8", expect.anything());
+      expect(player.engine.destroy).toHaveBeenCalledTimes(1);
+    });
+
+    it("a paused channel isn't handed back", async () => {
+      const { player, video, unmount } = await renderPlayingPlayer("live/1.m3u8");
+      Object.defineProperty(video, "paused", { configurable: true, get: () => true });
+      press("Escape");
+      unmount();
+      await act(async () => {});
+      expect(player.engine.destroy).toHaveBeenCalledTimes(1);
+    });
+
     it("a different channel, or one still loading, loads as usual", async () => {
       await renderPlayingPreview("live/1.m3u8");
       expect(handOffVideo("live/2.m3u8")).toBe(false);

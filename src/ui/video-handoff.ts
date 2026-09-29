@@ -3,10 +3,11 @@ import type { PlayerEngine } from "@player";
 /**
  * A playing stream detached from the VideoSurface that started it, waiting
  * for the next VideoSurface on the same URL to adopt it — so Live TV's
- * preview can go full screen without reloading the channel. The <video>
- * stays where it is in the document until it's adopted: a media element
- * that's out of the document when the browser next checks gets paused,
- * while the adopter's appendChild moves it in one step.
+ * preview can go full screen, and come back from it, without reloading the
+ * channel. While it waits, the <video> sits in a hidden holder on <body>:
+ * the surface it came from may be about to unmount (the fullscreen player
+ * closing), and a media element left out of the document gets paused.
+ * Every move is a single appendChild, so it's never out of the document.
  */
 export interface ParkedVideo {
   streamUrl: string;
@@ -41,6 +42,7 @@ export function handOffVideo(streamUrl: string): boolean {
     const video = donor(streamUrl);
     if (!video) continue;
     discardParkedVideo();
+    holder().appendChild(video.video);
     parked = video;
     discardTimer = setTimeout(discardParkedVideo, UNCLAIMED_DISCARD_MS);
     return true;
@@ -53,9 +55,18 @@ export function hasParkedVideo(streamUrl: string): boolean {
   return parked?.streamUrl === streamUrl;
 }
 
-/** Takes the parked stream if it's playing `streamUrl`. */
+/**
+ * Takes the parked stream if it's playing `streamUrl`. The next surface to
+ * load decides: a different URL (the player changed channel before closing)
+ * means nobody will want the parked one, so it's torn down now rather than
+ * decoding unseen alongside the new stream.
+ */
 export function takeParkedVideo(streamUrl: string): ParkedVideo | null {
-  if (parked?.streamUrl !== streamUrl) return null;
+  if (!parked) return null;
+  if (parked.streamUrl !== streamUrl) {
+    discardParkedVideo();
+    return null;
+  }
   const video = parked;
   parked = null;
   if (discardTimer) clearTimeout(discardTimer);
@@ -70,4 +81,16 @@ function discardParkedVideo(): void {
   parked.engine.destroy();
   parked.video.remove();
   parked = null;
+}
+
+let holderElement: HTMLDivElement | null = null;
+
+/** Out of sight but in the document — it only ever holds a video for the moment between two surfaces. */
+function holder(): HTMLDivElement {
+  if (holderElement?.isConnected) return holderElement;
+  holderElement = document.createElement("div");
+  holderElement.setAttribute("aria-hidden", "true");
+  Object.assign(holderElement.style, { position: "fixed", width: "0", height: "0", overflow: "hidden", pointerEvents: "none" });
+  document.body.appendChild(holderElement);
+  return holderElement;
 }
