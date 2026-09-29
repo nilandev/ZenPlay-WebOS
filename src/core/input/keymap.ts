@@ -13,6 +13,7 @@ export type RemoteAction =
   | "fast-forward"
   | "channel-up"
   | "channel-down"
+  | "mute"
   | "unknown";
 
 export type PlatformId = "webos" | "web";
@@ -33,11 +34,19 @@ export type PlatformId = "webos" | "web";
  * 461/"GoBack" never occurs on a real keyboard, so checking it
  * unconditionally is safe. See conversation history ("back buttons are not
  * working in all pages").
+ *
+ * The LG media keyCodes (Play 415, Pause 19, Rewind 412, …) are read
+ * regardless of `platform` for the same reason: the app doesn't load
+ * webOSTV.js, so `window.webOS` is missing on real TVs too and the platform
+ * reports "web" — gating them on "webos" left Play/Pause/Rewind/Fast-forward
+ * dead in the player. None of them clash with a keyboard key (19 is the
+ * keyboard's Pause key, which pausing playback is right for anyway).
  */
-export function resolveRemoteAction(platform: PlatformId, event: KeyboardEvent): RemoteAction {
-  const webOsBack = resolveWebOsBackKey(event);
-  if (webOsBack === "back") return webOsBack;
-  return platform === "webos" ? resolveWebOsKey(event) : resolveStandardKey(event);
+export function resolveRemoteAction(_platform: PlatformId, event: KeyboardEvent): RemoteAction {
+  if (resolveWebOsBackKey(event) === "back") return "back";
+  const standard = resolveStandardKey(event);
+  if (standard !== "unknown") return standard;
+  return WEBOS_MEDIA_KEYCODES[event.keyCode] ?? "unknown";
 }
 
 function resolveStandardKey(event: KeyboardEvent): RemoteAction {
@@ -60,6 +69,7 @@ function resolveStandardKey(event: KeyboardEvent): RemoteAction {
     case "MediaPlay":
       return "play";
     case "MediaPause":
+    case "Pause":
       return "pause";
     case "MediaStop":
       return "stop";
@@ -67,6 +77,9 @@ function resolveStandardKey(event: KeyboardEvent): RemoteAction {
       return "rewind";
     case "MediaFastForward":
       return "fast-forward";
+    case "AudioVolumeMute":
+    case "VolumeMute":
+      return "mute";
     case "ChannelUp":
     case "PageUp": // LG remotes report CH+ as PageUp (keyCode 33)
       return "channel-up";
@@ -116,14 +129,10 @@ const WEBOS_MEDIA_KEYCODES: Record<number, RemoteAction> = {
   413: "stop",
   412: "rewind",
   417: "fast-forward",
+  // Mute: 173 is the DOM VK_VOLUME_MUTE code. Most LG TVs keep Mute for
+  // the system volume and never pass it to the app; this covers those that do.
+  173: "mute",
 };
-
-function resolveWebOsKey(event: KeyboardEvent): RemoteAction {
-  if (resolveWebOsBackKey(event) === "back") return "back";
-  const standard = resolveStandardKey(event);
-  if (standard !== "unknown") return standard;
-  return WEBOS_MEDIA_KEYCODES[event.keyCode] ?? "unknown";
-}
 
 /** The number a digit key stands for (top-row or keypad digits, by key or keyCode), or null for any other key — for tuning channels by number. */
 export function resolveDigitKey(event: KeyboardEvent): number | null {

@@ -21,6 +21,7 @@ export interface RemoteInputHandlers {
   onFastForward?: (isRepeat: boolean) => void;
   onChannelUp?: () => void;
   onChannelDown?: () => void;
+  onMute?: () => void;
 }
 
 /**
@@ -176,6 +177,11 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
           break;
         case "channel-down":
           currentHandlers.onChannelDown?.();
+          break;
+        case "mute":
+          if (!currentHandlers.onMute) break; // unhandled: leave it to the TV's own volume
+          event.preventDefault();
+          currentHandlers.onMute();
           break;
         case "unknown":
           break;

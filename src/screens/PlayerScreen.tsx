@@ -3,6 +3,7 @@ import { resolveDigitKey, resolveRemoteAction, type Channel, type PlatformId, ty
 import type { AudioTrackInfo, PlaybackProgress, PlayerEngine, PlayerError, SubtitleTrackInfo } from "@player";
 import {
   BROWSE_SIDE_PADDING,
+  NEXT_EPISODE_WINDOW_SECONDS,
   PLAYER_SEEK_ID,
   PlaybackControls,
   SEEK_STEP_SECONDS,
@@ -14,7 +15,7 @@ import {
   useFocusStore,
   useRemoteInput,
 } from "@ui";
-import { ArrowLeft, Play, RotateCcw, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Play, RotateCcw, TriangleAlert, VolumeX } from "lucide-react";
 import { isFavorite, toggleFavorite, upsertContinueWatching, type ResumePoint } from "../profile-store.js";
 import { loadSettings } from "../settings-store.js";
 import { alternateLiveStream, LIVE_STREAM_FORMAT_LABELS, rememberWorkingLiveStreamFormat } from "../live-stream-url.js";
@@ -22,6 +23,7 @@ import { liveStreamFormatOf, withLiveStreamFormat, type LiveStreamFormat } from 
 import { useFavoritesRevision } from "../use-favorites-revision.js";
 import type { ChannelLineup } from "../channel-lineup.js";
 import { useNowNext } from "../use-now-next.js";
+import { subscribeTvMute } from "../tv-audio.js";
 import { useWatchHistoryRecorder, type WatchTarget } from "../use-watch-history-recorder.js";
 import { PlayerEpisodesPanel } from "./PlayerEpisodesPanel.js";
 import { ChannelBanner, ChannelNumberEntry, NextUpCard, PausedInfoOverlay, PlayerLoadingScreen, type PlaybackInfo } from "./PlayerOverlays.js";
@@ -117,7 +119,7 @@ const PAUSED_INFO_DELAY_MS = 10_000;
 type Panel = "none" | "menu" | "episodes" | "next-up";
 
 /** The next-episode card appears with this much of the episode left… */
-const NEXT_UP_REMAINING_SECONDS = 20;
+const NEXT_UP_REMAINING_SECONDS = 30;
 /** …and counts down this long before playing it. */
 const NEXT_UP_COUNTDOWN_SECONDS = 10;
 
@@ -161,6 +163,9 @@ function describeFailure(failure: PlaybackFailure, isLive: boolean): string {
  * - While they're shown, Left/Right scrub only when the seek bar is focused;
  *   elsewhere they move focus between buttons as usual.
  * - Rewind / Fast-forward always scrub; Play, Pause and Stop do what they say.
+ * - Mute toggles the player's sound (kept across episodes and channels),
+ *   on TVs that pass the key to the app; on those that mute themselves, the
+ *   TV's mute state is followed instead (see tv-audio.ts). Either shows "Muted".
  * - Back closes an open panel (Audio & Subtitles, Episodes) first, then the player.
  * - Series: Up from the seek bar (or the Episodes button) opens the Episodes panel.
  * - Live TV: CH+/CH− step through the lineup the viewer came from; number
@@ -265,6 +270,12 @@ export function PlayerScreen({
   const [panel, setPanel] = useState<Panel>("none");
   const [returnFocusId, setReturnFocusId] = useState<string | null>(null);
   const [hasStarted, setHasStarted] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const isMutedRef = useRef(isMuted);
+  isMutedRef.current = isMuted;
+  // The TV's own mute (its Mute key usually never reaches the app) — shown with the same badge.
+  const [isTvMuted, setIsTvMuted] = useState(false);
+  useEffect(() => subscribeTvMute(setIsTvMuted), []);
   const [isPausedInfoShown, setIsPausedInfoShown] = useState(false);
   const [pausedInfoCycle, setPausedInfoCycle] = useState(0);
   const sawBufferingRef = useRef(false);
@@ -340,7 +351,18 @@ export function PlayerScreen({
     if (!isNextUpDue || panelRef.current !== "none") return; // don't pull the viewer out of a menu
     setReturnFocusId(useFocusStore.getState().focusedId);
     setPanel("next-up");
+    // The card sits on the controls, which stay up while it's open (the hide timer skips an open panel); it takes focus on Play Now.
+    showControls();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNextUpDue]);
+
+  // The controls' Next Episode button: when it appears, bring the controls
+  // up so it's seen (PlaybackControls focuses it).
+  const isNextEpisodeButtonDue = Boolean(onNextEpisode) && hasStarted && remainingSeconds <= NEXT_EPISODE_WINDOW_SECONDS;
+  useEffect(() => {
+    if (isNextEpisodeButtonDue) showControls();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNextEpisodeButtonDue]);
 
   function closeNextUp(): void {
     setNextUpDismissedFor(streamUrl);
@@ -421,6 +443,8 @@ export function PlayerScreen({
   const handleEngineReady = useCallback((engine: PlayerEngine | null) => {
     engineRef.current = engine;
     if (!engine) return;
+    // Each stream (episode, channel, reconnect) gets a fresh engine — carry the viewer's mute over.
+    if (isMutedRef.current) engine.setMuted(true);
     setAudioTracks(engine.getAudioTracks());
     setSubtitleTracks(engine.getSubtitleTracks());
   }, []);
@@ -638,6 +662,13 @@ export function PlayerScreen({
     else void engine.play();
   }
 
+  function toggleMute(): void {
+    const muted = !isMutedRef.current;
+    isMutedRef.current = muted; // a quick double press can outrun the re-render
+    setIsMuted(muted);
+    engineRef.current?.setMuted(muted);
+  }
+
   function play(): void {
     if (!stateRef.current.isShowingVideo) return;
     showControls();
@@ -707,8 +738,8 @@ export function PlayerScreen({
           return;
         }
       }
-      // CH+/CH− are handled below (useRemoteInput) without waking the controls.
-      if (action === "channel-up" || action === "channel-down") return;
+      // CH+/CH− and Mute are handled below (useRemoteInput) without waking the controls.
+      if (action === "channel-up" || action === "channel-down" || action === "mute") return;
 
       if (action === "unknown" || !showing) return;
 
@@ -771,6 +802,7 @@ export function PlayerScreen({
     onChannelDown: () => changeChannel(-1),
     onRewind: () => scrubFromMediaKey(-1),
     onFastForward: () => scrubFromMediaKey(1),
+    onMute: toggleMute,
   });
 
   function selectAudioTrack(id: number): void {
@@ -816,10 +848,8 @@ export function PlayerScreen({
       {failure === null && (
         <PlayerLoadingScreen title={title} subtitle={subtitle} info={info} isLive={isLive} isVisible={!hasStarted && !isChangingChannel} />
       )}
-      {failure === null && panel === "next-up" && upNextEpisode && (
-        <NextUpCard episode={upNextEpisode} seconds={NEXT_UP_COUNTDOWN_SECONDS} isPlaying={isPlaying} onPlayNow={playNextNow} onWatchCredits={closeNextUp} />
-      )}
       {failure === null && isBannerShown && liveChannel && <ChannelBanner channel={liveChannel} programme={nowNext?.now} />}
+      {failure === null && (isMuted || isTvMuted) && <MutedBadge />}
       {typedDigits && <ChannelNumberEntry digits={typedDigits} notFound={isNumberNotFound} />}
       {failure === null && isPausedInfoShown && <PausedInfoOverlay title={title} subtitle={pausedSubtitle} info={pausedInfo} />}
       {failure === null ? (
@@ -850,6 +880,11 @@ export function PlayerScreen({
             isMenuOpen={isMenuOpen}
             isPanelOpen={isPanelOpen}
             returnFocusId={returnFocusId}
+            aboveControls={
+              panel === "next-up" && upNextEpisode ? (
+                <NextUpCard episode={upNextEpisode} seconds={NEXT_UP_COUNTDOWN_SECONDS} isPlaying={isPlaying} onPlayNow={playNextNow} onWatchCredits={closeNextUp} />
+              ) : undefined
+            }
             onOpenMenu={() => openPanel("menu")}
             onOpenEpisodes={hasEpisodes ? () => openPanel("episodes") : undefined}
             myList={myList}
@@ -887,6 +922,34 @@ export function PlayerScreen({
           onBack={onClose}
         />
       )}
+    </div>
+  );
+}
+
+/** Top-right reminder that the player's sound is off (Mute on the remote). */
+function MutedBadge(): JSX.Element {
+  return (
+    <div
+      role="status"
+      aria-label="Muted"
+      style={{
+        position: "absolute",
+        top: "3rem",
+        right: BROWSE_SIDE_PADDING,
+        zIndex: 10,
+        display: "flex",
+        alignItems: "center",
+        gap: "0.625rem",
+        padding: "0.75rem 1.25rem",
+        borderRadius: 999,
+        background: "rgba(10,11,15,0.8)",
+        color: "#fff",
+        fontSize: TV_TEXT,
+        fontWeight: 600,
+      }}
+    >
+      <VolumeX size="1.75rem" />
+      Muted
     </div>
   );
 }

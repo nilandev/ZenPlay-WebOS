@@ -86,8 +86,23 @@ describe("resolveRemoteAction — media keys", () => {
     expect(resolveRemoteAction("webos", makeEvent({ key: "Unidentified", keyCode: 417 }))).toBe("fast-forward");
   });
 
-  it("doesn't read LG keyCodes on the web keymap", () => {
-    expect(resolveRemoteAction("web", makeEvent({ key: "Unidentified", keyCode: 19 }))).toBe("unknown");
+  it("still maps LG media keyCodes when the platform is reported as 'web'", () => {
+    // Regression test: without webOSTV.js, window.webOS is missing on the TV
+    // itself, so detectPlatform() reports "web" and the remote's media keys
+    // were dropped.
+    expect(resolveRemoteAction("web", makeEvent({ key: "Unidentified", keyCode: 415 }))).toBe("play");
+    expect(resolveRemoteAction("web", makeEvent({ key: "Unidentified", keyCode: 19 }))).toBe("pause");
+    expect(resolveRemoteAction("web", makeEvent({ key: "Unidentified", keyCode: 413 }))).toBe("stop");
+    expect(resolveRemoteAction("web", makeEvent({ key: "Unidentified", keyCode: 412 }))).toBe("rewind");
+    expect(resolveRemoteAction("web", makeEvent({ key: "Unidentified", keyCode: 417 }))).toBe("fast-forward");
+    expect(resolveRemoteAction("web", makeEvent({ key: "Pause", keyCode: 19 }))).toBe("pause");
+  });
+});
+
+describe("mute key", () => {
+  it("maps the Mute key by key value or keyCode", () => {
+    expect(resolveRemoteAction("web", makeEvent({ key: "AudioVolumeMute" }))).toBe("mute");
+    expect(resolveRemoteAction("web", makeEvent({ key: "Unidentified", keyCode: 173 }))).toBe("mute");
   });
 });
 

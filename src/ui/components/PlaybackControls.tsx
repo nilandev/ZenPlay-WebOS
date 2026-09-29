@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Check, FastForward, ListVideo, Pause, Play, Plus, Rewind, SkipForward, Subtitles } from "lucide-react";
 import type { NowNext } from "@core";
 import type { AudioTrackInfo, SubtitleTrackInfo } from "@player";
@@ -64,6 +64,12 @@ export interface PlaybackControlsProps {
   isMenuOpen: boolean;
   /** Any panel over the controls (Audio & Subtitles, Episodes) — the controls' own focus nodes are withdrawn meanwhile. */
   isPanelOpen: boolean;
+  /**
+   * A panel that sits on top of the controls instead of replacing them
+   * (the next-episode card): the controls stay on screen underneath it, but
+   * their focus nodes are still withdrawn while isPanelOpen.
+   */
+  aboveControls?: ReactNode;
   /** Where focus lands when the panel closes (the control that opened it). */
   returnFocusId?: string | null;
   onOpenMenu: () => void;
@@ -130,6 +136,7 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
   const latestRef = useRef(props);
   latestRef.current = props;
   const wasPanelOpenRef = useRef(false);
+  const wasNextEpisodeDueRef = useRef(false);
   const hasEpisodes = Boolean(onOpenEpisodes);
   const hasMyList = Boolean(props.myList);
 
@@ -162,11 +169,18 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
         else if (node.id === PLAYER_NEXT_EPISODE_ID) current.onNextEpisode();
       },
     }));
-    const defaultFocusId = isLive ? PLAYER_PLAY_PAUSE_ID : PLAYER_SEEK_ID;
+    // Near the end of an episode, Next Episode is the default — and takes focus the moment it appears.
+    const defaultFocusId = isNextEpisodeDue ? PLAYER_NEXT_EPISODE_ID : isLive ? PLAYER_PLAY_PAUSE_ID : PLAYER_SEEK_ID;
     const returnTo = latestRef.current.returnFocusId;
     const initialFocusId = wasPanelOpenRef.current && returnTo && nodes.some((n) => n.id === returnTo) ? returnTo : defaultFocusId;
+    const didNextEpisodeAppear = isNextEpisodeDue && !wasNextEpisodeDueRef.current && !wasPanelOpenRef.current;
+    wasNextEpisodeDueRef.current = isNextEpisodeDue;
     wasPanelOpenRef.current = false;
     setGraph(SCOPE, nodes, initialFocusId);
+    if (didNextEpisodeAppear) {
+      useFocusStore.getState().focus(PLAYER_NEXT_EPISODE_ID);
+      return;
+    }
     // setGraph keeps focus wherever it already is if that element still
     // exists — and the screen under the player (the series page, the Live
     // TV list) stays mounted, so focus would stay on the hidden card that
@@ -174,7 +188,7 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
     // Take focus explicitly unless it's already on one of these controls.
     const { focusedId, focus } = useFocusStore.getState();
     if (!focusedId || !nodes.some((node) => node.id === focusedId)) focus(initialFocusId);
-  }, [buttonRow, isLive, isPanelOpen, setGraph]);
+  }, [buttonRow, isLive, isNextEpisodeDue, isPanelOpen, setGraph]);
 
   useEffect(() => () => clearGraph(SCOPE), [clearGraph]);
 
@@ -201,9 +215,10 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
           padding: `10rem ${BROWSE_SIDE_PADDING} 3rem`,
           background: "linear-gradient(0deg, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.65) 45%, rgba(0,0,0,0) 100%)",
           // A bottom panel (Episodes) takes this space; the side menu doesn't.
-          visibility: isPanelOpen && !isMenuOpen ? "hidden" : "visible",
+          visibility: isPanelOpen && !isMenuOpen && !props.aboveControls ? "hidden" : "visible",
         }}
       >
+        {props.aboveControls && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "2rem" }}>{props.aboveControls}</div>}
         <div style={{ display: "flex", alignItems: "flex-end", gap: "2rem", marginBottom: "1.75rem" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             {isLive && (
@@ -255,7 +270,7 @@ export function PlaybackControls(props: PlaybackControlsProps): JSX.Element {
           <div style={{ flex: 1 }} />
           {isNextEpisodeDue && (
             <div style={{ animation: "player-next-episode-in 320ms cubic-bezier(0.2, 0.8, 0.3, 1)" }}>
-              <TvButton id={PLAYER_NEXT_EPISODE_ID} label="Next Episode" icon={SkipForward} variant="primary" onSelect={onNextEpisode} />
+              <TvButton id={PLAYER_NEXT_EPISODE_ID} label="Next Episode" icon={SkipForward} onSelect={onNextEpisode} />
               <style>{`
                 @keyframes player-next-episode-in {
                   from { opacity: 0; transform: translateY(1rem); }
