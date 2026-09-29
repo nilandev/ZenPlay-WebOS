@@ -47,7 +47,7 @@ describe("SettingsScreen (App Settings)", () => {
   it("is one page: a Playlist section (the cards, then the update settings) and Playback — no Manage Playlists row or side pane", () => {
     renderSettings();
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Playlist", "Playback", "Parental Controls"]);
+    expect(headings).toEqual(["Playlist", "Playback", "Sound", "Parental Controls"]);
     expect(screen.getByText("My Provider")).toBeDefined();
     expect(screen.getByText("Sports Playlist")).toBeDefined();
     expect(screen.queryByText("Manage Playlists")).toBeNull();
@@ -113,7 +113,16 @@ describe("SettingsScreen (App Settings)", () => {
     act(() => useFocusStore.getState().focus("settings-auto-refresh"));
     press("Enter");
     expect(loadSettings().automaticRefresh).toBe(!before);
-    expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(String(!before));
+    expect(screen.getByRole("switch", { name: /Automatic Refresh/ }).getAttribute("aria-checked")).toBe(String(!before));
+  });
+
+  it("toggles Navigation Sounds with OK", () => {
+    renderSettings();
+    const before = loadSettings().navigationSounds;
+    act(() => useFocusStore.getState().focus("settings-navigation-sounds"));
+    press("Enter");
+    expect(loadSettings().navigationSounds).toBe(!before);
+    expect(screen.getByRole("switch", { name: /Navigation Sounds/ }).getAttribute("aria-checked")).toBe(String(!before));
   });
 
   it("walks the rows in order, keeping the column between option rows", () => {
