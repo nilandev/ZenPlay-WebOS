@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Category, Channel, PlatformId, PlaylistSource, Profile } from "@core";
 import {
   CATEGORY_RAIL_COLLAPSED_WIDTH,
+  handOffVideo,
   CategoryRail,
   categoryRailItemId,
   ChannelGridSkeleton,
@@ -207,9 +208,11 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, onOpen
     (channel: Channel) => {
       const byId = new Map(numberedChannels.map((c) => [c.id, c]));
       const lineup = visibleChannels.map((c) => byId.get(c.id) ?? c);
+      // The channel already playing in the preview goes full screen as is — the player adopts the stream instead of reloading it.
+      if (channel.id === previewChannel?.id) handOffVideo(liveStreamUrl(previewChannel, source.id));
       onPlay(byId.get(channel.id) ?? channel, { lineup, directory: numberedChannels });
     },
-    [onPlay, numberedChannels, visibleChannels],
+    [onPlay, numberedChannels, visibleChannels, previewChannel, source.id],
   );
 
   const activeCategoryIdRef = useRef(activeCategoryId);

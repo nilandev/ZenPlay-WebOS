@@ -1,7 +1,9 @@
+import { StrictMode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LoadOptions, PlayerEngine, PlayerError } from "@player";
 import { useFocusStore } from "../ui/focus/focus-store.js";
+import { handOffVideo, VideoSurface } from "@ui";
 import { isFavorite } from "../profile-store.js";
 import { PlayerScreen } from "./PlayerScreen.js";
 import { updateSettings } from "../settings-store.js";
@@ -414,6 +416,78 @@ describe("PlayerScreen", () => {
     expect(screen.getByText("Starting…")).toBeDefined();
     await act(async () => {});
     expect(loading.style.opacity).toBe("0");
+  });
+
+  describe("going full screen from Live TV's preview", () => {
+    /** Renders a preview surface on `url` and makes its <video> look like it's playing. */
+    async function renderPlayingPreview(url: string) {
+      const preview = makeEngine(NaN);
+      const view = render(<VideoSurface streamUrl={url} engineFactory={() => preview.engine} canHandOff />);
+      await act(async () => {});
+      const video = view.container.querySelector("video")!;
+      Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+      Object.defineProperty(video, "readyState", { configurable: true, get: () => 4 });
+      return { preview, video, ...view };
+    }
+
+    it("adopts the playing stream: no reload, no loading screen", async () => {
+      const { preview, video } = await renderPlayingPreview("live/1.m3u8");
+      expect(handOffVideo("live/1.m3u8")).toBe(true);
+
+      const player = makeEngine(NaN);
+      render(<PlayerScreen streamUrl="live/1.m3u8" platform="web" onClose={() => {}} title="News" isLive engineFactory={() => player.engine} />);
+      expect(screen.getByTestId("player-loading").style.opacity).toBe("0");
+      await act(async () => {});
+
+      expect(player.engine.load).not.toHaveBeenCalled();
+      expect(preview.engine.load).toHaveBeenCalledTimes(1);
+      expect(preview.engine.destroy).not.toHaveBeenCalled();
+      expect(video.closest("[style*='position: fixed']")).not.toBeNull(); // the same <video>, now in the player
+      expect(screen.getByTestId("player-loading").style.opacity).toBe("0");
+    });
+
+    it("adopts it under StrictMode too (dev double effects)", async () => {
+      const { preview } = await renderPlayingPreview("live/1.m3u8");
+      handOffVideo("live/1.m3u8");
+      const player = makeEngine(NaN);
+      render(
+        <StrictMode>
+          <PlayerScreen streamUrl="live/1.m3u8" platform="web" onClose={() => {}} title="News" isLive engineFactory={() => player.engine} />
+        </StrictMode>,
+      );
+      await act(async () => {});
+      expect(player.engine.load).not.toHaveBeenCalled();
+      expect(preview.engine.destroy).not.toHaveBeenCalled();
+      expect(screen.getByTestId("player-loading").style.opacity).toBe("0");
+    });
+
+    it("a different channel, or one still loading, loads as usual", async () => {
+      await renderPlayingPreview("live/1.m3u8");
+      expect(handOffVideo("live/2.m3u8")).toBe(false);
+
+      const loadingPreview = makeEngine(NaN, { hangOnLoad: true });
+      render(<VideoSurface streamUrl="live/3.m3u8" engineFactory={() => loadingPreview.engine} canHandOff />);
+      await act(async () => {});
+      expect(handOffVideo("live/3.m3u8")).toBe(false);
+
+      const player = makeEngine(NaN);
+      render(<PlayerScreen streamUrl="live/3.m3u8" platform="web" onClose={() => {}} title="News" isLive engineFactory={() => player.engine} />);
+      await act(async () => {});
+      expect(player.engine.load).toHaveBeenCalledWith("live/3.m3u8", expect.anything());
+    });
+
+    it("the preview starts a fresh player on its next channel after handing one off", async () => {
+      const { preview, rerender } = await renderPlayingPreview("live/1.m3u8");
+      handOffVideo("live/1.m3u8");
+      const next = makeEngine(NaN);
+      rerender(<VideoSurface streamUrl={null} engineFactory={() => next.engine} canHandOff />);
+      expect(preview.engine.unload).not.toHaveBeenCalled(); // it isn't the preview's to stop any more
+      rerender(<VideoSurface streamUrl="live/2.m3u8" engineFactory={() => next.engine} canHandOff />);
+      await act(async () => {});
+      expect(next.engine.load).toHaveBeenCalledWith("live/2.m3u8", expect.anything());
+      act(() => vi.advanceTimersByTime(5000)); // never adopted — torn down
+      expect(preview.engine.destroy).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("keeps the loading screen up while a stream hasn't started", async () => {

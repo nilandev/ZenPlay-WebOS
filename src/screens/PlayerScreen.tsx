@@ -14,6 +14,7 @@ import {
   swallowNextKeyUp,
   useFocusStore,
   useRemoteInput,
+  hasParkedVideo,
 } from "@ui";
 import { ArrowLeft, Play, RotateCcw, TriangleAlert, VolumeX } from "lucide-react";
 import { isFavorite, toggleFavorite, upsertContinueWatching, type ResumePoint } from "../profile-store.js";
@@ -269,7 +270,8 @@ export function PlayerScreen({
   const [areControlsVisible, setAreControlsVisible] = useState(true);
   const [panel, setPanel] = useState<Panel>("none");
   const [returnFocusId, setReturnFocusId] = useState<string | null>(null);
-  const [hasStarted, setHasStarted] = useState(false);
+  // A channel handed over from Live TV's preview is already playing — no loading screen, not even for a frame.
+  const [hasStarted, setHasStarted] = useState(() => hasParkedVideo(streamUrl));
   const [isMuted, setIsMuted] = useState(false);
   const isMutedRef = useRef(isMuted);
   isMutedRef.current = isMuted;
@@ -506,6 +508,15 @@ export function PlayerScreen({
     handleFailureRef.current({ kind: error.kind });
   }, []);
 
+  const markStarted = useCallback(() => {
+    setHasStarted(true);
+    // A live channel that starts on Auto: remember its format for the playlist, so the next channel starts in it.
+    const { activeUrl: url, isAutoFormat, liveSourceId: sourceId } = streamRef.current;
+    startedUrlRef.current = url;
+    const format = liveStreamFormatOf(url);
+    if (isLive && isAutoFormat && format && sourceId) rememberWorkingLiveStreamFormat(sourceId, format);
+  }, [isLive]);
+
   const handleBufferingChange = useCallback(
     (isBuffering: boolean) => {
       clearStallTimer();
@@ -517,16 +528,17 @@ export function PlayerScreen({
         const timeout = !hasPlayed && alternate ? FORMAT_SWITCH_AFTER_MS : hasPlayed && isLive ? LIVE_RECONNECT_STALL_MS : STALL_TIMEOUT_MS;
         stallTimerRef.current = setTimeout(() => handleFailureRef.current({ kind: "network", stalled: true }), timeout);
       } else if (sawBufferingRef.current) {
-        setHasStarted(true); // the first load finished — the stream is playing
-        // A live channel that starts on Auto: remember its format for the playlist, so the next channel starts in it.
-        const { activeUrl: url, isAutoFormat, liveSourceId: sourceId } = streamRef.current;
-        startedUrlRef.current = url;
-        const format = liveStreamFormatOf(url);
-        if (isLive && isAutoFormat && format && sourceId) rememberWorkingLiveStreamFormat(sourceId, format);
+        markStarted(); // the first load finished — the stream is playing
       }
     },
-    [clearStallTimer, isLive],
+    [clearStallTimer, markStarted],
   );
+
+  // Adopted from Live TV's preview: it's already playing, so it has started.
+  const handleStreamAdopted = useCallback(() => {
+    clearStallTimer();
+    markStarted();
+  }, [clearStallTimer, markStarted]);
 
   /** Stream Format in the menu: the same channel in the chosen format, now. */
   function selectStreamFormat(format: LiveStreamFormat): void {
@@ -541,8 +553,13 @@ export function PlayerScreen({
 
   // A fresh stream (channel/episode change) starts with no known tracks
   // until the new engine reports in — reset so the Audio & Subtitles panel
-  // doesn't briefly show the previous stream's tracks.
+  // doesn't briefly show the previous stream's tracks. Only on an actual
+  // change: on mount everything is already fresh, and a reset there would
+  // run after (and undo) VideoSurface adopting an already-playing stream.
+  const resetForUrlRef = useRef(streamUrl);
   useEffect(() => {
+    if (resetForUrlRef.current === streamUrl) return;
+    resetForUrlRef.current = streamUrl;
     setActiveAudioTrackId(null);
     setActiveSubtitleTrackId(null);
     setDurationSeconds(NaN);
@@ -843,6 +860,7 @@ export function PlayerScreen({
           onPlayStateChange={handlePlayStateChange}
           onError={handleError}
           onBufferingChange={handleBufferingChange}
+          onStreamAdopted={handleStreamAdopted}
         />
       )}
       {failure === null && (

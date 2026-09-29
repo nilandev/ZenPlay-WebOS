@@ -5,6 +5,7 @@ export * from "./focus/use-remote-input.js";
 export * from "./focus/Focusable.js";
 export * from "./focus/swallow-key-up.js";
 export * from "./components/VideoSurface.js";
+export { handOffVideo, hasParkedVideo } from "./video-handoff.js";
 export * from "./components/URLImage.js";
 export * from "./components/FocusCard.js";
 export * from "./components/LiftSurface.js";

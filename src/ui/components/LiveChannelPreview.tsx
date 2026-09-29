@@ -57,7 +57,8 @@ export function LiveChannelPreview({
         }}
       >
         {/* Just the dark frame behind the video — VideoSurface draws its own loading animation, so no placeholder icon here. */}
-        <VideoSurface streamUrl={streamUrl} />
+        {/* canHandOff: OK on the previewed channel moves this playing stream into the fullscreen player (see LiveTvScreen). */}
+        <VideoSurface streamUrl={streamUrl} canHandOff />
       </div>
 
       {channel && (
