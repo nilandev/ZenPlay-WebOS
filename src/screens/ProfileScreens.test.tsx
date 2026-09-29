@@ -23,7 +23,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = () => {};
 });
 afterEach(() => {
-  for (const scope of ["content", "manage-grid", "profile-form", "profile-form-confirm"]) useFocusStore.getState().clearGraph(scope);
+  for (const scope of ["content", "manage-grid", "profile-form", "profile-form-confirm", "profile-avatar-picker"]) useFocusStore.getState().clearGraph(scope);
 });
 
 describe("Who's watching?", () => {
@@ -46,19 +46,26 @@ describe("Who's watching?", () => {
     render(<ProfilesScreen profiles={profiles} platform="web" onSelectProfile={() => {}} onCreateProfile={onCreateProfile} onManageProfiles={() => {}} />);
     act(() => useFocusStore.getState().focus("create-profile"));
     press("Enter");
-    expect(screen.getByText("New Profile", { selector: "h1" })).toBeDefined();
+    expect(screen.getByText("Add Profile", { selector: "h1" })).toBeDefined();
 
     fireEvent.change(screen.getByLabelText(/Name/, { selector: "input" }), { target: { value: "  Sam " } });
-    press("ArrowDown"); // Name → Kids profile toggle
-    expect(focusedId()).toBe("profile-form-kids");
-    press("ArrowDown"); // → first avatar
+    press("ArrowUp"); // Name → the avatar
+    expect(focusedId()).toBe("profile-form-avatar");
+    press("Enter"); // opens the picker on the current avatar
+    expect(screen.getByText("Choose an avatar", { selector: "h1" })).toBeDefined();
+    expect(focusedId()).toBe(AVATAR_CHOICES[0]);
     press("ArrowRight");
-    press("Enter"); // choose the second avatar
+    press("Enter"); // choose the second avatar — back on the form, on the avatar
+    expect(screen.queryByText("Choose an avatar")).toBeNull();
+    expect(focusedId()).toBe("profile-form-avatar");
+    press("ArrowDown"); // → Name
+    press("ArrowDown"); // → Kids profile toggle
+    expect(focusedId()).toBe("profile-form-kids");
     press("ArrowDown");
-    press("ArrowDown"); // bottom avatar row, second column → Cancel (the button under it)
+    expect(focusedId()).toBe("profile-form-save");
+    press("ArrowRight");
     expect(focusedId()).toBe("profile-form-cancel");
     press("ArrowLeft");
-    expect(focusedId()).toBe("profile-form-save");
     press("Enter");
     expect(onCreateProfile).toHaveBeenCalledWith(expect.objectContaining({ name: "Sam", avatarUrl: AVATAR_CHOICES[1] }));
     expect(onCreateProfile.mock.calls[0][0].kind).toBeUndefined(); // a standard profile
@@ -98,6 +105,29 @@ describe("ProfileForm", () => {
     press("ArrowRight");
     press("Enter");
     expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("Back in the avatar picker keeps the current avatar and returns to the form", () => {
+    const onSave = vi.fn();
+    const onCancel = vi.fn();
+    render(<ProfileForm platform="web" profile={profiles[0]} title="Edit Profile" saveLabel="Save" onSave={onSave} onCancel={onCancel} />);
+    press("ArrowUp");
+    press("Enter");
+    press("ArrowDown");
+    press("Escape");
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(focusedId()).toBe("profile-form-avatar");
+    act(() => useFocusStore.getState().focus("profile-form-save"));
+    press("Enter");
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ avatarUrl: AVATAR_CHOICES[0] }));
+  });
+
+  it("an empty name falls back to the suggested default", () => {
+    const onSave = vi.fn();
+    render(<ProfileForm platform="web" title="Add Profile" saveLabel="Create" defaultName="Profile 3" onSave={onSave} onCancel={() => {}} />);
+    act(() => useFocusStore.getState().focus("profile-form-save"));
+    press("Enter");
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ name: "Profile 3" }));
   });
 
   it("Back while typing the name closes the keyboard, not the form", () => {

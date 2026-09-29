@@ -57,13 +57,10 @@ export function TvTextField({ id, label, value, onChange, platform, placeholder,
   return (
     <Focusable id={id} style={{ height: "auto" }}>
       <label style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
-        <span style={{ display: "flex", justifyContent: "space-between", fontSize: TV_TEXT, fontWeight: 600, color: isFocused ? "#fff" : "var(--text-dim)" }}>
-          {label}
-          {isFocused && (
-            <span style={{ fontSize: "1.125rem", fontWeight: 500, color: "var(--text-dim)" }}>{isEditing ? "OK when done" : "Press OK to type"}</span>
-          )}
-        </span>
-        <span style={{ display: "block", borderRadius: "0.875rem", boxShadow: `0 0 0 3px ${ring}`, transition: "box-shadow 160ms ease-out" }}>
+        <span style={{ fontSize: TV_TEXT, fontWeight: 600, color: isFocused ? "#fff" : "var(--text-dim)" }}>{label}</span>
+        <span
+          style={{ position: "relative", display: "block", borderRadius: "0.875rem", boxShadow: `0 0 0 3px ${ring}`, transition: "box-shadow 160ms ease-out" }}
+        >
           <input
             data-tv-field={id}
             type={type}
@@ -81,7 +78,7 @@ export function TvTextField({ id, label, value, onChange, platform, placeholder,
               width: "100%",
               boxSizing: "border-box",
               fontSize: "1.5rem",
-              padding: "1rem 1.25rem",
+              padding: isFocused ? "1rem 13rem 1rem 1.25rem" : "1rem 1.25rem",
               borderRadius: "0.875rem",
               border: "none",
               background: "rgba(255,255,255,0.08)",
@@ -90,6 +87,24 @@ export function TvTextField({ id, label, value, onChange, platform, placeholder,
               outline: "none",
             }}
           />
+          {/* The hint sits inside the field, next to where the eye already is. */}
+          {isFocused && (
+            <span
+              aria-hidden
+              style={{
+                position: "absolute",
+                right: "1.25rem",
+                top: "50%",
+                transform: "translateY(-50%)",
+                fontSize: "1.125rem",
+                fontWeight: 500,
+                color: "var(--text-dim)",
+                pointerEvents: "none",
+              }}
+            >
+              {isEditing ? "OK when done" : "Press OK to type"}
+            </span>
+          )}
         </span>
       </label>
     </Focusable>
