@@ -1,7 +1,9 @@
+import { StrictMode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LoadOptions, PlayerEngine, PlayerError } from "@player";
 import { useFocusStore } from "../ui/focus/focus-store.js";
+import { handOffVideo, VideoSurface } from "@ui";
 import { isFavorite } from "../profile-store.js";
 import { PlayerScreen } from "./PlayerScreen.js";
 import { updateSettings } from "../settings-store.js";
@@ -366,6 +368,46 @@ describe("PlayerScreen", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("handles LG remote media keys by keyCode even when the platform reports 'web' (no webOSTV.js)", () => {
+    const { engine, tick } = makeEngine(3600);
+    const onClose = vi.fn();
+    render(<PlayerScreen streamUrl="s" platform="web" onClose={onClose} title="Film" engineFactory={() => engine} />);
+    tick(600);
+    const lgKey = (keyCode: number) =>
+      act(() => {
+        fireEvent.keyDown(document, { key: "Unidentified", keyCode });
+        fireEvent.keyUp(document, { key: "Unidentified", keyCode });
+      });
+
+    lgKey(417); // Fast-forward
+    act(() => vi.advanceTimersByTime(800));
+    expect(engine.seekTo).toHaveBeenCalledWith(610);
+    lgKey(412); // Rewind
+    act(() => vi.advanceTimersByTime(800));
+    expect(engine.seekTo).toHaveBeenLastCalledWith(600);
+
+    lgKey(19); // Pause
+    expect(engine.pause).toHaveBeenCalledTimes(1);
+    const playsBefore = engine.play.mock.calls.length;
+    lgKey(415); // Play
+    expect(engine.play).toHaveBeenCalledTimes(playsBefore + 1);
+    lgKey(413); // Stop
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("Mute toggles the player's sound and shows that it's muted", async () => {
+    const { engine, tick } = makeEngine(3600);
+    render(<PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="Film" engineFactory={() => engine} />);
+    await act(async () => {});
+    tick(600);
+    press("AudioVolumeMute");
+    expect(engine.setMuted).toHaveBeenLastCalledWith(true);
+    expect(screen.getByRole("status", { name: "Muted" })).toBeDefined();
+    press("AudioVolumeMute");
+    expect(engine.setMuted).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByRole("status", { name: "Muted" })).toBeNull();
+  });
+
   it("shows a loading screen with the artwork until the stream starts, then fades it out", async () => {
     const { engine } = makeEngine(3600);
     render(<PlayerScreen streamUrl="s" platform="web" onClose={() => {}} title="Film" info={{ posterUrl: "poster.jpg" }} engineFactory={() => engine} />);
@@ -374,6 +416,125 @@ describe("PlayerScreen", () => {
     expect(screen.getByText("Starting…")).toBeDefined();
     await act(async () => {});
     expect(loading.style.opacity).toBe("0");
+  });
+
+  describe("going full screen from Live TV's preview", () => {
+    /** Renders a preview surface on `url` and makes its <video> look like it's playing. */
+    async function renderPlayingPreview(url: string) {
+      const preview = makeEngine(NaN);
+      const view = render(<VideoSurface streamUrl={url} engineFactory={() => preview.engine} canHandOff />);
+      await act(async () => {});
+      const video = view.container.querySelector("video")!;
+      Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+      Object.defineProperty(video, "readyState", { configurable: true, get: () => 4 });
+      return { preview, video, ...view };
+    }
+
+    it("adopts the playing stream: no reload, no loading screen", async () => {
+      const { preview, video } = await renderPlayingPreview("live/1.m3u8");
+      expect(handOffVideo("live/1.m3u8")).toBe(true);
+
+      const player = makeEngine(NaN);
+      render(<PlayerScreen streamUrl="live/1.m3u8" platform="web" onClose={() => {}} title="News" isLive engineFactory={() => player.engine} />);
+      expect(screen.getByTestId("player-loading").style.opacity).toBe("0");
+      await act(async () => {});
+
+      expect(player.engine.load).not.toHaveBeenCalled();
+      expect(preview.engine.load).toHaveBeenCalledTimes(1);
+      expect(preview.engine.destroy).not.toHaveBeenCalled();
+      expect(video.closest("[style*='position: fixed']")).not.toBeNull(); // the same <video>, now in the player
+      expect(screen.getByTestId("player-loading").style.opacity).toBe("0");
+    });
+
+    it("adopts it under StrictMode too (dev double effects)", async () => {
+      const { preview } = await renderPlayingPreview("live/1.m3u8");
+      handOffVideo("live/1.m3u8");
+      const player = makeEngine(NaN);
+      render(
+        <StrictMode>
+          <PlayerScreen streamUrl="live/1.m3u8" platform="web" onClose={() => {}} title="News" isLive engineFactory={() => player.engine} />
+        </StrictMode>,
+      );
+      await act(async () => {});
+      expect(player.engine.load).not.toHaveBeenCalled();
+      expect(preview.engine.destroy).not.toHaveBeenCalled();
+      expect(screen.getByTestId("player-loading").style.opacity).toBe("0");
+    });
+
+    /** A live player on `url` whose <video> looks like it's playing. */
+    async function renderPlayingPlayer(url: string, onClose = () => {}) {
+      const player = makeEngine(NaN);
+      const view = render(<PlayerScreen streamUrl={url} platform="web" onClose={onClose} title="News" isLive engineFactory={() => player.engine} />);
+      await act(async () => {});
+      const video = view.container.querySelector("video")!;
+      Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+      Object.defineProperty(video, "readyState", { configurable: true, get: () => 4 });
+      return { player, video, ...view };
+    }
+
+    it("Back hands the playing channel back to the preview, which carries on without reloading", async () => {
+      const onClose = vi.fn();
+      const { player, video, unmount } = await renderPlayingPlayer("live/1.m3u8", onClose);
+      press("Escape");
+      expect(onClose).toHaveBeenCalledTimes(1);
+      unmount(); // App closes the player
+      expect(video.isConnected).toBe(true); // parked, still in the document
+
+      const preview = makeEngine(NaN);
+      const { container } = render(<VideoSurface streamUrl="live/1.m3u8" engineFactory={() => preview.engine} canHandOff />);
+      await act(async () => {});
+      expect(preview.engine.load).not.toHaveBeenCalled();
+      expect(player.engine.destroy).not.toHaveBeenCalled();
+      expect(container.contains(video)).toBe(true);
+    });
+
+    it("after a channel change in the player, the preview's own channel loads and the handed-back one stops at once", async () => {
+      const { player, unmount } = await renderPlayingPlayer("live/2.m3u8");
+      press("Escape");
+      unmount();
+      const preview = makeEngine(NaN);
+      render(<VideoSurface streamUrl="live/1.m3u8" engineFactory={() => preview.engine} canHandOff />);
+      await act(async () => {});
+      expect(preview.engine.load).toHaveBeenCalledWith("live/1.m3u8", expect.anything());
+      expect(player.engine.destroy).toHaveBeenCalledTimes(1);
+    });
+
+    it("a paused channel isn't handed back", async () => {
+      const { player, video, unmount } = await renderPlayingPlayer("live/1.m3u8");
+      Object.defineProperty(video, "paused", { configurable: true, get: () => true });
+      press("Escape");
+      unmount();
+      await act(async () => {});
+      expect(player.engine.destroy).toHaveBeenCalledTimes(1);
+    });
+
+    it("a different channel, or one still loading, loads as usual", async () => {
+      await renderPlayingPreview("live/1.m3u8");
+      expect(handOffVideo("live/2.m3u8")).toBe(false);
+
+      const loadingPreview = makeEngine(NaN, { hangOnLoad: true });
+      render(<VideoSurface streamUrl="live/3.m3u8" engineFactory={() => loadingPreview.engine} canHandOff />);
+      await act(async () => {});
+      expect(handOffVideo("live/3.m3u8")).toBe(false);
+
+      const player = makeEngine(NaN);
+      render(<PlayerScreen streamUrl="live/3.m3u8" platform="web" onClose={() => {}} title="News" isLive engineFactory={() => player.engine} />);
+      await act(async () => {});
+      expect(player.engine.load).toHaveBeenCalledWith("live/3.m3u8", expect.anything());
+    });
+
+    it("the preview starts a fresh player on its next channel after handing one off", async () => {
+      const { preview, rerender } = await renderPlayingPreview("live/1.m3u8");
+      handOffVideo("live/1.m3u8");
+      const next = makeEngine(NaN);
+      rerender(<VideoSurface streamUrl={null} engineFactory={() => next.engine} canHandOff />);
+      expect(preview.engine.unload).not.toHaveBeenCalled(); // it isn't the preview's to stop any more
+      rerender(<VideoSurface streamUrl="live/2.m3u8" engineFactory={() => next.engine} canHandOff />);
+      await act(async () => {});
+      expect(next.engine.load).toHaveBeenCalledWith("live/2.m3u8", expect.anything());
+      act(() => vi.advanceTimersByTime(5000)); // never adopted — torn down
+      expect(preview.engine.destroy).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("keeps the loading screen up while a stream hasn't started", async () => {
@@ -651,12 +812,25 @@ describe("PlayerScreen", () => {
       return { view, engine, tick, onNextEpisode };
     }
 
-    it("appears in the last 20 seconds with the next episode, and plays it after 10 seconds", async () => {
+    it("brings the controls up with Next Episode focused when its button appears", async () => {
+      const { tick } = await renderEpisode();
+      tick(2500);
+      act(() => vi.advanceTimersByTime(6000)); // controls auto-hide
+      tick(2590); // 110s left
+      expect(focusedId()).toBe("next-episode");
+      const controls = screen.getByText("Next Episode").closest<HTMLElement>('div[style*="transition: opacity"]')!;
+      expect(controls.style.opacity).toBe("1");
+    });
+
+    it("appears in the last 30 seconds with the next episode, and plays it after 10 seconds", async () => {
       const { tick, onNextEpisode } = await renderEpisode();
-      tick(2600);
+      tick(2660);
       expect(screen.queryByRole("dialog", { name: "Next episode" })).toBeNull();
-      tick(2681);
+      act(() => vi.advanceTimersByTime(6000)); // controls auto-hide
+      tick(2671);
       const card = screen.getByRole("dialog", { name: "Next episode" });
+      // Shown over the controls, which come up with it.
+      expect(card.closest<HTMLElement>('div[style*="transition: opacity"]')!.style.opacity).toBe("1");
       expect(card.textContent).toContain("Next episode in 10s");
       expect(card.textContent).toContain("S2 E5 · The Tide");
       expect(card.textContent).toContain("The storm reaches the town.");

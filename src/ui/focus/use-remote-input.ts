@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { resolveRemoteAction, type PlatformId } from "@core";
 import { useFocusStore, type FocusDirection } from "./focus-store.js";
+import { playUiSound } from "../ui-sounds.js";
 
 /** Holding Select this long counts as a long-press instead of a tap — see onLongSelect below. */
 const LONG_PRESS_MS = 500;
@@ -20,6 +21,7 @@ export interface RemoteInputHandlers {
   onFastForward?: (isRepeat: boolean) => void;
   onChannelUp?: () => void;
   onChannelDown?: () => void;
+  onMute?: () => void;
 }
 
 /**
@@ -132,6 +134,7 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
             clearLongPressTimer();
             longPressTimerRef.current = setTimeout(() => {
               longPressFiredRef.current = true;
+              playUiSound("select");
               handlersRef.current.onLongSelect?.(focusedAtPress);
             }, LONG_PRESS_MS);
           }
@@ -141,7 +144,10 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
           // Holding Back would otherwise walk up several levels at once (and
           // on Home, close the app) — one press is one step back.
           if (event.repeat) break;
-          currentHandlers.onBack?.();
+          if (currentHandlers.onBack) {
+            playUiSound("back");
+            currentHandlers.onBack();
+          }
           break;
         case "play-pause":
           currentHandlers.onPlayPause?.();
@@ -172,6 +178,11 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
         case "channel-down":
           currentHandlers.onChannelDown?.();
           break;
+        case "mute":
+          if (!currentHandlers.onMute) break; // unhandled: leave it to the TV's own volume
+          event.preventDefault();
+          currentHandlers.onMute();
+          break;
         case "unknown":
           break;
       }
@@ -185,6 +196,7 @@ export function useRemoteInput(platform: PlatformId, handlers: RemoteInputHandle
       // Captured before select() runs, since a per-node onSelect may itself
       // move focus — the screen-level handler should see what was selected.
       const { focusedId, select } = useFocusStore.getState();
+      if (focusedId !== null) playUiSound("select");
       // Per-node onSelect (e.g. TopNav tabs) fires first; screens that
       // instead inspect focusedId themselves (e.g. VodScreen) still work
       // via the onSelect handler below.

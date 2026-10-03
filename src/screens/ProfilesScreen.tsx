@@ -86,8 +86,9 @@ export function ProfilesScreen({ profiles, platform, onSelectProfile, onCreatePr
     return (
       <ProfileForm
         platform={platform}
-        title="New Profile"
+        title="Add Profile"
         saveLabel="Create"
+        defaultName={nextProfileName(profiles)}
         // The first profile must be a parent (standard) profile.
         canBeKids={profiles.some((p) => !isKidsProfile(p))}
         onCancel={() => setIsCreating(false)}
@@ -189,4 +190,12 @@ function ProfilePickerGrid({
       </ProfileGridLayout>
     </MeshBackground>
   );
+}
+
+/** "Profile 2", "Profile 3"… — the first number no existing profile already uses. */
+function nextProfileName(profiles: Profile[]): string {
+  const taken = new Set(profiles.map((p) => p.name.trim().toLowerCase()));
+  let n = profiles.length + 1;
+  while (taken.has(`profile ${n}`)) n += 1;
+  return `Profile ${n}`;
 }

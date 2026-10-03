@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { create } from "zustand";
+import { playUiSound } from "../ui-sounds.js";
 
 export type FocusDirection = "up" | "down" | "left" | "right";
 
@@ -92,6 +93,7 @@ export const useFocusStore = create<FocusState>((set, get) => ({
     const nextId = nodes[focusedId]?.neighbors[direction];
     if (nextId && nodes[nextId]) {
       set({ focusedId: nextId });
+      playUiSound("move");
     }
   },
 

@@ -22,6 +22,8 @@ export interface AppSettings {
   playbackSpeed: PlaybackSpeed;
   /** Xtream live channels only (see live-stream-url.ts). */
   liveStreamFormat: LiveStreamFormatSetting;
+  /** Fire TV-style ticks on focus moves, Select and Back (see ui/ui-sounds.ts). */
+  navigationSounds: boolean;
 }
 
 const SETTINGS_KEY = "iptv.settings.v1";
@@ -36,6 +38,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   guideDaysToKeep: 3,
   playbackSpeed: 1,
   liveStreamFormat: "auto",
+  navigationSounds: true,
 };
 
 /**

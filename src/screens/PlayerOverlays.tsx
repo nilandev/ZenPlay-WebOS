@@ -303,7 +303,8 @@ export const NEXT_UP_CREDITS_ID = "player-next-up-credits";
  * synopsis with "Next episode in 10s" counting down (a bar fills across
  * the thumbnail), then it plays. "Play Now" skips the wait; "Watch
  * Credits" dismisses the card and lets this episode finish. The countdown
- * holds while playback is paused.
+ * holds while playback is paused. Drawn by the player just above its
+ * controls, which stay up while the card is shown.
  */
 export function NextUpCard({
   episode,
@@ -358,10 +359,6 @@ export function NextUpCard({
       role="dialog"
       aria-label="Next episode"
       style={{
-        position: "absolute",
-        right: BROWSE_SIDE_PADDING,
-        bottom: "3rem",
-        zIndex: 9,
         width: "44rem",
         padding: "1.5rem",
         borderRadius: "1.5rem",

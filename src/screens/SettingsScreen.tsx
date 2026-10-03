@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PlatformId, PlaylistSource, Profile } from "@core";
 import { Check, ChevronRight, ShieldCheck } from "lucide-react";
-import { BROWSE_SIDE_PADDING, Focusable, MeshBackground, TV_TEXT, useFocusStore, useIsFocused, useRemoteInput, type FocusNode } from "@ui";
+import { BROWSE_SIDE_PADDING, Focusable, MeshBackground, setUiSoundsEnabled, TV_TEXT, useFocusStore, useIsFocused, useRemoteInput, type FocusNode } from "@ui";
 import {
   loadSettings,
   updateSettings,
@@ -20,6 +20,7 @@ import { dismissPlaylistDialog, PlaylistCards, playlistCardId, playlistsEntryFro
 
 const AUTO_REFRESH_ID = "settings-auto-refresh";
 const PARENTAL_ID = "settings-parental-controls";
+const NAV_SOUNDS_ID = "settings-navigation-sounds";
 const SCOPE = "settings";
 const updateOnLaunchId = (value: UpdateOnLaunch) => `settings-update-on-launch:${value}`;
 const catalogRefreshId = (value: CatalogRefreshHours) => `settings-catalog-refresh:${value}`;
@@ -171,7 +172,9 @@ function SettingsView({
   settingsRef.current = settings;
 
   function patch(update: Partial<AppSettings>): void {
-    setSettings(updateSettings(update));
+    const next = updateSettings(update);
+    setUiSoundsEnabled(next.navigationSounds);
+    setSettings(next);
   }
   const onOpenParentalRef = useRef(onOpenParental);
   onOpenParentalRef.current = onOpenParental;
@@ -191,6 +194,7 @@ function SettingsView({
         pickerRow(LIVE_FORMAT_OPTIONS, liveFormatId, "liveStreamFormat"),
         pickerRow(PLAYBACK_SPEED_OPTIONS, playbackSpeedId, "playbackSpeed"),
       ].map((row) => row.map(({ id, patch: update }) => ({ id, onSelect: () => patch(update) }))),
+      [{ id: NAV_SOUNDS_ID, onSelect: () => patch({ navigationSounds: !settingsRef.current.navigationSounds }) }],
       [{ id: PARENTAL_ID, onSelect: () => onOpenParentalRef.current() }],
     ];
     // Up/Down keep the column position, clamped to the neighbouring row's length.
@@ -303,6 +307,16 @@ function SettingsView({
             value={settings.playbackSpeed}
             getId={playbackSpeedId}
             onSelect={(value) => patch({ playbackSpeed: value })}
+          />
+        </SettingsSection>
+
+        <SettingsSection title="Sound">
+          <ToggleRow
+            id={NAV_SOUNDS_ID}
+            label="Navigation Sounds"
+            description="A soft click when moving between items, selecting and going back"
+            value={settings.navigationSounds}
+            onToggle={() => patch({ navigationSounds: !settings.navigationSounds })}
           />
         </SettingsSection>
 
