@@ -19,12 +19,13 @@ import {
   Toast,
   BROWSE_CONTENT_LEFT,
   BROWSE_GAP,
-  BROWSE_ROW_GAP,
+  POSTER_ROW_GAP,
   BROWSE_SIDE_PADDING,
   POSTER_COLUMNS,
   POSTER_WIDTH,
   TV_TEXT,
   SECTION_ICONS,
+  useStickyHeaderScrollPadding,
 } from "@ui";
 import { loadChannelsByKind, loadVodCategories } from "../content-loader.js";
 import { loadFavorites, toggleFavorite } from "../profile-store.js";
@@ -231,6 +232,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, onOpenSea
 
   // Header for the content area: the category being shown and,
   // for a single category, how many titles it holds.
+  const stickyHeaderRef = useStickyHeaderScrollPadding();
   const headerTitle = isAllCategories ? "Movies" : activeCategoryLabel;
   const headerCount = gridMovies ? (isLocalCatalogReady ? localGridTotal : categoryFetchMovies.length) : null;
   // "Updated 3h ago", and a Refresh for the one category on screen.
@@ -439,7 +441,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, onOpenSea
                   display: "grid",
                   gridTemplateColumns: `repeat(${POSTER_COLUMNS}, minmax(0, 1fr))`,
                   columnGap: BROWSE_GAP,
-                  rowGap: BROWSE_ROW_GAP,
+                  rowGap: POSTER_ROW_GAP,
                   padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`,
                 }}
               >
@@ -514,6 +516,7 @@ export function VodScreen({ source, platform, profile, onPlay, onBack, onOpenSea
 
       {/* Sticky so the title and Search button stay visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
       <div
+        ref={stickyHeaderRef}
         style={{
           position: "sticky",
           top: 0,

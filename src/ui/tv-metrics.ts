@@ -30,6 +30,12 @@ export const BROWSE_GAP = "2.25rem";
  */
 export const BROWSE_ROW_GAP = "3rem";
 /**
+ * Gap between rows of movie/series posters, whose titles sit in a caption
+ * below the artwork (see FocusCard): extra room so one row's captions don't
+ * crowd the next row's posters.
+ */
+export const POSTER_ROW_GAP = "4.5rem";
+/**
  * One poster's width: the space right of the collapsed rail split into
  * POSTER_COLUMNS, after the margins and gaps. Used for shelf cards so they match the grid's columns
  * exactly (the grid itself just uses repeat(POSTER_COLUMNS, 1fr)).

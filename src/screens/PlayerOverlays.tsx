@@ -24,6 +24,22 @@ export function yearFromDate(date?: string): number | undefined {
 }
 
 /**
+ * "2014-11-07" → "Nov 7, 2014" (in the TV's locale). Falls back to just the
+ * year when the month/day are missing or garbled, and undefined when even
+ * the year is. Parsed by hand rather than `new Date(str)`, which reads a
+ * bare date as UTC midnight and can show the previous day west of UTC.
+ */
+export function formatReleaseDate(date?: string): string | undefined {
+  const year = yearFromDate(date);
+  if (year === undefined) return undefined;
+  const match = /^\d{4}-(\d{2})-(\d{2})/.exec(date ?? "");
+  const month = Number(match?.[1]);
+  const day = Number(match?.[2]);
+  if (!match || month < 1 || month > 12 || day < 1 || day > 31) return String(year);
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/**
  * Shown from the moment the player opens until the stream actually starts
  * (instead of a black screen): the backdrop, the poster or channel logo,
  * the title and an indeterminate progress bar. Fades out once playback

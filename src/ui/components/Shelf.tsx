@@ -67,7 +67,7 @@ export function Shelf<T>({ title, items, getId, renderItem, trailing, trailingId
   if (items.length === 0) return <></>;
 
   return (
-    <section ref={sectionRef} style={{ marginBottom: "1rem" }}>
+    <section ref={sectionRef} style={{ marginBottom: "2.5rem" }}>
       {title && <h2 style={{ fontSize: TV_HEADING, fontWeight: 700, margin: `0 0 -0.5rem ${leftInset}` }}>{title}</h2>}
       <div
         ref={trackRef}

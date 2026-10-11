@@ -58,6 +58,12 @@ export interface PlayerEngine {
    */
   unload(): void;
   destroy(): void;
+  /**
+   * Whether the playing <video> can be moved to another parent without
+   * interrupting the picture — what Live TV's preview → fullscreen hand-off
+   * relies on (see video-handoff.ts). Omitted means yes.
+   */
+  canTransferVideoElement?(): boolean;
 
   getAudioTracks(): AudioTrackInfo[];
   setAudioTrack(id: number): void;

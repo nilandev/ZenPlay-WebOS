@@ -200,6 +200,8 @@ export function VideoSurface({
       const player = playerRef.current;
       // Only a stream that's actually playing is worth handing on; one still loading just loads again over there.
       if (!player || player.streamUrl !== url || player.video.paused || player.video.readyState < HAVE_FUTURE_DATA) return null;
+      // Some platforms' pipelines lose the picture when the element moves (webOS) — the player then loads it fresh instead.
+      if (player.engine.canTransferVideoElement?.() === false) return null;
       playerRef.current = null;
       player.unbind();
       return { streamUrl: url, engine: player.engine, video: player.video };

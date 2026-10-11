@@ -23,6 +23,7 @@ import { useNowNext } from "../use-now-next.js";
 import { liveStreamUrl } from "../live-stream-url.js";
 import { withChannelNumbers, type ChannelLineup } from "../channel-lineup.js";
 import { useFavoritesRevision } from "../use-favorites-revision.js";
+import { frequentCategoryIds, recordCategoryUse, splitByFrequency } from "../category-usage-store.js";
 
 export interface LiveTvScreenProps {
   source: PlaylistSource;
@@ -118,15 +119,26 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, onOpen
   }, [profile.id, source.id, favoritesVersion, favoritesRevision]);
   const favoriteChannels = useMemo(() => channels.filter((c) => favoriteIds.has(c.id)), [channels, favoriteIds]);
 
-  // Rail rows: My List (the user's favourite channels) and All Channels first, then the provider's categories.
-  const categoryItems = useMemo(
-    () => [
-      { id: FAVOURITES_CATEGORY_ID, label: "My List", icon: SECTION_ICONS.favourites, count: favoriteChannels.length },
-      { id: ALL_CATEGORY_ID, label: "All Channels", count: channels.length },
-      ...categories.map((c) => ({ id: c.id, label: c.name })),
-    ],
-    [categories, channels.length, favoriteChannels.length],
-  );
+  // Most-opened categories, under "Frequently used" (same as Movies/Series).
+  // Read once per visit (the screen remounts on every tab switch) so the
+  // rail doesn't reshuffle under the user while they browse.
+  const frequentIds = useMemo(() => frequentCategoryIds(profile.id, source.id, "live"), [profile.id, source.id]);
+
+  // Rail rows: My List (the user's favourite channels) and All Channels first,
+  // then the frequently used categories, then the rest of the provider's categories.
+  const { categoryItems, railSections } = useMemo(() => {
+    const { frequent, rest } = splitByFrequency(categories, frequentIds);
+    const toItem = (c: Category) => ({ id: c.id, label: c.name });
+    return {
+      categoryItems: [
+        { id: FAVOURITES_CATEGORY_ID, label: "My List", icon: SECTION_ICONS.favourites, count: favoriteChannels.length },
+        { id: ALL_CATEGORY_ID, label: "All Channels", count: channels.length },
+        ...frequent.map(toItem),
+        ...rest.map(toItem),
+      ],
+      railSections: frequent.length > 0 ? [{ at: 2, label: "Frequently used" }, { at: 2 + frequent.length, label: "Categories" }] : [{ at: 2, label: "Categories" }],
+    };
+  }, [categories, frequentIds, channels.length, favoriteChannels.length]);
   const activeCategoryLabel = categoryItems.find((c) => c.id === activeCategoryId)?.label ?? "All Channels";
 
   const visibleChannels = useMemo(() => {
@@ -225,9 +237,10 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, onOpen
       if (firstChannelId) current.focus(firstChannelId);
       return;
     }
+    if (id !== ALL_CATEGORY_ID && id !== FAVOURITES_CATEGORY_ID) recordCategoryUse(profile.id, source.id, "live", id);
     // ChannelSidebar focuses the new list's first channel when its channels change.
     setActiveCategoryId(id);
-  }, []);
+  }, [profile.id, source.id]);
 
   const { nowNext, isLoading: isGuideLoading } = useNowNext(source, isPlaybackOpen ? null : previewChannel);
 
@@ -288,7 +301,7 @@ export function LiveTvScreen({ source, platform, profile, onBack, onPlay, onOpen
         items={categoryItems}
         activeId={activeCategoryId}
         onSelect={selectCategory}
-        sectionBreakAt={2}
+        sections={railSections}
       />
       <div style={{ height: "100vh", display: "flex", overflow: "hidden", paddingLeft: CATEGORY_RAIL_COLLAPSED_WIDTH, boxSizing: "border-box" }}>
         <div style={{ width: "36rem", flexShrink: 0, display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.06)" }}>

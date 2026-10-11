@@ -229,6 +229,17 @@ describe("HlsPlayerEngine native HLS (webOS)", () => {
     expect(video.src).toBe("http://example.com/live/u/p/1.m3u8");
   });
 
+  it("refuses to have its <video> moved to another surface on webOS (the platform pipeline loses the picture), but allows it elsewhere", () => {
+    expect(new HlsPlayerEngine().canTransferVideoElement()).toBe(true);
+    const w = window as unknown as { webOS?: unknown };
+    w.webOS = {};
+    try {
+      expect(new HlsPlayerEngine().canTransferVideoElement()).toBe(false);
+    } finally {
+      delete w.webOS;
+    }
+  });
+
   it("falls back to hls.js when the platform can't play HLS natively", async () => {
     const engine = new HlsPlayerEngine({ preferNativeHls: true });
     const video = makeVideoElement();

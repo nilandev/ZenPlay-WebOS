@@ -24,7 +24,7 @@ import {
   useIsFocused,
   BROWSE_CONTENT_LEFT,
   BROWSE_GAP,
-  BROWSE_ROW_GAP,
+  POSTER_ROW_GAP,
   BROWSE_SIDE_PADDING,
   POSTER_COLUMNS,
   POSTER_WIDTH,
@@ -32,6 +32,7 @@ import {
   TV_HEADING,
   EPISODE_WIDTH,
   SECTION_ICONS,
+  useStickyHeaderScrollPadding,
 } from "@ui";
 import { loadSeriesCategories, loadSeriesDetails, loadSeriesList } from "../content-loader.js";
 import { toggleFavorite, loadContinueWatching, loadFavorites } from "../profile-store.js";
@@ -41,6 +42,7 @@ import { useSeriesCatalogPage } from "../use-catalog-page.js";
 import { syncSource } from "../sync/sync-manager.js";
 import { useSourceSyncState } from "../sync/sync-store.js";
 import { SyncNotice } from "./SyncNotice.js";
+import { formatReleaseDate } from "./PlayerOverlays.js";
 import { frequentCategoryIds, recordCategoryUse, splitByFrequency } from "../category-usage-store.js";
 import { useLocalCatalogReady } from "../use-local-catalog-ready.js";
 import { useCatalogFreshness } from "../use-catalog-freshness.js";
@@ -328,6 +330,7 @@ export function SeriesScreen({
 
   // Header for the content area: the category (or search) being shown and,
   // for a single category, how many titles it holds.
+  const stickyHeaderRef = useStickyHeaderScrollPadding();
   const headerTitle = isAllCategories ? "Series" : activeCategoryLabel;
   const headerCount = gridSeries ? (isLocalCatalogReady ? localGridTotal : categoryFetchSeries.length) : null;
   // "Updated 3h ago", and a Refresh for the one category on screen.
@@ -592,7 +595,7 @@ export function SeriesScreen({
                   display: "grid",
                   gridTemplateColumns: `repeat(${POSTER_COLUMNS}, minmax(0, 1fr))`,
                   columnGap: BROWSE_GAP,
-                  rowGap: BROWSE_ROW_GAP,
+                  rowGap: POSTER_ROW_GAP,
                   padding: `0 ${BROWSE_SIDE_PADDING} 0 ${BROWSE_CONTENT_LEFT}`,
                 }}
               >
@@ -706,6 +709,7 @@ export function SeriesScreen({
 
       {/* Sticky so the title and Search button stay visible while shelves or a long grid scroll underneath, instead of scrolling away with the content. */}
       <div
+        ref={stickyHeaderRef}
         style={{
           position: "sticky",
           top: 0,
@@ -997,6 +1001,7 @@ function SeasonTab({ season, isActive, onSelect }: { season: number; isActive: b
 function EpisodeCard({ episode, progress, onSelect }: { episode: SeriesEpisode; progress?: number; onSelect: () => void }): JSX.Element {
   const isFocused = useIsFocused(episode.id);
   const minutes = episode.durationSeconds ? Math.round(episode.durationSeconds / 60) : undefined;
+  const releaseDate = formatReleaseDate(episode.releaseDate);
 
   return (
     <Focusable id={episode.id}>
@@ -1039,6 +1044,7 @@ function EpisodeCard({ episode, progress, onSelect }: { episode: SeriesEpisode; 
           <div style={{ fontSize: TV_TEXT, fontWeight: 700, color: "#fff", marginBottom: "0.375rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {episode.episode}. {episode.title}
           </div>
+          {releaseDate && <div style={{ fontSize: "1rem", fontWeight: 600, color: "rgba(235,236,242,0.55)", marginBottom: "0.375rem" }}>{releaseDate}</div>}
           {episode.plot && (
             <p
               style={{

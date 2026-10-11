@@ -29,6 +29,7 @@ export * from "./components/SlowLoadHint.js";
 export * from "./components/PlaybackControls.js";
 export * from "./perf-tier.js";
 export * from "./tv-metrics.js";
+export * from "./use-sticky-header-scroll-padding.js";
 export * from "./section-icons.js";
 export * from "./components/ProgramGuideGrid.js";
 export * from "./components/TvButton.js";

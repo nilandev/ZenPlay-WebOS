@@ -150,6 +150,25 @@ describe("LiveTvScreen", () => {
     expect(useFocusStore.getState().focusedId).toBe("ch-3");
   });
 
+  it("lists the most-used categories under Frequently used on the next visit, after My List and All Channels", async () => {
+    const { unmount } = render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
+    await flush();
+    expect(screen.queryByText("Frequently used")).toBeNull();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Sports" }).click();
+    });
+    unmount();
+
+    render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={() => {}} />);
+    await flush();
+    expect(screen.getByText("Frequently used")).toBeDefined();
+    const railRows = screen.getAllByRole("button").map((el) => el.textContent ?? "");
+    const order = ["My List", "All Channels", "Sports", "News"].map((label) => railRows.findIndex((text) => text.startsWith(label)));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
   it("OK on a channel plays it full screen in one press", async () => {
     const onPlay = vi.fn();
     render(<LiveTvScreen onOpenSearch={() => {}} source={source} platform="web" profile={profile} onBack={() => {}} onPlay={onPlay} />);

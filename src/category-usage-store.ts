@@ -1,5 +1,5 @@
 /**
- * How often each profile opens each Movies/Series category, per playlist,
+ * How often each profile opens each Live TV/Movies/Series category, per playlist,
  * persisted in localStorage (`iptv.category-usage.v1`) — the category
  * rails show the most-used ones at the top under "Frequently used".
  *
@@ -13,7 +13,7 @@ const CATEGORY_USAGE_KEY = "iptv.category-usage.v1";
 /** How many categories the "Frequently used" section shows at most. */
 export const FREQUENT_CATEGORY_LIMIT = 5;
 
-export type CategoryUsageKind = "vod" | "series";
+export type CategoryUsageKind = "live" | "vod" | "series";
 
 interface CategoryUsage {
   count: number;

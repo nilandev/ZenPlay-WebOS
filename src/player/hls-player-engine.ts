@@ -209,6 +209,19 @@ export class HlsPlayerEngine implements PlayerEngine {
     if (this.video) this.video.currentTime = seconds;
   }
 
+  /**
+   * False on webOS. There, playback runs in LG's platform media pipeline
+   * (native HLS and direct-play via video.src), which draws on a hardware
+   * video plane placed from the <video> element's on-screen box. Moving
+   * the element — into video-handoff's hidden holder and then into the
+   * fullscreen player — left the plane behind: the player adopted a
+   * "playing" stream that never appeared, i.e. an empty black screen. A
+   * fresh load in the player is a moment slower but always shows.
+   */
+  canTransferVideoElement(): boolean {
+    return !isWebOsRuntime();
+  }
+
   unload(): void {
     this.destroyHlsInstance();
     this.clearPendingStartSeek();

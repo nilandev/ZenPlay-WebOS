@@ -19,6 +19,12 @@ export interface LiftSurfaceProps {
   tabIndex?: number;
   onClick?: () => void;
   children: ReactNode;
+  /**
+   * Content below the face (e.g. a poster's title caption). It lifts with the
+   * face, so a focused card never grows over its own caption, but sits
+   * outside the shadow and sheen, which stay sized to the face.
+   */
+  caption?: ReactNode;
 }
 
 const DEFAULT_SHADOW = "0 1.5rem 3rem -0.5rem rgba(0,0,0,0.7), 0 0.5rem 1rem rgba(0,0,0,0.45)";
@@ -46,6 +52,7 @@ export function LiftSurface({
   tabIndex,
   onClick,
   children,
+  caption,
 }: LiftSurfaceProps): JSX.Element {
   return (
     <Element
@@ -69,34 +76,37 @@ export function LiftSurface({
         transition: `transform ${LIFT_TRANSITION}`,
       }}
     >
-      <div
-        aria-hidden
-        data-testid="lift-shadow"
-        style={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: radius,
-          boxShadow: shadow,
-          opacity: isFocused ? 1 : 0,
-          transition: `opacity ${LIFT_TRANSITION}`,
-          pointerEvents: "none",
-        }}
-      />
-      <div style={{ position: "relative", width: "100%", borderRadius: radius, overflow: "hidden", ...faceStyle }}>
-        {children}
+      <div style={{ position: "relative" }}>
         <div
           aria-hidden
-          data-testid="lift-sheen"
+          data-testid="lift-shadow"
           style={{
             position: "absolute",
             inset: 0,
-            background: "linear-gradient(155deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.05) 35%, rgba(255,255,255,0) 55%)",
+            borderRadius: radius,
+            boxShadow: shadow,
             opacity: isFocused ? 1 : 0,
             transition: `opacity ${LIFT_TRANSITION}`,
             pointerEvents: "none",
           }}
         />
+        <div style={{ position: "relative", width: "100%", borderRadius: radius, overflow: "hidden", ...faceStyle }}>
+          {children}
+          <div
+            aria-hidden
+            data-testid="lift-sheen"
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "linear-gradient(155deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.05) 35%, rgba(255,255,255,0) 55%)",
+              opacity: isFocused ? 1 : 0,
+              transition: `opacity ${LIFT_TRANSITION}`,
+              pointerEvents: "none",
+            }}
+          />
+        </div>
       </div>
+      {caption}
     </Element>
   );
 }

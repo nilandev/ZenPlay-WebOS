@@ -218,6 +218,7 @@ export function KidsHomeScreen({
                   id={cardId(rail.id, item)}
                   width={POSTER_WIDTH}
                   aspectRatio={item.kind === "live" ? "16 / 9" : undefined}
+                  labelPlacement={item.kind === "live" ? "overlay" : "below"}
                   title={item.name}
                   subtitle={item.subtitle}
                   imageUrl={item.imageUrl}

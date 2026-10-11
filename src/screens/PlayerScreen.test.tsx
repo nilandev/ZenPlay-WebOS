@@ -446,6 +446,20 @@ describe("PlayerScreen", () => {
       expect(screen.getByTestId("player-loading").style.opacity).toBe("0");
     });
 
+    it("on webOS, where moving the <video> loses the picture, the player loads the channel fresh instead of adopting a blank stream", async () => {
+      const { preview, video } = await renderPlayingPreview("live/1.m3u8");
+      (preview.engine as { canTransferVideoElement?: () => boolean }).canTransferVideoElement = () => false;
+      expect(handOffVideo("live/1.m3u8")).toBe(false);
+
+      const player = makeEngine(NaN);
+      render(<PlayerScreen streamUrl="live/1.m3u8" platform="webos" onClose={() => {}} title="News" isLive engineFactory={() => player.engine} />);
+      expect(screen.getByTestId("player-loading").style.opacity).toBe("1");
+      await act(async () => {});
+
+      expect(player.engine.load).toHaveBeenCalledWith("live/1.m3u8", expect.anything());
+      expect(video.closest("[style*='position: fixed']")).toBeNull(); // the preview kept its own <video>
+    });
+
     it("adopts it under StrictMode too (dev double effects)", async () => {
       const { preview } = await renderPlayingPreview("live/1.m3u8");
       handOffVideo("live/1.m3u8");

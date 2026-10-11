@@ -18,6 +18,7 @@ import {
   useRemoteInput,
   BROWSE_GAP,
   BROWSE_ROW_GAP,
+  POSTER_ROW_GAP,
   TV_HEADING,
   TV_TEXT,
   type FocusNode,
@@ -550,7 +551,7 @@ function SeeAllGrid({ source, kind, query, items, hasMore, isLoading }: { source
       {isLoading && items.length === 0 ? (
         <LoadingState />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${GRID_COLUMNS[kind]}, minmax(0, 1fr))`, columnGap: BROWSE_GAP, rowGap: BROWSE_ROW_GAP }}>
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${GRID_COLUMNS[kind]}, minmax(0, 1fr))`, columnGap: BROWSE_GAP, rowGap: kind === "live" ? BROWSE_ROW_GAP : POSTER_ROW_GAP }}>
           {/* Selecting goes through the focus graph (see contentRows), so the cards here only render. */}
           {items.map((item) => (
             <ResultCard key={item.id} source={source} kind={kind} id={gridId(kind, item.id)} item={item} onSelect={() => {}} fill />

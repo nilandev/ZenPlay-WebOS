@@ -33,6 +33,7 @@ export function ShelfRowSkeleton({ rows = 2, cardsPerRow = POSTER_COLUMNS + 1, c
             {Array.from({ length: cardsPerRow }, (_, cardIndex) => (
               <div key={cardIndex} style={{ flex: "0 0 auto", width: cardWidth }}>
                 <Shimmer height="auto" borderRadius={16} style={{ width: cardWidth, aspectRatio }} />
+                <Shimmer width="70%" height="1.625rem" style={{ marginTop: "0.875rem" }} />
               </div>
             ))}
           </div>

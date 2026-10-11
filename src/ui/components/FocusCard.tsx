@@ -26,6 +26,13 @@ export interface FocusCardProps {
   progress?: number;
   /** Placeholder icon when there's no artwork — the section's icon (see section-icons.ts). */
   placeholderIcon?: LucideIcon;
+  /**
+   * Where the title/subtitle go. "below" (the default, for movie/series
+   * posters) puts them in a caption under the artwork so busy poster art
+   * never fights the text; "overlay" draws them over the bottom of the
+   * artwork behind a scrim — kept for live-channel tiles.
+   */
+  labelPlacement?: "below" | "overlay";
 }
 
 /**
@@ -37,14 +44,13 @@ export interface FocusCardProps {
  * layer on every card in a grid exhausts TV GPU memory. See PLAN.md
  * "Performance principles".
  *
- * The title renders on top of the artwork itself, anchored to the bottom
- * behind a gradient scrim (Netflix/Apple TV poster-tile style), rather than
- * in a caption strip below it — a fixed-height caption either clips long
- * titles or reserves enough height to look empty for short ones. Anchoring
- * from the bottom with flexbox instead of a fixed height lets the text
- * block grow upward for longer titles without a fixed cap, and without
- * pushing the card's own layout height around (it's positioned over the
- * image, not stacked after it).
+ * By default the title sits in a caption below the artwork (clamped to two
+ * lines, subtitle to one): on a TV, text drawn over poster art is hard to
+ * read however dark the scrim, since most posters already carry their own
+ * title treatment and busy imagery. The caption lifts with the card (it's
+ * LiftSurface's caption), so a focused poster never grows over its own
+ * label. Watch progress then runs along the artwork's bottom edge.
+ * labelPlacement="overlay" keeps the older on-artwork title for live tiles.
  */
 export function FocusCard({
   id,
@@ -57,8 +63,57 @@ export function FocusCard({
   badge,
   progress,
   placeholderIcon,
+  labelPlacement = "below",
 }: FocusCardProps): JSX.Element {
   const isFocused = useIsFocused(id);
+
+  if (labelPlacement === "below") {
+    return (
+      <Focusable id={id} className="focus-card">
+        <LiftSurface
+          isFocused={isFocused}
+          radius={CARD_RADIUS}
+          width={width}
+          role="button"
+          tabIndex={-1}
+          onClick={onSelect}
+          shadow="0 1.25rem 2rem -0.5rem rgba(0,0,0,0.75), 0 0.375rem 0.75rem rgba(0,0,0,0.45)"
+          faceStyle={{ aspectRatio, background: "#1c1c22" }}
+          caption={
+            <div style={{ padding: "0.875rem 0.25rem 0" }}>
+              <div
+                style={{
+                  fontSize: "1.625rem",
+                  fontWeight: 700,
+                  lineHeight: 1.25,
+                  color: isFocused ? "#fff" : "rgba(255,255,255,0.8)",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                }}
+              >
+                {title}
+              </div>
+              {subtitle && (
+                <div style={{ fontSize: "1.25rem", color: "rgba(255,255,255,0.6)", marginTop: "0.25rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {subtitle}
+                </div>
+              )}
+            </div>
+          }
+        >
+          <URLImage src={imageUrl} alt="" seed={id} loading="lazy" placeholderIcon={placeholderIcon} />
+          {badge && <div style={{ position: "absolute", top: "0.75rem", right: "0.75rem" }}>{badge}</div>}
+          {progress !== undefined && (
+            <div aria-hidden style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "0.3rem", background: "rgba(255,255,255,0.25)" }}>
+              <div style={{ width: `${Math.min(1, Math.max(0, progress)) * 100}%`, height: "100%", background: "var(--accent, #38bdf8)" }} />
+            </div>
+          )}
+        </LiftSurface>
+      </Focusable>
+    );
+  }
 
   return (
     <Focusable id={id} className="focus-card">

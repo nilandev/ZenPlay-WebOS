@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SeriesEpisode } from "@core";
 import { BROWSE_SIDE_PADDING, Focusable, FocusScrollManagedContext, SECTION_ICONS, TV_TEXT, URLImage, useFocusStore, useIsFocused, type FocusNode } from "@ui";
+import { formatReleaseDate } from "./PlayerOverlays.js";
 
 const SCOPE = "player-episodes";
 const seasonChipId = (season: number) => `player-season:${season}`;
@@ -132,6 +133,7 @@ function EpisodeThumb({ episode, isCurrent, onClick }: { episode: SeriesEpisode;
   const id = episodeCardId(episode.id);
   const isFocused = useIsFocused(id);
   const minutes = episode.durationSeconds ? Math.round(episode.durationSeconds / 60) : null;
+  const meta = [minutes !== null ? `${minutes} min` : undefined, formatReleaseDate(episode.releaseDate)].filter(Boolean).join(" · ");
   return (
     <Focusable id={id} style={{ width: "22rem", height: "auto", flexShrink: 0 }}>
       <button type="button" onClick={onClick} style={{ display: "block", width: "100%", padding: 0, border: "none", background: "transparent", textAlign: "left", cursor: "pointer" }}>
@@ -179,7 +181,7 @@ function EpisodeThumb({ episode, isCurrent, onClick }: { episode: SeriesEpisode;
         >
           {episode.episode}. {episode.title}
         </div>
-        {minutes !== null && <div style={{ fontSize: "1.125rem", color: "var(--text-dim)", marginTop: "0.25rem" }}>{minutes} min</div>}
+        {meta && <div style={{ fontSize: "1.125rem", color: "var(--text-dim)", marginTop: "0.25rem" }}>{meta}</div>}
       </button>
     </Focusable>
   );

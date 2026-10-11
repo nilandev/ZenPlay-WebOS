@@ -45,6 +45,18 @@ describe("FocusCard", () => {
     expect(filledBar).toBeTruthy();
   });
 
+  it("puts the title in a caption below the artwork by default, outside the clipped face", () => {
+    const { getByText, container } = render(<FocusCard id="card-5" title="Some Movie" />);
+    const face = container.querySelector('[data-testid="lift-sheen"]')!.parentElement!;
+    expect(face.contains(getByText("Some Movie"))).toBe(false);
+  });
+
+  it("keeps the title over the artwork with labelPlacement=\"overlay\" (live tiles)", () => {
+    const { getByText, container } = render(<FocusCard id="card-6" title="Some Channel" labelPlacement="overlay" />);
+    const face = container.querySelector('[data-testid="lift-sheen"]')!.parentElement!;
+    expect(face.contains(getByText("Some Channel"))).toBe(true);
+  });
+
   it("renders no progress bar when progress is omitted", () => {
     const { container } = render(<FocusCard id="card-4" title="Some Movie" />);
     const filledBar = Array.from(container.querySelectorAll("div")).find((el) => el.style.width.endsWith("%") && el.style.width !== "100%");
